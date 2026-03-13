@@ -94,6 +94,94 @@ async fn test_ingress_mapping() -> Result<()> {
 
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn test_ingress_mapping_forward_headers_for_multi_route_routing() -> Result<()> {
+    run_test(vec![
+        TngInstance::TngServer(
+            r#"
+            {
+                "add_egress": [
+                    {
+                        "netfilter": {
+                            "capture_dst": {
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {},
+                        "no_ra": true
+                    }
+                ]
+            }
+            "#,
+        )
+        .boxed(),
+        TngInstance::TngClient(
+            r#"
+            {
+                "add_ingress": [
+                    {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {
+                            "forward_headers": [
+                                "x-routing-key"
+                            ]
+                        },
+                        "no_ra": true
+                    }
+                ]
+            }
+            "#,
+        )
+        .boxed(),
+        AppType::LoadBalancerWithHeaderCheck {
+            listen_port: 30001,
+            upstream_servers: vec![("192.168.1.1".into(), 30001)],
+            path_matcher: r"^/$",
+            rewrite_to: r"/",
+            required_headers: vec![("x-routing-key", "route-a")],
+        }
+        .boxed(),
+        AppType::HttpServer {
+            port: 30001,
+            expected_host_header: "example.com",
+            expected_path_and_query: "/foo/bar/www?type=1&case=1",
+        }
+        .boxed(),
+        ShellTask {
+            name: "forward_header_request".to_owned(),
+            node_type: NodeType::Client,
+            script: r#"
+                set -euo pipefail
+
+                body=$(curl -sS "http://127.0.0.1:10001/foo/bar/www?type=1&case=1" \
+                    -H "Host: example.com" \
+                    -H "x-routing-key: route-a")
+
+                [ "$body" = "Hello World HTTP!" ] || {
+                    echo "Unexpected response body: $body"
+                    exit 1
+                }
+            "#
+            .to_owned(),
+            stop_test_on_finish: true,
+            run_in_foreground: false,
+        }
+        .boxed(),
+    ])
+    .await?;
+
+    Ok(())
+}
+
+#[serial]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_ingress_netfilter() -> Result<()> {
     run_test(vec![
         TngInstance::TngServer(
