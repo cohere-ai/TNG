@@ -64,6 +64,7 @@ pub async fn launch_load_balancer(
     upstream_servers: &[(String, u16)],
     path_matcher: &'static str,
     rewrite_to: &'static str,
+    required_headers: &[(String, String)],
 ) -> Result<tokio::task::JoinHandle<Result<()>>> {
     let path_matcher = Regex::new(path_matcher).context("Invalid regex")?;
 
@@ -87,16 +88,25 @@ pub async fn launch_load_balancer(
 
     // Move captured variables into closure
     let path_matcher = std::sync::Arc::new(path_matcher);
+    let required_headers = std::sync::Arc::new(required_headers.to_vec());
 
     let app = Router::new()
         .fallback(move |request: Request<Body>| {
             let balancer = balancer.clone();
             let client = client.clone();
             let path_matcher = path_matcher.clone();
+            let required_headers = required_headers.clone();
 
             async move {
-                handle_request_with_rewrite(request, balancer, client, path_matcher, &rewrite_to)
-                    .await
+                handle_request_with_rewrite(
+                    request,
+                    balancer,
+                    client,
+                    path_matcher,
+                    &rewrite_to,
+                    required_headers,
+                )
+                .await
             }
         })
         .layer(axum::middleware::from_fn(add_server_header));
@@ -127,7 +137,18 @@ async fn handle_request_with_rewrite(
     client: Client,
     path_matcher: Arc<Regex>,
     rewrite_to: &str,
+    required_headers: Arc<Vec<(String, String)>>,
 ) -> Response<Body> {
+    for (required_header_name, required_header_value) in required_headers.iter() {
+        let Some(actual_header_value) = request.headers().get(required_header_name) else {
+            return (StatusCode::NOT_FOUND, "Not Found").into_response();
+        };
+
+        if actual_header_value.as_bytes() != required_header_value.as_bytes() {
+            return (StatusCode::NOT_FOUND, "Not Found").into_response();
+        }
+    }
+
     let uri = request.uri();
     let original_path = uri.path();
 

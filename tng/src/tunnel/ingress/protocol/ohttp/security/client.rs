@@ -89,6 +89,7 @@ pub struct OHttpClient {
 pub struct OHttpClientInner {
     ra_context: Arc<RaContext>,
     http_client: Arc<reqwest::Client>,
+    forward_headers: reqwest::header::HeaderMap,
     #[cfg(unix)]
     rng: tokio::sync::Mutex<ChaCha12Rng>,
     base_url: Url,
@@ -120,6 +121,7 @@ impl OHttpClient {
         ra_context: Arc<RaContext>,
         http_client: Arc<reqwest::Client>,
         base_url: Url,
+        forward_headers: reqwest::header::HeaderMap,
         key_refresh_before_expiry_seconds: Option<u64>,
         runtime: TokioRuntime,
     ) -> Result<Self> {
@@ -149,6 +151,7 @@ impl OHttpClient {
             #[cfg(unix)]
             rng: tokio::sync::Mutex::new(ChaCha12Rng::from_os_rng()),
             http_client,
+            forward_headers,
             base_url,
             runtime: runtime.clone(),
             refresh_before_expiry,
@@ -448,6 +451,7 @@ impl OHttpClientInner {
         let response = self
             .http_client
             .post(url)
+            .headers(self.forward_headers.clone())
             .header(OhttpApi::HEADER_NAME, OhttpApi::KEY_CONFIG)
             .json(&key_config_request)
             .send()
@@ -584,6 +588,7 @@ impl OHttpClientInner {
         let response = self
             .http_client
             .post(url)
+            .headers(self.forward_headers.clone())
             .header(OhttpApi::HEADER_NAME, OhttpApi::TUNNEL)
             .header(
                 http::header::CONTENT_TYPE,
@@ -684,6 +689,7 @@ impl OHttpClientInner {
         let result: AttestationChallengeResponse = self
             .http_client
             .get(url)
+            .headers(self.forward_headers.clone())
             .header(OhttpApi::HEADER_NAME, OhttpApi::BACKGROUND_CHECK_CHALLENGE)
             .send()
             .await
@@ -719,6 +725,7 @@ impl OHttpClientInner {
         let result: AttestationVerifyResponse = self
             .http_client
             .post(url)
+            .headers(self.forward_headers.clone())
             .header(OhttpApi::HEADER_NAME, OhttpApi::BACKGROUND_CHECK_VERIFY)
             .json(&payload)
             .send()
