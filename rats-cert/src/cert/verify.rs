@@ -12,6 +12,10 @@ use crate::tee::auto::{AutoEvidence, AutoVerifier, LocalEvidence};
 use crate::tee::coco::converter::CocoConverter;
 use crate::tee::coco::evidence::{CocoAsToken, CocoEvidence};
 use crate::tee::coco::verifier::CocoVerifier;
+use crate::tee::ita::converter::ItaConverter;
+use crate::tee::ita::evidence::ItaEvidence;
+use crate::tee::ita::token::ItaToken;
+use crate::tee::ita::verifier::ItaVerifier;
 use crate::tee::{claims::Claims, GenericEvidence, GenericVerifier};
 use crate::tee::{GenericConverter, ReportData};
 
@@ -256,6 +260,85 @@ impl VerifyPolicy for CocoVerifyPolicy {
         .await?;
         verifier.verify_evidence(evidence, report_data).await?;
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ITA verification policy
+// ---------------------------------------------------------------------------
+
+pub struct ItaVerifyPolicy {
+    pub verify_mode: ItaVerifyMode,
+    pub base_url: String,
+    pub policy_ids: Vec<String>,
+}
+
+pub enum ItaVerifyMode {
+    /// Background check: receive ITA evidence, convert via ITA API, then verify the token.
+    Evidence {
+        api_key: String,
+        base_url: String,
+        policy_ids: Vec<String>,
+    },
+    /// Passport: receive an ITA token directly, verify it.
+    Token,
+}
+
+impl VerifyPolicy for ItaVerifyPolicy {
+    type ProcessedEvidence = ItaToken;
+
+    async fn process_evidence(
+        &self,
+        cbor_tag: u64,
+        raw_evidence: &[u8],
+    ) -> Result<ItaToken> {
+        match &self.verify_mode {
+            ItaVerifyMode::Evidence {
+                api_key,
+                base_url,
+                policy_ids,
+            } => {
+                let evidence =
+                    Into::<Result<_>>::into(ItaEvidence::create_evidence_from_dice(
+                        cbor_tag,
+                        raw_evidence,
+                    ))
+                    .with_context(|| {
+                        format!(
+                            "Failed to parse ITA evidence: cbor_tag: {:#x?}, raw_evidence len: {}",
+                            cbor_tag,
+                            raw_evidence.len()
+                        )
+                    })?;
+
+                let converter = ItaConverter::new(api_key, base_url, policy_ids)?;
+                converter.convert(&evidence).await
+            }
+            ItaVerifyMode::Token => {
+                let token =
+                    Into::<Result<_>>::into(ItaToken::create_evidence_from_dice(
+                        cbor_tag,
+                        raw_evidence,
+                    ))
+                    .with_context(|| {
+                        format!(
+                            "Failed to parse ITA token: cbor_tag: {:#x?}, raw_evidence len: {}",
+                            cbor_tag,
+                            raw_evidence.len()
+                        )
+                    })?;
+                Ok(token)
+            }
+        }
+    }
+
+    async fn verify(
+        &self,
+        evidence: &ItaToken,
+        report_data: &ReportData,
+    ) -> Result<()> {
+        let verifier = ItaVerifier::new(&self.base_url, &self.policy_ids)?;
+        verifier.verify_evidence(evidence, report_data).await
     }
 }
 

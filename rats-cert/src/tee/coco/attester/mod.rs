@@ -16,7 +16,7 @@ use crate::crypto::{DefaultCrypto, HashAlgo};
 use crate::errors::*;
 use crate::tee::{GenericAttester, GenericEvidence, ReportData, TeeType};
 
-mod ttrpc_protocol;
+pub(crate) mod ttrpc_protocol;
 
 pub struct CocoAttester {
     client: AttestationAgentServiceClient,

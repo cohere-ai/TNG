@@ -17,6 +17,7 @@ ciborium = {workspace = true}
 const-oid = {workspace = true, optional = true}
 flatten-json-object = {workspace = true, optional = true}
 futures = {workspace = true}
+hex = {workspace = true}
 itertools = {workspace = true}
 jsonwebtoken = {workspace = true}
 p256 = {workspace = true, optional = true}
@@ -96,7 +97,6 @@ default = ["crypto-rustcrypto", "attester-coco", "verifier-coco"]
 
 [dev-dependencies]
 ctor = {workspace = true}
-hex = {workspace = true}
 rayon = {workspace = true}
 rstest = {workspace = true}
 tempfile = {workspace = true}

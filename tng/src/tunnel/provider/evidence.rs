@@ -1,12 +1,14 @@
 use anyhow::{anyhow, Result};
 use rats_cert::tee::coco::evidence::CocoEvidence;
 use rats_cert::tee::claims::Claims;
+use rats_cert::tee::ita::ItaEvidence;
 use rats_cert::tee::{DiceParseEvidenceOutput, GenericEvidence};
 
 use super::provider_type::ProviderType;
 
 pub enum TngEvidence {
     Coco(CocoEvidence),
+    Ita(ItaEvidence),
 }
 
 impl From<CocoEvidence> for TngEvidence {
@@ -15,10 +17,17 @@ impl From<CocoEvidence> for TngEvidence {
     }
 }
 
+impl From<ItaEvidence> for TngEvidence {
+    fn from(e: ItaEvidence) -> Self {
+        Self::Ita(e)
+    }
+}
+
 impl TngEvidence {
     pub fn provider_type(&self) -> ProviderType {
         match self {
             Self::Coco(_) => ProviderType::Coco,
+            Self::Ita(_) => ProviderType::Ita,
         }
     }
 
@@ -28,6 +37,10 @@ impl TngEvidence {
     pub fn serialize_to_json(&self) -> Result<serde_json::Value> {
         match self {
             Self::Coco(e) => Ok(serde_json::json!({
+                "provider": self.provider_type(),
+                "evidence": e.serialize_to_json()?
+            })),
+            Self::Ita(e) => Ok(serde_json::json!({
                 "provider": self.provider_type(),
                 "evidence": e.serialize_to_json()?
             })),
@@ -53,6 +66,9 @@ impl TngEvidence {
             ProviderType::Coco => {
                 Ok(Self::Coco(CocoEvidence::deserialize_from_json(inner)?))
             }
+            ProviderType::Ita => {
+                Ok(Self::Ita(ItaEvidence::deserialize_from_json(inner)?))
+            }
         }
     }
 }
@@ -61,18 +77,21 @@ impl GenericEvidence for TngEvidence {
     fn get_dice_cbor_tag(&self) -> u64 {
         match self {
             Self::Coco(e) => e.get_dice_cbor_tag(),
+            Self::Ita(e) => e.get_dice_cbor_tag(),
         }
     }
 
     fn get_dice_raw_evidence(&self) -> rats_cert::errors::Result<Vec<u8>> {
         match self {
             Self::Coco(e) => e.get_dice_raw_evidence(),
+            Self::Ita(e) => e.get_dice_raw_evidence(),
         }
     }
 
     fn get_claims(&self) -> rats_cert::errors::Result<Claims> {
         match self {
             Self::Coco(e) => e.get_claims(),
+            Self::Ita(e) => e.get_claims(),
         }
     }
 
@@ -80,16 +99,8 @@ impl GenericEvidence for TngEvidence {
         cbor_tag: u64,
         raw_evidence: &[u8],
     ) -> DiceParseEvidenceOutput<Self> {
-        match CocoEvidence::create_evidence_from_dice(cbor_tag, raw_evidence) {
-            DiceParseEvidenceOutput::Ok(e) => {
-                return DiceParseEvidenceOutput::Ok(e.into())
-            }
-            DiceParseEvidenceOutput::MatchButInvalid(e) => {
-                return DiceParseEvidenceOutput::MatchButInvalid(e)
-            }
-            DiceParseEvidenceOutput::NotMatch => {}
-        }
-
-        DiceParseEvidenceOutput::NotMatch
+        CocoEvidence::create_evidence_from_dice(cbor_tag, raw_evidence)
+            .map_ok()
+            .or_else(|| ItaEvidence::create_evidence_from_dice(cbor_tag, raw_evidence).map_ok())
     }
 }

@@ -9,12 +9,14 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProviderType {
     Coco,
+    Ita,
 }
 
 impl ProviderType {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Coco => "coco",
+            Self::Ita => "ita",
         }
     }
 }
@@ -29,7 +31,7 @@ impl FromStr for ProviderType {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        const ALL: &[ProviderType] = &[ProviderType::Coco];
+        const ALL: &[ProviderType] = &[ProviderType::Coco, ProviderType::Ita];
         ALL.iter()
             .find(|p| p.as_str() == s)
             .copied()

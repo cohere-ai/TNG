@@ -2,17 +2,20 @@ use rats_cert::cert::verify::{CocoVerifyPolicy, VerifyPolicy};
 use rats_cert::errors::*;
 use rats_cert::tee::ReportData;
 
+use super::ita::ItaVerifyPolicy;
 use super::provider_type::ProviderType;
 use super::token::TngToken;
 
 pub enum TngVerifyPolicy {
     Coco(CocoVerifyPolicy),
+    Ita(ItaVerifyPolicy),
 }
 
 impl TngVerifyPolicy {
     pub fn provider_type(&self) -> ProviderType {
         match self {
             Self::Coco(_) => ProviderType::Coco,
+            Self::Ita(_) => ProviderType::Ita,
         }
     }
 }
@@ -29,6 +32,9 @@ impl VerifyPolicy for TngVerifyPolicy {
             Self::Coco(p) => {
                 Ok(p.process_evidence(cbor_tag, raw_evidence).await?.into())
             }
+            Self::Ita(p) => {
+                Ok(p.process_evidence(cbor_tag, raw_evidence).await?.into())
+            }
         }
     }
 
@@ -42,6 +48,7 @@ impl VerifyPolicy for TngVerifyPolicy {
         }
         match (self, evidence) {
             (Self::Coco(p), TngToken::Coco(t)) => p.verify(t, report_data).await,
+            (Self::Ita(p), TngToken::Ita(t)) => p.verify(t, report_data).await,
             _ => unreachable!("provider type mismatch already checked"),
         }
     }

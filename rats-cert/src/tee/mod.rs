@@ -9,13 +9,34 @@ use crate::errors::*;
 pub mod auto;
 pub mod claims;
 
-#[cfg(any(feature = "attester-coco", feature = "verifier-coco"))]
 pub mod coco;
+
+pub mod ita;
 
 pub enum DiceParseEvidenceOutput<T> {
     NotMatch,
     MatchButInvalid(Error),
     Ok(T),
+}
+
+impl<T> DiceParseEvidenceOutput<T> {
+    /// Convert the inner evidence type, preserving the match/error status.
+    pub fn map_ok<U: From<T>>(self) -> DiceParseEvidenceOutput<U> {
+        match self {
+            Self::Ok(v) => DiceParseEvidenceOutput::Ok(v.into()),
+            Self::MatchButInvalid(e) => DiceParseEvidenceOutput::MatchButInvalid(e),
+            Self::NotMatch => DiceParseEvidenceOutput::NotMatch,
+        }
+    }
+
+    /// If this was `NotMatch`, try the next parser; otherwise keep the current result.
+    /// Enables flat chaining: `A::parse(..).map_ok().or_else(|| B::parse(..).map_ok())`
+    pub fn or_else(self, f: impl FnOnce() -> Self) -> Self {
+        match self {
+            Self::NotMatch => f(),
+            other => other,
+        }
+    }
 }
 
 impl<T> From<DiceParseEvidenceOutput<T>> for Result<T> {

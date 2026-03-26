@@ -3,11 +3,13 @@ use rats_cert::cert::verify::{AttestationServiceConfig, CocoVerifyMode, CocoVeri
 use rats_cert::tee::coco::attester::CocoAttester;
 use rats_cert::tee::coco::converter::CocoConverter;
 use rats_cert::tee::coco::verifier::CocoVerifier;
+use rats_cert::tee::ita::{ItaAttester, ItaConverter, ItaVerifier};
 
 use crate::config::ra::{AsAddrConfig, AttesterConfig, ConverterConfig, VerifierConfig, VerifyArgs};
 
 use super::attester::TngAttester;
 use super::converter::TngConverter;
+use super::ita::{ItaVerifyMode, ItaVerifyPolicy};
 use super::verifier::TngVerifier;
 use super::verify_policy::TngVerifyPolicy;
 
@@ -24,6 +26,13 @@ pub fn create_attester(
             };
             Ok(TngAttester::Coco(attester))
         }
+        AttesterConfig::Ita { aa_addr } => {
+            let attester = match timeout_nano {
+                Some(t) => ItaAttester::new_with_timeout_nano(aa_addr, t)?,
+                None => ItaAttester::new(aa_addr)?,
+            };
+            Ok(TngAttester::Ita(attester))
+        }
     }
 }
 
@@ -38,6 +47,15 @@ pub fn create_converter(config: &ConverterConfig) -> Result<TngConverter> {
             policy_ids,
             as_addr_config.as_is_grpc,
             &as_addr_config.as_headers,
+        )?)),
+        ConverterConfig::Ita {
+            as_addr,
+            ita_api_key,
+            policy_ids,
+        } => Ok(TngConverter::Ita(ItaConverter::new(
+            ita_api_key,
+            as_addr,
+            policy_ids,
         )?)),
     }
 }
@@ -55,6 +73,13 @@ pub async fn create_verifier(config: &VerifierConfig) -> Result<TngVerifier> {
                 CocoVerifier::new(as_config, trusted_certs_paths, policy_ids).await?,
             ))
         }
+        VerifierConfig::Ita {
+            as_addr,
+            policy_ids,
+        } => Ok(TngVerifier::Ita(ItaVerifier::new(
+            as_addr,
+            policy_ids,
+        )?)),
     }
 }
 
@@ -71,6 +96,14 @@ pub fn create_verify_policy(verify_args: &VerifyArgs) -> TngVerifyPolicy {
                 policy_ids: policy_ids.clone(),
                 trusted_certs_paths: trusted_certs_paths.clone(),
                 as_addr_config: as_addr_config.as_ref().map(as_addr_to_service_config),
+            }),
+            VerifierConfig::Ita {
+                as_addr,
+                policy_ids,
+            } => TngVerifyPolicy::Ita(ItaVerifyPolicy {
+                verify_mode: ItaVerifyMode::Token,
+                base_url: as_addr.clone(),
+                policy_ids: policy_ids.clone(),
             }),
         },
         VerifyArgs::BackgroundCheck {
@@ -95,6 +128,28 @@ pub fn create_verify_policy(verify_args: &VerifyArgs) -> TngVerifyPolicy {
                     as_addr_config: Some(as_config),
                 })
             }
+            (
+                ConverterConfig::Ita {
+                    as_addr: converter_addr,
+                    ita_api_key,
+                    policy_ids: converter_policy_ids,
+                },
+                VerifierConfig::Ita {
+                    as_addr: verifier_addr,
+                    policy_ids: verifier_policy_ids,
+                },
+            ) => TngVerifyPolicy::Ita(ItaVerifyPolicy {
+                verify_mode: ItaVerifyMode::Evidence {
+                    api_key: ita_api_key.clone(),
+                    base_url: converter_addr.clone(),
+                    policy_ids: converter_policy_ids.clone(),
+                },
+                base_url: verifier_addr.clone(),
+                policy_ids: verifier_policy_ids.clone(),
+            }),
+            _ => panic!(
+                "Mismatched converter/verifier providers in BackgroundCheck config"
+            ),
         },
     }
 }

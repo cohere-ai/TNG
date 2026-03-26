@@ -2,6 +2,7 @@ pub mod attester;
 pub mod converter;
 pub mod evidence;
 pub mod factory;
+pub mod ita;
 pub mod provider_type;
 pub mod token;
 pub mod translate;

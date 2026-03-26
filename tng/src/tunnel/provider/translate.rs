@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rats_cert::tee::coco::evidence::CocoEvidence;
+use rats_cert::tee::ita::ItaEvidence;
 
 use super::evidence::TngEvidence;
 
@@ -21,6 +22,22 @@ impl TranslateTo<CocoEvidence> for TngEvidence {
     fn translate(&self) -> Result<CocoEvidence> {
         match self {
             Self::Coco(e) => Ok(e.clone()),
+            other => Err(anyhow!(
+                "{} evidence cannot be translated to CocoEvidence",
+                other.provider_type()
+            )),
+        }
+    }
+}
+
+impl TranslateTo<ItaEvidence> for TngEvidence {
+    fn translate(&self) -> Result<ItaEvidence> {
+        match self {
+            Self::Ita(e) => Ok(e.clone()),
+            other => Err(anyhow!(
+                "{} evidence cannot be translated to ItaEvidence",
+                other.provider_type()
+            )),
         }
     }
 }

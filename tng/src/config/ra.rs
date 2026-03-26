@@ -78,7 +78,7 @@ impl RaArgsUnchecked {
             &ra_args
         {
             match attest_args.attester() {
-                AttesterConfig::Coco { aa_addr } => {
+                AttesterConfig::Coco { aa_addr } | AttesterConfig::Ita { aa_addr } => {
                     let aa_sock_file = aa_addr
                         .strip_prefix("unix:///")
                         .context("AA address must start with unix:///")
@@ -124,18 +124,31 @@ impl RaArgsUnchecked {
                         }
                     }
                 }
+                VerifierConfig::Ita { .. } => {
+                    // ITA JWKS URL has a sensible default; no extra checks needed.
+                }
             };
 
-            // Check if as_addr is a valid URL
-            if let VerifyArgs::BackgroundCheck {
-                converter:
-                    ConverterConfig::Coco {
-                        as_addr_config: AsAddrConfig { as_addr, .. },
-                        ..
-                    },
-                ..
-            } = verify_args
-            {
+            // Check if as_addr is a valid URL (converter side)
+            let converter_as_addr = match verify_args {
+                VerifyArgs::BackgroundCheck {
+                    converter:
+                        ConverterConfig::Coco {
+                            as_addr_config: AsAddrConfig { as_addr, .. },
+                            ..
+                        },
+                    ..
+                } => Some(as_addr.as_str()),
+                VerifyArgs::BackgroundCheck {
+                    converter:
+                        ConverterConfig::Ita {
+                            as_addr, ..
+                        },
+                    ..
+                } => Some(as_addr.as_str()),
+                _ => None,
+            };
+            if let Some(as_addr) = converter_as_addr {
                 Url::parse(as_addr)
                     .with_context(|| {
                         format!("Invalid attestation service address: {}", as_addr)
@@ -162,10 +175,17 @@ pub struct AsAddrConfig {
     pub as_headers: HashMap<String, String>,
 }
 
+const DEFAULT_ITA_BASE_URL: &str = "https://portal.trustauthority.intel.com";
+
+fn default_ita_base_url() -> String {
+    DEFAULT_ITA_BASE_URL.to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "aa_provider", rename_all = "snake_case")]
 pub enum AttesterConfig {
     Coco { aa_addr: String },
+    Ita { aa_addr: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -174,6 +194,13 @@ pub enum ConverterConfig {
     Coco {
         #[serde(flatten)]
         as_addr_config: AsAddrConfig,
+        policy_ids: Vec<String>,
+    },
+    Ita {
+        #[serde(default = "default_ita_base_url")]
+        as_addr: String,
+        ita_api_key: String,
+        #[serde(default)]
         policy_ids: Vec<String>,
     },
 }
@@ -187,6 +214,12 @@ pub enum VerifierConfig {
         trusted_certs_paths: Option<Vec<String>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         as_addr_config: Option<AsAddrConfig>,
+    },
+    Ita {
+        #[serde(default = "default_ita_base_url")]
+        as_addr: String,
+        #[serde(default)]
+        policy_ids: Vec<String>,
     },
 }
 
@@ -242,12 +275,14 @@ impl AttestArgs {
     pub fn attester_provider(&self) -> ProviderType {
         match self.attester() {
             AttesterConfig::Coco { .. } => ProviderType::Coco,
+            AttesterConfig::Ita { .. } => ProviderType::Ita,
         }
     }
 
     pub fn converter_provider(&self) -> Option<ProviderType> {
         self.converter().map(|c| match c {
             ConverterConfig::Coco { .. } => ProviderType::Coco,
+            ConverterConfig::Ita { .. } => ProviderType::Ita,
         })
     }
 }
@@ -364,6 +399,7 @@ impl VerifyArgs {
     pub fn verifier_provider(&self) -> ProviderType {
         match self.verifier() {
             VerifierConfig::Coco { .. } => ProviderType::Coco,
+            VerifierConfig::Ita { .. } => ProviderType::Ita,
         }
     }
 }
@@ -503,7 +539,9 @@ mod tests {
                 attester,
                 refresh_interval,
             }) => {
-                let AttesterConfig::Coco { aa_addr } = attester;
+                let AttesterConfig::Coco { aa_addr } = attester else {
+                    unreachable!();
+                };
                 assert_eq!(
                     aa_addr,
                     "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
@@ -543,7 +581,9 @@ mod tests {
                 attester,
                 refresh_interval,
             }) => {
-                let AttesterConfig::Coco { aa_addr } = attester;
+                let AttesterConfig::Coco { aa_addr } = attester else {
+                    unreachable!();
+                };
                 assert_eq!(
                     aa_addr,
                     "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
@@ -577,7 +617,9 @@ mod tests {
                 converter,
                 refresh_interval,
             }) => {
-                let AttesterConfig::Coco { aa_addr } = attester;
+                let AttesterConfig::Coco { aa_addr } = attester else {
+                    unreachable!();
+                };
                 assert_eq!(
                     aa_addr,
                     "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
@@ -586,7 +628,9 @@ mod tests {
                 let ConverterConfig::Coco {
                     as_addr_config,
                     policy_ids,
-                } = converter;
+                } = converter else {
+                    unreachable!();
+                };
                 assert_eq!(as_addr_config.as_addr, "localhost:8081");
                 assert!(!as_addr_config.as_is_grpc);
                 assert_eq!(policy_ids, &vec!["policy1", "policy2"]);
@@ -684,7 +728,9 @@ mod tests {
                 let ConverterConfig::Coco {
                     as_addr_config,
                     policy_ids,
-                } = converter;
+                } = converter else {
+                    unreachable!();
+                };
                 assert_eq!(as_addr_config.as_addr, "localhost:8081");
                 assert!(!as_addr_config.as_is_grpc);
                 assert_eq!(policy_ids, &vec!["policy1", "policy2"]);
@@ -714,7 +760,9 @@ mod tests {
                 let ConverterConfig::Coco {
                     as_addr_config,
                     policy_ids,
-                } = converter;
+                } = converter else {
+                    unreachable!();
+                };
                 assert_eq!(as_addr_config.as_addr, "localhost:8081");
                 assert!(!as_addr_config.as_is_grpc);
                 assert_eq!(policy_ids, &vec!["policy1", "policy2"]);
@@ -740,7 +788,9 @@ mod tests {
 
         match &ra_args.verify {
             Some(VerifyArgs::Passport { verifier }) => {
-                let VerifierConfig::Coco { policy_ids, .. } = verifier;
+                let VerifierConfig::Coco { policy_ids, .. } = verifier else {
+                    unreachable!();
+                };
                 assert_eq!(policy_ids, &vec!["policy1", "policy2"]);
             }
             _ => panic!("Expected Passport variant"),
@@ -858,7 +908,9 @@ mod tests {
                     ra_args.attest.as_ref().unwrap().attester_provider(),
                     ProviderType::Coco
                 );
-                let AttesterConfig::Coco { aa_addr } = attester;
+                let AttesterConfig::Coco { aa_addr } = attester else {
+                    unreachable!();
+                };
                 assert_eq!(
                     aa_addr,
                     "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
@@ -897,12 +949,16 @@ mod tests {
                     ra_args.attest.as_ref().unwrap().attester_provider(),
                     ProviderType::Coco
                 );
-                let AttesterConfig::Coco { aa_addr } = attester;
+                let AttesterConfig::Coco { aa_addr } = attester else {
+                    unreachable!();
+                };
                 assert_eq!(
                     aa_addr,
                     "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
                 );
-                let ConverterConfig::Coco { as_addr_config, .. } = converter;
+                let ConverterConfig::Coco { as_addr_config, .. } = converter else {
+                    unreachable!();
+                };
                 assert_eq!(as_addr_config.as_addr, "localhost:8081");
             }
             _ => panic!("Expected Passport variant"),
@@ -931,7 +987,9 @@ mod tests {
                     ra_args.verify.as_ref().unwrap().verifier_provider(),
                     ProviderType::Coco
                 );
-                let ConverterConfig::Coco { as_addr_config, .. } = converter;
+                let ConverterConfig::Coco { as_addr_config, .. } = converter else {
+                    unreachable!();
+                };
                 assert_eq!(as_addr_config.as_addr, "http://localhost:8081");
             }
             _ => panic!("Expected BackgroundCheck variant"),
@@ -958,7 +1016,9 @@ mod tests {
                     ra_args.verify.as_ref().unwrap().verifier_provider(),
                     ProviderType::Coco
                 );
-                let VerifierConfig::Coco { policy_ids, .. } = verifier;
+                let VerifierConfig::Coco { policy_ids, .. } = verifier else {
+                    unreachable!();
+                };
                 assert_eq!(policy_ids, &vec!["policy1"]);
             }
             _ => panic!("Expected Passport variant"),
