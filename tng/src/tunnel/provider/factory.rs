@@ -50,10 +50,10 @@ pub fn create_converter(config: &ConverterConfig) -> Result<TngConverter> {
         )?)),
         ConverterConfig::Ita {
             as_addr,
-            ita_api_key,
+            api_key,
             policy_ids,
         } => Ok(TngConverter::Ita(ItaConverter::new(
-            ita_api_key,
+            api_key,
             as_addr,
             policy_ids,
         )?)),
@@ -74,10 +74,10 @@ pub async fn create_verifier(config: &VerifierConfig) -> Result<TngVerifier> {
             ))
         }
         VerifierConfig::Ita {
-            as_addr,
+            ita_jwks_addr,
             policy_ids,
         } => Ok(TngVerifier::Ita(ItaVerifier::new(
-            as_addr,
+            ita_jwks_addr,
             policy_ids,
         )?)),
     }
@@ -98,11 +98,11 @@ pub fn create_verify_policy(verify_args: &VerifyArgs) -> TngVerifyPolicy {
                 as_addr_config: as_addr_config.as_ref().map(as_addr_to_service_config),
             }),
             VerifierConfig::Ita {
-                as_addr,
+                ita_jwks_addr,
                 policy_ids,
             } => TngVerifyPolicy::Ita(ItaVerifyPolicy {
                 verify_mode: ItaVerifyMode::Token,
-                base_url: as_addr.clone(),
+                ita_jwks_addr: ita_jwks_addr.clone(),
                 policy_ids: policy_ids.clone(),
             }),
         },
@@ -131,20 +131,20 @@ pub fn create_verify_policy(verify_args: &VerifyArgs) -> TngVerifyPolicy {
             (
                 ConverterConfig::Ita {
                     as_addr: converter_addr,
-                    ita_api_key,
+                    api_key,
                     policy_ids: converter_policy_ids,
                 },
                 VerifierConfig::Ita {
-                    as_addr: verifier_addr,
+                    ita_jwks_addr,
                     policy_ids: verifier_policy_ids,
                 },
             ) => TngVerifyPolicy::Ita(ItaVerifyPolicy {
                 verify_mode: ItaVerifyMode::Evidence {
-                    api_key: ita_api_key.clone(),
+                    api_key: api_key.clone(),
                     base_url: converter_addr.clone(),
                     policy_ids: converter_policy_ids.clone(),
                 },
-                base_url: verifier_addr.clone(),
+                ita_jwks_addr: ita_jwks_addr.clone(),
                 policy_ids: verifier_policy_ids.clone(),
             }),
             _ => panic!(

@@ -269,7 +269,7 @@ impl VerifyPolicy for CocoVerifyPolicy {
 
 pub struct ItaVerifyPolicy {
     pub verify_mode: ItaVerifyMode,
-    pub base_url: String,
+    pub ita_jwks_addr: String,
     pub policy_ids: Vec<String>,
 }
 
@@ -337,7 +337,7 @@ impl VerifyPolicy for ItaVerifyPolicy {
         evidence: &ItaToken,
         report_data: &ReportData,
     ) -> Result<()> {
-        let verifier = ItaVerifier::new(&self.base_url, &self.policy_ids)?;
+        let verifier = ItaVerifier::new(&self.ita_jwks_addr, &self.policy_ids)?;
         verifier.verify_evidence(evidence, report_data).await
     }
 }

@@ -150,8 +150,19 @@ impl GenericAttester for ItaAttester {
             )
             .context("Failed to get TDX evidence from AA")?;
 
+        // AA returns evidence as a JSON object (e.g. {"cc_eventlog":"...", "quote":"..."}).
+        // Extract just the raw TDX quote for ITA.
+        let aa_evidence: serde_json::Value = serde_json::from_slice(&get_evidence_res.Evidence)
+            .context("Failed to parse AA evidence as JSON")?;
+        let tdx_quote_b64 = aa_evidence
+            .get("quote")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::msg("AA evidence JSON missing 'quote' field"))?;
+        let tdx_quote = BASE64.decode(tdx_quote_b64)
+            .context("Failed to decode TDX quote from AA evidence")?;
+
         Ok(ItaEvidence::new(
-            get_evidence_res.Evidence,
+            tdx_quote,
             nonce,
             runtime_data_bytes,
             gpu_runtime_data_for_evidence,

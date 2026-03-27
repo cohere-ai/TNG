@@ -23,9 +23,9 @@ pub struct ItaVerifier {
 }
 
 impl ItaVerifier {
-    pub fn new(base_url: &str, policy_ids: &[String]) -> Result<Self> {
+    pub fn new(ita_jwks_addr: &str, policy_ids: &[String]) -> Result<Self> {
         Ok(Self {
-            jwks_url: format!("{}/certs", base_url.trim_end_matches('/')),
+            jwks_url: format!("{}/certs", ita_jwks_addr.trim_end_matches('/')),
             policy_ids: policy_ids.to_vec(),
         })
     }

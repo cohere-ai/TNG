@@ -175,10 +175,15 @@ pub struct AsAddrConfig {
     pub as_headers: HashMap<String, String>,
 }
 
-const DEFAULT_ITA_BASE_URL: &str = "https://portal.trustauthority.intel.com";
+const DEFAULT_ITA_API_URL: &str = "https://api.trustauthority.intel.com";
+const DEFAULT_ITA_PORTAL_URL: &str = "https://portal.trustauthority.intel.com";
 
-fn default_ita_base_url() -> String {
-    DEFAULT_ITA_BASE_URL.to_string()
+fn default_ita_api_url() -> String {
+    DEFAULT_ITA_API_URL.to_string()
+}
+
+fn default_ita_portal_url() -> String {
+    DEFAULT_ITA_PORTAL_URL.to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -197,9 +202,9 @@ pub enum ConverterConfig {
         policy_ids: Vec<String>,
     },
     Ita {
-        #[serde(default = "default_ita_base_url")]
+        #[serde(default = "default_ita_api_url")]
         as_addr: String,
-        ita_api_key: String,
+        api_key: String,
         #[serde(default)]
         policy_ids: Vec<String>,
     },
@@ -216,8 +221,8 @@ pub enum VerifierConfig {
         as_addr_config: Option<AsAddrConfig>,
     },
     Ita {
-        #[serde(default = "default_ita_base_url")]
-        as_addr: String,
+        #[serde(default = "default_ita_portal_url")]
+        ita_jwks_addr: String,
         #[serde(default)]
         policy_ids: Vec<String>,
     },

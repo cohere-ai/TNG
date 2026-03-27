@@ -86,6 +86,7 @@ impl ItaConverter {
     /// to be used as the `challenge_token` in runtime_data claims.
     pub async fn get_nonce(&self) -> Result<String> {
         let url = format!("{}/appraisal/v2/nonce", self.base_url);
+        tracing::debug!(url = %url, "Fetching ITA nonce");
         let resp = self
             .http
             .get(&url)
@@ -155,7 +156,6 @@ impl GenericConverter for ItaConverter {
     type OutEvidence = ItaToken;
 
     async fn convert(&self, in_evidence: &ItaEvidence) -> Result<ItaToken> {
-        // Build the TDX namespace
         let tdx_quote_b64 = BASE64.encode(&in_evidence.tdx_quote);
         let runtime_data_b64 = BASE64.encode(&in_evidence.runtime_data);
 
@@ -192,6 +192,13 @@ impl GenericConverter for ItaConverter {
         };
 
         let url = format!("{}/appraisal/v2/attest", self.base_url);
+
+        tracing::debug!(
+            url = %url,
+            body = %serde_json::to_string(&body).unwrap_or_default(),
+            "Sending ITA attest request"
+        );
+
         let resp = self
             .http
             .post(&url)
