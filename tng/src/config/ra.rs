@@ -78,7 +78,7 @@ impl RaArgsUnchecked {
             &ra_args
         {
             match attest_args.attester() {
-                AttesterConfig::Coco { aa_addr } | AttesterConfig::Ita { aa_addr } => {
+                AttesterConfig::Coco { aa_addr } | AttesterConfig::ItaAa { aa_addr } => {
                     let aa_sock_file = aa_addr
                         .strip_prefix("unix:///")
                         .context("AA address must start with unix:///")
@@ -89,6 +89,13 @@ impl RaArgsUnchecked {
                             "AA socket file {aa_sock_file:?} not found"
                         )));
                     }
+                }
+                AttesterConfig::ItaAsr { asr_addr } => {
+                    Url::parse(asr_addr)
+                        .with_context(|| {
+                            format!("Invalid ASR address: {}", asr_addr)
+                        })
+                        .map_err(TngError::InvalidParameter)?;
                 }
             };
         }
@@ -190,7 +197,8 @@ fn default_ita_portal_url() -> String {
 #[serde(tag = "aa_provider", rename_all = "snake_case")]
 pub enum AttesterConfig {
     Coco { aa_addr: String },
-    Ita { aa_addr: String },
+    ItaAa { aa_addr: String },
+    ItaAsr { asr_addr: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -280,7 +288,7 @@ impl AttestArgs {
     pub fn attester_provider(&self) -> ProviderType {
         match self.attester() {
             AttesterConfig::Coco { .. } => ProviderType::Coco,
-            AttesterConfig::Ita { .. } => ProviderType::Ita,
+            AttesterConfig::ItaAa { .. } | AttesterConfig::ItaAsr { .. } => ProviderType::Ita,
         }
     }
 

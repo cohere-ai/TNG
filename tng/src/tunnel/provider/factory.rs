@@ -3,7 +3,7 @@ use rats_cert::cert::verify::{AttestationServiceConfig, CocoVerifyMode, CocoVeri
 use rats_cert::tee::coco::attester::CocoAttester;
 use rats_cert::tee::coco::converter::CocoConverter;
 use rats_cert::tee::coco::verifier::CocoVerifier;
-use rats_cert::tee::ita::{ItaAttester, ItaConverter, ItaVerifier};
+use rats_cert::tee::ita::{ItaAaAttester, ItaAsrAttester, ItaConverter, ItaVerifier};
 
 use crate::config::ra::{AsAddrConfig, AttesterConfig, ConverterConfig, VerifierConfig, VerifyArgs};
 
@@ -26,12 +26,15 @@ pub fn create_attester(
             };
             Ok(TngAttester::Coco(attester))
         }
-        AttesterConfig::Ita { aa_addr } => {
+        AttesterConfig::ItaAa { aa_addr } => {
             let attester = match timeout_nano {
-                Some(t) => ItaAttester::new_with_timeout_nano(aa_addr, t)?,
-                None => ItaAttester::new(aa_addr)?,
+                Some(t) => ItaAaAttester::new_with_timeout_nano(aa_addr, t)?,
+                None => ItaAaAttester::new(aa_addr)?,
             };
-            Ok(TngAttester::Ita(attester))
+            Ok(TngAttester::ItaAa(attester))
+        }
+        AttesterConfig::ItaAsr { asr_addr } => {
+            Ok(TngAttester::ItaAsr(ItaAsrAttester::new(asr_addr)?))
         }
     }
 }

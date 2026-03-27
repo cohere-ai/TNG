@@ -18,7 +18,7 @@ pub struct ItaNonce {
     pub signature: String,
 }
 
-/// Evidence produced by `ItaAttester` and consumed by `ItaConverter`.
+/// Evidence produced by `ItaAaAttester` / `ItaAsrAttester` and consumed by `ItaConverter`.
 ///
 /// Contains all fields needed to build the ITA `/appraisal/v2/attest` request.
 /// Transmitted over the wire (JSON-serialized) between attester and converter

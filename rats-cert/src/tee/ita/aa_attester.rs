@@ -15,12 +15,12 @@ use crate::tee::{GenericAttester, ReportData};
 
 use super::evidence::{ItaEvidence, ItaNonce};
 
-pub struct ItaAttester {
+pub struct ItaAaAttester {
     client: AttestationAgentServiceClient,
     timeout_nano: i64,
 }
 
-impl ItaAttester {
+impl ItaAaAttester {
     pub fn new(aa_addr: &str) -> Result<Self> {
         Self::new_with_timeout_nano(aa_addr, TTRPC_DEFAULT_TIMEOUT_NANO)
     }
@@ -39,7 +39,7 @@ impl ItaAttester {
     }
 }
 
-fn serialize_canon_json<T: Serialize>(value: T) -> Result<Vec<u8>> {
+pub(super) fn serialize_canon_json<T: Serialize>(value: T) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     let mut ser = serde_json::Serializer::with_formatter(&mut buf, CanonicalFormatter::new());
     value.serialize(&mut ser)?;
@@ -47,7 +47,7 @@ fn serialize_canon_json<T: Serialize>(value: T) -> Result<Vec<u8>> {
 }
 
 /// Derive `SHA-256(decode(nonce.val) || decode(nonce.iat))` for GPU evidence collection.
-fn derive_gpu_runtime_data(nonce: &ItaNonce) -> Result<[u8; 32]> {
+pub(super) fn derive_gpu_runtime_data(nonce: &ItaNonce) -> Result<[u8; 32]> {
     let val_bytes = BASE64.decode(&nonce.val).context("Failed to decode nonce.val")?;
     let iat_bytes = BASE64.decode(&nonce.iat).context("Failed to decode nonce.iat")?;
     let mut hasher = Sha256::new();
@@ -57,7 +57,7 @@ fn derive_gpu_runtime_data(nonce: &ItaNonce) -> Result<[u8; 32]> {
 }
 
 /// Derive `SHA-512(decode(nonce.val) || decode(nonce.iat) || runtime_data_bytes)` for TDX REPORTDATA.
-fn derive_tdx_report_data(nonce: &ItaNonce, runtime_data_bytes: &[u8]) -> Result<Vec<u8>> {
+pub(super) fn derive_tdx_report_data(nonce: &ItaNonce, runtime_data_bytes: &[u8]) -> Result<Vec<u8>> {
     let val_bytes = BASE64.decode(&nonce.val).context("Failed to decode nonce.val")?;
     let iat_bytes = BASE64.decode(&nonce.iat).context("Failed to decode nonce.iat")?;
     let mut hasher = Sha512::new();
@@ -68,7 +68,7 @@ fn derive_tdx_report_data(nonce: &ItaNonce, runtime_data_bytes: &[u8]) -> Result
 }
 
 #[async_trait::async_trait]
-impl GenericAttester for ItaAttester {
+impl GenericAttester for ItaAaAttester {
     type Evidence = ItaEvidence;
 
     async fn get_evidence(&self, report_data: &ReportData) -> Result<ItaEvidence> {
