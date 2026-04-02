@@ -23,6 +23,34 @@ impl From<ItaEvidence> for TngEvidence {
     }
 }
 
+/// Translate a TngEvidence into CocoEvidence if it contains a compatible type.
+impl TryFrom<&TngEvidence> for CocoEvidence {
+    type Error = anyhow::Error;
+    fn try_from(e: &TngEvidence) -> Result<Self> {
+        match e {
+            TngEvidence::Coco(inner) => Ok(inner.clone()),
+            other => Err(anyhow!(
+                "{} evidence cannot be translated to CocoEvidence",
+                other.provider_type()
+            )),
+        }
+    }
+}
+
+/// Translate a TngEvidence into ItaEvidence if it contains a compatible type.
+impl TryFrom<&TngEvidence> for ItaEvidence {
+    type Error = anyhow::Error;
+    fn try_from(e: &TngEvidence) -> Result<Self> {
+        match e {
+            TngEvidence::Ita(inner) => Ok(inner.clone()),
+            other => Err(anyhow!(
+                "{} evidence cannot be translated to ItaEvidence",
+                other.provider_type()
+            )),
+        }
+    }
+}
+
 impl TngEvidence {
     pub fn provider_type(&self) -> ProviderType {
         match self {

@@ -185,6 +185,8 @@ pub struct AsAddrConfig {
 const DEFAULT_ITA_API_URL: &str = "https://api.trustauthority.intel.com";
 const DEFAULT_ITA_PORTAL_URL: &str = "https://portal.trustauthority.intel.com";
 
+const ITA_API_KEY_ENV: &str = "ITA_API_KEY";
+
 fn default_ita_api_url() -> String {
     DEFAULT_ITA_API_URL.to_string()
 }
@@ -304,6 +306,7 @@ impl<'de> Deserialize<'de> for AttestArgs {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut value = serde_json::Value::deserialize(deserializer)?;
         inject_provider_defaults(&mut value);
+        inject_ita_api_key_default(&mut value).map_err(serde::de::Error::custom)?;
         let model = value
             .get("model")
             .and_then(|v| v.as_str())
@@ -421,6 +424,7 @@ impl<'de> Deserialize<'de> for VerifyArgs {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut value = serde_json::Value::deserialize(deserializer)?;
         inject_provider_defaults(&mut value);
+        inject_ita_api_key_default(&mut value).map_err(serde::de::Error::custom)?;
         let model = value
             .get("model")
             .and_then(|v| v.as_str())
@@ -497,6 +501,32 @@ fn inject_provider_defaults(value: &mut serde_json::Value) {
             obj.insert("as_provider".into(), "coco".into());
         }
     }
+}
+
+/// If the ITA provider is selected and `api_key` is absent, fall back to the
+/// `ITA_API_KEY` environment variable. This lets operators keep the secret out
+/// of config files while also supporting a config-file-only configuration approach.
+fn inject_ita_api_key_default(value: &mut serde_json::Value) -> Result<(), String> {
+    let is_ita = value
+        .get("as_provider")
+        .and_then(|v| v.as_str())
+        .is_some_and(|p| p == "ita");
+    if !is_ita {
+        return Ok(());
+    }
+    if let Some(obj) = value.as_object_mut() {
+        if !obj.contains_key("api_key") {
+            let key = std::env::var(ITA_API_KEY_ENV).map_err(|_| {
+                format!(
+                    "ITA provider selected but no \"api_key\" in config and \
+                     ${} environment variable is not set",
+                    ITA_API_KEY_ENV
+                )
+            })?;
+            obj.insert("api_key".into(), key.into());
+        }
+    }
+    Ok(())
 }
 
 /// Converts flat `as_addr`/`as_is_grpc`/`as_headers` fields into a nested
