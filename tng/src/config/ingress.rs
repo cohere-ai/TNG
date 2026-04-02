@@ -148,6 +148,9 @@ pub struct Socks5AuthArgs {
 pub struct OHttpArgs {
     #[serde(default)]
     pub path_rewrites: Vec<PathRewrite>,
+
+    #[serde(default)]
+    pub forward_headers: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
