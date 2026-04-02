@@ -306,7 +306,6 @@ impl<'de> Deserialize<'de> for AttestArgs {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut value = serde_json::Value::deserialize(deserializer)?;
         inject_provider_defaults(&mut value);
-        inject_ita_api_key_default(&mut value).map_err(serde::de::Error::custom)?;
         let model = value
             .get("model")
             .and_then(|v| v.as_str())
@@ -325,6 +324,7 @@ impl<'de> Deserialize<'de> for AttestArgs {
             "passport" => {
                 let attester: AttesterConfig =
                     serde_json::from_value(value.clone()).map_err(serde::de::Error::custom)?;
+                inject_ita_api_key_default(&mut value).map_err(serde::de::Error::custom)?;
                 let converter: ConverterConfig =
                     serde_json::from_value(value.clone()).map_err(serde::de::Error::custom)?;
                 let refresh_interval = value.get("refresh_interval").and_then(|v| v.as_u64());
@@ -424,7 +424,6 @@ impl<'de> Deserialize<'de> for VerifyArgs {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let mut value = serde_json::Value::deserialize(deserializer)?;
         inject_provider_defaults(&mut value);
-        inject_ita_api_key_default(&mut value).map_err(serde::de::Error::custom)?;
         let model = value
             .get("model")
             .and_then(|v| v.as_str())
@@ -432,6 +431,7 @@ impl<'de> Deserialize<'de> for VerifyArgs {
 
         match model {
             "background_check" => {
+                inject_ita_api_key_default(&mut value).map_err(serde::de::Error::custom)?;
                 let converter: ConverterConfig =
                     serde_json::from_value(value.clone()).map_err(serde::de::Error::custom)?;
                 nest_as_addr_config(&mut value);
