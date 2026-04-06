@@ -110,7 +110,9 @@ impl ItaConverter {
             .await
             .context("Failed to parse ITA nonce response")?;
 
-        serde_json::to_string(&nonce).context("Failed to serialize ITA nonce")
+        let nonce_str = serde_json::to_string(&nonce).context("Failed to serialize ITA nonce")?;
+        tracing::debug!(nonce = %nonce_str, "ITA nonce request succeeded");
+        Ok(nonce_str)
     }
 
     /// Re-encode GPU evidence from AA's base64 format to ITA's expected
@@ -229,6 +231,7 @@ impl GenericConverter for ItaConverter {
             .await
             .context("Failed to parse ITA attest response")?;
 
+        tracing::debug!(token = %attest_resp.token, "ITA attest request succeeded");
         ItaToken::new(attest_resp.token)
     }
 }
