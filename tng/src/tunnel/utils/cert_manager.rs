@@ -3,7 +3,7 @@ use anyhow::{Context as _, Result};
 use rats_cert::{
     cert::create::CertBuilder,
     crypto::{AsymmetricAlgo, HashAlgo},
-    tee::AttesterPipeline,
+    tee::{claims::Claims, AttesterPipeline},
 };
 use std::{pin::Pin, sync::Arc, time::Duration};
 
@@ -62,9 +62,18 @@ impl CertManager {
         let (der_cert, privkey, expired) = match attest_args {
             AttestArgs::Passport { converter, .. } => {
                 let converter = create_converter(converter)?;
+                let challenge_token = converter.get_nonce().await?;
                 let attester_pipeline = AttesterPipeline::new(attester, converter);
+
+                let mut claims = Claims::new();
+                claims.insert(
+                    "challenge_token".into(),
+                    serde_json::Value::String(challenge_token),
+                );
+
                 let cert_bundle = CertBuilder::new(attester_pipeline, HashAlgo::Sha256)
                     .with_subject("CN=TNG,O=Inclavare Containers")
+                    .with_claims(claims)
                     .build(AsymmetricAlgo::P256)
                     .await?;
 
