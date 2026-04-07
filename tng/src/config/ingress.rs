@@ -151,6 +151,10 @@ pub struct OHttpArgs {
 
     #[serde(default)]
     pub forward_headers: Vec<String>,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tls_ca_certs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

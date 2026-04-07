@@ -37,12 +37,15 @@ pub struct TngConfig {
     pub admin_bind: Option<Endpoint>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Endpoint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     pub port: u16,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
 }
 
 #[cfg(test)]
@@ -69,12 +72,13 @@ mod tests {
             add_ingress: vec![AddIngressArgs {
                 ingress_mode: IngressMode::Mapping(ingress::IngressMappingArgs {
                     r#in: Endpoint {
-                        host: None,
                         port: 10001,
+                        ..Default::default()
                     },
                     out: Endpoint {
                         host: Some("127.0.0.1".to_owned()),
                         port: 20001,
+                        ..Default::default()
                     },
                 }),
                 common: ingress::CommonArgs{
@@ -85,6 +89,7 @@ mod tests {
                             substitution: "/foo/bar/\\1".to_owned(),
                         }],
                         forward_headers: vec!["x-routing-key".to_owned()],
+                        ..Default::default()
                     }),
                     ra_args: RaArgsUnchecked {
                         no_ra: false,
@@ -116,10 +121,12 @@ mod tests {
                     r#in: Endpoint {
                         host: Some("127.0.0.1".to_owned()),
                         port: 20001,
+                        ..Default::default()
                     },
                     out: Endpoint {
                         host: Some("127.0.0.1".to_owned()),
                         port: 30001,
+                        ..Default::default()
                     },
                 }),
                 common:egress::CommonArgs{
