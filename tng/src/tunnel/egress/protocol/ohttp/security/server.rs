@@ -166,7 +166,9 @@ async fn handler(
 ) -> Result<Response, TngError> {
     let ohttp_api = parse_ohttp_api_from_request(&request)?;
 
-    match ohttp_api {
+    let ohttp_api_name = format!("{ohttp_api:?}");
+
+    let result = match ohttp_api {
         OhttpApi::KeyConfig => {
             api.get_hpke_configuration(
                 <Option<Json<KeyConfigRequest>> as FromRequest<()>>::from_request(request, &())
@@ -176,13 +178,10 @@ async fn handler(
             )
             .await
         }
-        OhttpApi::Tunnel => api
-            .process_encrypted_request(request, context)
-            .await
-            .map_err(|error| {
-                tracing::error!(?error, "Failed to process received OHTTP request");
-                error
-            }),
+        OhttpApi::Tunnel => {
+            api.process_encrypted_request(request, context)
+                .await
+        }
         OhttpApi::BackgroundCheckChallenge => api
             .get_attestation_challenge()
             .await
@@ -195,7 +194,12 @@ async fn handler(
             )
             .await
             .map(IntoResponse::into_response),
-    }
+    };
+
+    result.map_err(|error| {
+        tracing::error!(?error, ohttp_api = ohttp_api_name, "Failed to handle OHTTP request");
+        error
+    })
 }
 
 fn parse_ohttp_api_from_request(req: &Request) -> Result<OhttpApi, TngError> {

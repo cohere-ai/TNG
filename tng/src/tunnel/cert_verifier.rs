@@ -38,7 +38,10 @@ impl CommonCertVerifier {
             .verify_der(&pending_cert)
             .await;
 
-        tracing::debug!(passed = res.is_ok(), "rats-rs cert verify finished");
+        match &res {
+            Ok(_) => tracing::debug!("rats-tls cert verify passed"),
+            Err(e) => tracing::error!(error = ?e, "rats-tls cert verify failed"),
+        }
 
         res.map(AttestationResult::from_token)
             .map_err(|e| anyhow::anyhow!("Verify failed: {:?}", e))
