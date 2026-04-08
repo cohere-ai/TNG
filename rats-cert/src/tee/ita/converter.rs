@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
+use again::RetryPolicy;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use reqwest::Client;
@@ -10,6 +12,10 @@ use crate::tee::GenericConverter;
 
 use super::evidence::{ItaEvidence, ItaNonce};
 use super::token::ItaToken;
+
+const ITA_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
+const ITA_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
+const ITA_RETRY_MAX_ATTEMPTS: usize = 4;
 
 // ---------------------------------------------------------------------------
 // ITA API request/response types (private)
@@ -87,14 +93,33 @@ impl ItaConverter {
     pub async fn get_nonce(&self) -> Result<String> {
         let url = format!("{}/appraisal/v2/nonce", self.base_url);
         tracing::debug!(url = %url, "Fetching ITA nonce");
-        let resp = self
-            .http
-            .get(&url)
-            .header("x-api-key", &self.api_key)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .context("Failed to request nonce from ITA")?;
+
+        let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
+            .with_max_delay(ITA_RETRY_MAX_DELAY)
+            .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
+
+        let resp = policy
+            .retry(|| async {
+                let resp = self
+                    .http
+                    .get(&url)
+                    .header("x-api-key", &self.api_key)
+                    .header("Accept", "application/json")
+                    .send()
+                    .await
+                    .context("Failed to request nonce from ITA")?;
+                if resp.status().is_server_error() {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    tracing::warn!(%status, %body, "ITA nonce request failed");
+                    return Err(Error::msg(format!(
+                        "ITA nonce request failed ({}): {}",
+                        status, body
+                    )));
+                }
+                Ok(resp)
+            })
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -201,16 +226,34 @@ impl GenericConverter for ItaConverter {
             "Sending ITA attest request"
         );
 
-        let resp = self
-            .http
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to submit attestation to ITA")?;
+        let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
+            .with_max_delay(ITA_RETRY_MAX_DELAY)
+            .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
+
+        let resp = policy
+            .retry(|| async {
+                let resp = self
+                    .http
+                    .post(&url)
+                    .header("x-api-key", &self.api_key)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .json(&body)
+                    .send()
+                    .await
+                    .context("Failed to submit attestation to ITA")?;
+                if resp.status().is_server_error() {
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    tracing::warn!(%status, %body, "ITA attest request failed");
+                    return Err(Error::msg(format!(
+                        "ITA attest request failed ({}): {}",
+                        status, body
+                    )));
+                }
+                Ok(resp)
+            })
+            .await?;
 
         if !resp.status().is_success() {
             let status = resp.status();

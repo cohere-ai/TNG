@@ -6,6 +6,7 @@ name = "rats-cert"
 version.workspace = true
 
 [dependencies]
+again = {workspace = true}
 anyhow = {workspace = true}
 as-any = {workspace = true}
 async-trait = {workspace = true}
