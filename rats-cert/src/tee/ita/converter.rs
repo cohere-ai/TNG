@@ -17,6 +17,10 @@ const ITA_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
 const ITA_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
 const ITA_RETRY_MAX_ATTEMPTS: usize = 4;
 
+fn is_retryable_ita_error(status: reqwest::StatusCode, body: &str) -> bool {
+    status == reqwest::StatusCode::BAD_REQUEST && body.contains("Failed to verify GPU evidence")
+}
+
 // ---------------------------------------------------------------------------
 // ITA API request/response types (private)
 // ---------------------------------------------------------------------------
@@ -230,7 +234,7 @@ impl GenericConverter for ItaConverter {
             .with_max_delay(ITA_RETRY_MAX_DELAY)
             .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
 
-        let resp = policy
+        let (status, resp_body) = policy
             .retry(|| async {
                 let resp = self
                     .http
@@ -242,25 +246,23 @@ impl GenericConverter for ItaConverter {
                     .send()
                     .await
                     .context("Failed to submit attestation to ITA")?;
-                if resp.status().is_server_error() {
-                    let status = resp.status();
-                    let body = resp.text().await.unwrap_or_default();
-                    tracing::warn!(%status, %body, "ITA attest request failed");
+                let status = resp.status();
+                let resp_body = resp.text().await.unwrap_or_default();
+                if status.is_server_error() || is_retryable_ita_error(status, &resp_body) {
+                    tracing::warn!(%status, body = %resp_body, "ITA attest request failed");
                     return Err(Error::msg(format!(
                         "ITA attest request failed ({}): {}",
-                        status, body
+                        status, resp_body
                     )));
                 }
-                Ok(resp)
+                Ok((status, resp_body))
             })
             .await?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+        if !status.is_success() {
             return Err(Error::msg(format!(
                 "ITA attest request failed ({}): {}",
-                status, body
+                status, resp_body
             )));
         }
 
@@ -269,9 +271,7 @@ impl GenericConverter for ItaConverter {
             token: String,
         }
 
-        let attest_resp: AttestResponse = resp
-            .json()
-            .await
+        let attest_resp: AttestResponse = serde_json::from_str(&resp_body)
             .context("Failed to parse ITA attest response")?;
 
         tracing::debug!(token = %attest_resp.token, "ITA attest request succeeded");
