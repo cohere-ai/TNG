@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
+use again::RetryPolicy;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
 use reqwest::Client;
@@ -10,6 +12,20 @@ use crate::tee::GenericConverter;
 
 use super::evidence::{ItaEvidence, ItaNonce};
 use super::token::ItaToken;
+
+// ITA's attest endpoint can transiently fail due to its dependency on NVIDIA's
+// Remote Attestation Service (NRAS) for GPU evidence verification. This 
+// usually surfaces as a 400 with "Failed to verify GPU evidence" in the body. 
+// We retry with exponential backoff to ride out these transient failures.
+const ITA_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
+const ITA_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
+const ITA_RETRY_MAX_ATTEMPTS: usize = 4;
+
+fn is_retryable_ita_error(status: reqwest::StatusCode, body: &str) -> bool {
+    status.is_server_error()
+        || (status == reqwest::StatusCode::BAD_REQUEST
+            && body.contains("Failed to verify GPU evidence"))
+}
 
 // ---------------------------------------------------------------------------
 // ITA API request/response types (private)
@@ -87,29 +103,43 @@ impl ItaConverter {
     pub async fn get_nonce(&self) -> Result<String> {
         let url = format!("{}/appraisal/v2/nonce", self.base_url);
         tracing::debug!(url = %url, "Fetching ITA nonce");
-        let resp = self
-            .http
-            .get(&url)
-            .header("x-api-key", &self.api_key)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .context("Failed to request nonce from ITA")?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+        let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
+            .with_max_delay(ITA_RETRY_MAX_DELAY)
+            .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
+
+        let (status, resp_body) = policy
+            .retry(|| async {
+                let resp = self
+                    .http
+                    .get(&url)
+                    .header("x-api-key", &self.api_key)
+                    .header("Accept", "application/json")
+                    .send()
+                    .await
+                    .context("Failed to request nonce from ITA")?;
+                let status = resp.status();
+                let resp_body = resp.text().await.unwrap_or_default();
+                if is_retryable_ita_error(status, &resp_body) {
+                    tracing::warn!(%status, body = %resp_body, "ITA nonce request failed");
+                    return Err(Error::msg(format!(
+                        "ITA nonce request failed ({}): {}",
+                        status, resp_body
+                    )));
+                }
+                Ok((status, resp_body))
+            })
+            .await?;
+
+        if !status.is_success() {
             return Err(Error::msg(format!(
                 "ITA nonce request failed ({}): {}",
-                status, body
+                status, resp_body
             )));
         }
 
-        let nonce: ItaNonce = resp
-            .json()
-            .await
-            .context("Failed to parse ITA nonce response")?;
-
+        let nonce: ItaNonce =
+            serde_json::from_str(&resp_body).context("Failed to parse ITA nonce response")?;
         let nonce_str = serde_json::to_string(&nonce).context("Failed to serialize ITA nonce")?;
         tracing::debug!(nonce = %nonce_str, "ITA nonce request succeeded");
         Ok(nonce_str)
@@ -201,23 +231,39 @@ impl GenericConverter for ItaConverter {
             "Sending ITA attest request"
         );
 
-        let resp = self
-            .http
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .context("Failed to submit attestation to ITA")?;
+        let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
+            .with_max_delay(ITA_RETRY_MAX_DELAY)
+            .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+        let (status, resp_body) = policy
+            .retry(|| async {
+                let resp = self
+                    .http
+                    .post(&url)
+                    .header("x-api-key", &self.api_key)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/json")
+                    .json(&body)
+                    .send()
+                    .await
+                    .context("Failed to submit attestation to ITA")?;
+                let status = resp.status();
+                let resp_body = resp.text().await.unwrap_or_default();
+                if is_retryable_ita_error(status, &resp_body) {
+                    tracing::warn!(%status, body = %resp_body, "ITA attest request failed");
+                    return Err(Error::msg(format!(
+                        "ITA attest request failed ({}): {}",
+                        status, resp_body
+                    )));
+                }
+                Ok((status, resp_body))
+            })
+            .await?;
+
+        if !status.is_success() {
             return Err(Error::msg(format!(
                 "ITA attest request failed ({}): {}",
-                status, body
+                status, resp_body
             )));
         }
 
@@ -226,12 +272,66 @@ impl GenericConverter for ItaConverter {
             token: String,
         }
 
-        let attest_resp: AttestResponse = resp
-            .json()
-            .await
+        let attest_resp: AttestResponse = serde_json::from_str(&resp_body)
             .context("Failed to parse ITA attest response")?;
 
         tracing::debug!(token = %attest_resp.token, "ITA attest request succeeded");
         ItaToken::new(attest_resp.token)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tee::GenericConverter;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn dummy_evidence() -> ItaEvidence {
+        ItaEvidence::new(
+            vec![0u8; 32],
+            ItaNonce { val: "dg==".into(), iat: "dg==".into(), signature: "dg==".into() },
+            vec![0u8; 32],
+            None,
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn convert_retries_on_transient_ita_failures() {
+        let server = MockServer::start().await;
+
+        // First call: 500 server error (retryable)
+        Mock::given(method("POST")).and(path("/appraisal/v2/attest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Second call: 400 with GPU verification failure (retryable)
+        Mock::given(method("POST")).and(path("/appraisal/v2/attest"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_string("Received error from Appraisal request: Failed to verify GPU evidence"),
+            )
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Third call: success
+        Mock::given(method("POST")).and(path("/appraisal/v2/attest"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"token": "a.b.c"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let converter = ItaConverter::new("test-key", &server.uri(), &[]).unwrap();
+        let result = converter.convert(&dummy_evidence()).await;
+        assert!(result.is_ok());
     }
 }
