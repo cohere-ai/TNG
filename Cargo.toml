@@ -142,6 +142,7 @@ wasm-streams = "0.4.2"
 web-sys = {version = "0.3.77"}
 web-time = "1.1.0"
 which = "7.0.3"
+wiremock = "0.6.5"
 ws_stream_tungstenite = "0.13.0"
 ws_stream_wasm = "=0.7.5"
 x509-cert = {version = "0.2.5", features = ["builder", "pem"]}

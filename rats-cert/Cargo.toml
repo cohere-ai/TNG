@@ -102,6 +102,7 @@ rayon = {workspace = true}
 rstest = {workspace = true}
 tempfile = {workspace = true}
 tracing-subscriber = {workspace = true}
+wiremock = {workspace = true}
 
 [build-dependencies]
 tonic-prost-build = {workspace = true, optional = true}
