@@ -5,6 +5,7 @@ use rats_cert::tee::coco::converter::restful::CocoRestfulConverter;
 use rats_cert::tee::coco::converter::CocoConverter;
 use rats_cert::tee::coco::verifier::remote::CocoRemoteVerifier;
 use rats_cert::tee::coco::verifier::CocoVerifier;
+use rats_cert::tee::ita::{ItaAttester, ItaConverter, ItaVerifier};
 
 use crate::config::ra::{
     AttesterArgs, CocoAttesterArgs, CocoConverterArgs, CocoVerifierArgs, ConverterArgs,
@@ -26,6 +27,7 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
                 anyhow::bail!("Builtin AA is not yet implemented")
             }
         },
+        AttesterArgs::Ita { aa_addr } => Ok(TngAttester::Ita(ItaAttester::new(aa_addr)?)),
     }
 }
 
@@ -55,6 +57,18 @@ pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
                 )
             }
         },
+        ConverterArgs::Ita {
+            as_addr,
+            api_key,
+            policy_ids,
+        } => {
+            let api_key = api_key
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("ITA api_key is required but not set"))?;
+            Ok(TngConverter::Ita(ItaConverter::new(
+                api_key, as_addr, policy_ids,
+            )?))
+        }
     }
 }
 
@@ -108,5 +122,12 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
                 )
             }
         },
+        VerifierArgs::Ita {
+            ita_jwks_addr,
+            policy_ids,
+        } => Ok(TngVerifier::Ita(ItaVerifier::new(
+            ita_jwks_addr,
+            policy_ids,
+        )?)),
     }
 }

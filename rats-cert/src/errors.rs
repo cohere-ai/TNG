@@ -370,4 +370,28 @@ pub enum Error {
 
     #[error("Failed to serialize canonical JSON: {0}")]
     SerializeCanonicalJsonFailed(#[source] serde_json::Error),
+
+    // ITA-specific errors
+    #[error("ITA HTTP request to `{endpoint}` failed: {source}")]
+    ItaHttpRequestFailed {
+        endpoint: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
+    #[error("ITA HTTP response error from `{endpoint}`: status={status_code}, body={response_body}")]
+    ItaHttpResponseError {
+        endpoint: String,
+        status_code: u16,
+        response_body: String,
+    },
+
+    #[error("ITA JWT verification failed: {0}")]
+    ItaVerifyTokenFailed(#[source] jsonwebtoken::errors::Error),
+
+    #[error("ITA rejected debug-mode TD: {detail}")]
+    ItaDebugModeRejected { detail: String },
+
+    #[error("ITA error: {0}")]
+    ItaError(String),
 }

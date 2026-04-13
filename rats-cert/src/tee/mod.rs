@@ -11,6 +11,8 @@ pub mod claims;
 #[cfg(any(feature = "attester-coco", feature = "verifier-coco"))]
 pub mod coco;
 
+pub mod ita;
+
 pub enum DiceParseEvidenceOutput<T> {
     NotMatch,
     MatchButInvalid(Error),

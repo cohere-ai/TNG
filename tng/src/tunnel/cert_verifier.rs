@@ -33,16 +33,13 @@ impl TngCommonCertVerifier {
             .take()
             .context("No rats-tls cert received")?;
 
-        // Step 1: Extract evidence from certificate
         let pending_result = CertVerifier::new()
             .verify_der(&pending_cert)
             .await
             .map_err(|e| anyhow!("Failed to extract evidence from certificate: {:?}", e))?;
 
-        // Step 2: Based on verify mode, convert evidence to token and verify
         let token = match &*self.verify_ctx {
             VerifyContext::Passport { verifier } => {
-                // Passport mode: certificate should contain a token
                 let parse_result: rats_cert::errors::Result<TngToken> =
                     TngToken::create_evidence_from_dice(
                         pending_result.cbor_tag,
@@ -68,7 +65,6 @@ impl TngCommonCertVerifier {
                 converter,
                 verifier,
             } => {
-                 // BackgroundCheck mode: certificate should contain raw evidence
                 let parse_result: rats_cert::errors::Result<TngEvidence> =
                     TngEvidence::create_evidence_from_dice(
                         pending_result.cbor_tag,
@@ -83,13 +79,11 @@ impl TngCommonCertVerifier {
                     )
                 })?;
 
-                // Convert evidence to token via remote AS
                 let token = converter
                     .convert(&evidence)
                     .await
                     .map_err(|e| anyhow!("Failed to convert evidence to token: {:?}", e))?;
 
-                // Verify the token
                 verifier
                     .verify_evidence(&token, &pending_result.report_data)
                     .await
@@ -108,7 +102,6 @@ impl TngCommonCertVerifier {
         &self,
         end_entity: &rustls::pki_types::CertificateDer<'_>,
     ) -> std::result::Result<(), rustls::Error> {
-        // We just return ok here, and store the end entity certificate and verify it later.
         self.pending_cert.lock().replace(end_entity.to_vec());
         Ok(())
     }

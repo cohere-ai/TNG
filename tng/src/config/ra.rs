@@ -95,11 +95,20 @@ impl RaArgsUnchecked {
                                 )));
                             }
                         }
-                        // Builtin AA doesn't need socket file check
-                        CocoAttesterArgs::Builtin => {
-                            // TODO: Builtin AA not implemented yet
-                        }
+                        CocoAttesterArgs::Builtin => {}
                     },
+                    AttesterArgs::Ita { aa_addr } => {
+                        let aa_sock_file = aa_addr
+                            .strip_prefix("unix:///")
+                            .context("AA address must start with unix:///")
+                            .map_err(TngError::InvalidParameter)?;
+                        let aa_sock_file = Path::new("/").join(aa_sock_file);
+                        if !Path::new(&aa_sock_file).exists() {
+                            return Err(TngError::InvalidParameter(anyhow!(
+                                "AA socket file {aa_sock_file:?} not found"
+                            )));
+                        }
+                    }
                 },
             };
         }
@@ -135,14 +144,12 @@ impl RaArgsUnchecked {
                                         "'as_headers' cannot be set without 'as_addr'"
                                     )));
                                 }
-                                // Additional checks for Passport mode
                                 if as_addr.is_none() && trusted_certs_paths.is_none() {
                                     return Err(TngError::InvalidParameter(anyhow!(
                                         "At least one of 'as_addr' or 'trusted_certs_paths' must be set to verify attestation token"
                                     )));
                                 }
 
-                                // Check if trusted certificate paths exist
                                 if let Some(paths) = trusted_certs_paths {
                                     for path in paths {
                                         if !Path::new(path).exists() {
@@ -157,6 +164,9 @@ impl RaArgsUnchecked {
                             #[cfg(feature = "__builtin-as")]
                             CocoVerifierArgs::Builtin => {}
                         },
+                        VerifierArgs::Ita { .. } => {
+                            // ITA verifier fetches JWKS from the portal URL; no additional checks needed here
+                        }
                     }
                 }
             };
@@ -208,6 +218,19 @@ impl RaArgsUnchecked {
                             }
                         }
                     },
+                    ConverterArgs::Ita { as_addr, api_key, .. } => {
+                        Url::parse(as_addr)
+                            .with_context(|| {
+                                format!("Invalid ITA API address: {}", as_addr)
+                            })
+                            .map_err(TngError::InvalidParameter)?;
+                        if api_key.is_none() {
+                            return Err(TngError::InvalidParameter(anyhow!(
+                                "ITA api_key is required: set it in config or via ${} env var",
+                                ITA_API_KEY_ENV
+                            )));
+                        }
+                    }
                 }
             }
         }
@@ -221,11 +244,15 @@ impl RaArgsUnchecked {
 
 /// Provider-tagged attester config. Serde reads "aa_provider" from flat JSON.
 /// Separate from as_provider because in Passport mode the attester and
-/// converter can use different providers (e.g., aa_provider: "ita_asr" + as_provider: "ita").
+/// converter can use different providers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "aa_provider", rename_all = "snake_case")]
 pub enum AttesterArgs {
     Coco(CocoAttesterArgs),
+    Ita {
+        /// Attestation agent address (unix socket path). ITA reuses CoCo AA via ttrpc.
+        aa_addr: String,
+    },
 }
 
 /// CoCo-internal attester variants. Serde reads "aa_type" from flat JSON.
@@ -242,11 +269,33 @@ pub enum CocoAttesterArgs {
     Builtin,
 }
 
+const DEFAULT_ITA_API_URL: &str = "https://api.trustauthority.intel.com";
+const DEFAULT_ITA_PORTAL_URL: &str = "https://portal.trustauthority.intel.com";
+const ITA_API_KEY_ENV: &str = "ITA_API_KEY";
+
+fn default_ita_api_url() -> String {
+    DEFAULT_ITA_API_URL.to_string()
+}
+
+fn default_ita_portal_url() -> String {
+    DEFAULT_ITA_PORTAL_URL.to_string()
+}
+
 /// Provider-tagged converter config. Serde reads "as_provider" from flat JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "as_provider", rename_all = "snake_case")]
 pub enum ConverterArgs {
     Coco(CocoConverterArgs),
+    Ita {
+        #[serde(default = "default_ita_api_url")]
+        as_addr: String,
+        /// Optional in config JSON -- if absent, `inject_ita_api_key_default()` fills
+        /// it from the `$ITA_API_KEY` env var during deserialization.
+        #[serde(default)]
+        api_key: Option<String>,
+        #[serde(default)]
+        policy_ids: Vec<String>,
+    },
 }
 
 /// CoCo-internal converter variants. Serde reads "as_type" from flat JSON.
@@ -291,6 +340,12 @@ pub enum CocoConverterArgs {
 #[serde(tag = "as_provider", rename_all = "snake_case")]
 pub enum VerifierArgs {
     Coco(CocoVerifierArgs),
+    Ita {
+        #[serde(default = "default_ita_portal_url")]
+        ita_jwks_addr: String,
+        #[serde(default)]
+        policy_ids: Vec<String>,
+    },
 }
 
 /// CoCo-internal verifier variants. Serde reads "as_type" from flat JSON.
@@ -553,12 +608,32 @@ fn inject_provider_defaults(obj: &mut serde_json::Map<String, serde_json::Value>
         }
     }
 
-    // CoCo-specific sub-type defaults
+    // CoCo-specific sub-type defaults (only when provider is coco)
     if obj.get("aa_provider").and_then(|v| v.as_str()) == Some("coco") {
         obj.entry("aa_type").or_insert("uds".into());
     }
     if obj.get("as_provider").and_then(|v| v.as_str()) == Some("coco") {
         obj.entry("as_type").or_insert("restful".into());
+    }
+
+    // ITA: inject api_key from environment variable if not present in config
+    if obj.get("as_provider").and_then(|v| v.as_str()) == Some("ita") {
+        inject_ita_api_key_default(obj);
+    }
+}
+
+/// Fill `api_key` from `$ITA_API_KEY` env var if it's absent or null in the config.
+fn inject_ita_api_key_default(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    let has_key = obj
+        .get("api_key")
+        .map(|v| !v.is_null() && v.as_str() != Some(""))
+        .unwrap_or(false);
+    if !has_key {
+        if let Ok(env_key) = std::env::var(ITA_API_KEY_ENV) {
+            if !env_key.is_empty() {
+                obj.insert("api_key".into(), serde_json::Value::String(env_key));
+            }
+        }
     }
 }
 
@@ -1394,5 +1469,184 @@ mod tests {
         // Test serialization
         let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
         assert!(serialized.contains(r#""as_type":"builtin""#));
+    }
+
+    #[test]
+    fn test_ita_attest_config_passport() {
+        let json = json!({
+            "attest": {
+                "model": "passport",
+                "aa_provider": "ita",
+                "aa_addr": "unix:///tmp/ita-aa.sock",
+                "as_provider": "ita",
+                "as_addr": "https://api.trustauthority.intel.com",
+                "api_key": "test-key"
+            }
+        });
+
+        let ra_args: RaArgsUnchecked =
+            serde_json::from_value(json).expect("Failed to deserialize");
+
+        match &ra_args.attest {
+            Some(AttestArgs::Passport { attester, converter, .. }) => {
+                match attester {
+                    AttesterArgs::Ita { aa_addr } => {
+                        assert_eq!(aa_addr, "unix:///tmp/ita-aa.sock");
+                    }
+                    _ => panic!("Expected Ita attester"),
+                }
+                match converter {
+                    ConverterArgs::Ita { as_addr, api_key, .. } => {
+                        assert_eq!(as_addr, "https://api.trustauthority.intel.com");
+                        assert_eq!(api_key, &Some("test-key".to_string()));
+                    }
+                    _ => panic!("Expected Ita converter"),
+                }
+            }
+            _ => panic!("Expected Passport attest variant"),
+        }
+    }
+
+    #[test]
+    fn test_ita_attest_config_background_check() {
+        let json = json!({
+            "attest": {
+                "aa_provider": "ita",
+                "aa_addr": "unix:///tmp/ita-aa.sock"
+            }
+        });
+
+        let ra_args: RaArgsUnchecked =
+            serde_json::from_value(json).expect("Failed to deserialize");
+
+        match &ra_args.attest {
+            Some(AttestArgs::BackgroundCheck { attester, .. }) => match attester {
+                AttesterArgs::Ita { aa_addr } => {
+                    assert_eq!(aa_addr, "unix:///tmp/ita-aa.sock");
+                }
+                _ => panic!("Expected Ita attester"),
+            },
+            _ => panic!("Expected BackgroundCheck attest variant"),
+        }
+    }
+
+    #[test]
+    fn test_ita_background_check_verify_config() {
+        let json = json!({
+            "verify": {
+                "model": "background_check",
+                "as_provider": "ita",
+                "as_addr": "https://api.trustauthority.intel.com",
+                "api_key": "test-key-123",
+                "policy_ids": ["policy-1"]
+            }
+        });
+
+        let ra_args: RaArgsUnchecked =
+            serde_json::from_value(json).expect("Failed to deserialize");
+
+        match &ra_args.verify {
+            Some(VerifyArgs::BackgroundCheck { converter, verifier }) => {
+                match converter {
+                    ConverterArgs::Ita {
+                        as_addr,
+                        api_key,
+                        policy_ids,
+                    } => {
+                        assert_eq!(as_addr, "https://api.trustauthority.intel.com");
+                        assert_eq!(api_key, &Some("test-key-123".to_string()));
+                        assert_eq!(policy_ids, &vec!["policy-1"]);
+                    }
+                    _ => panic!("Expected Ita converter"),
+                }
+                match verifier {
+                    VerifierArgs::Ita {
+                        ita_jwks_addr,
+                        policy_ids,
+                    } => {
+                        assert_eq!(ita_jwks_addr, DEFAULT_ITA_PORTAL_URL);
+                        assert_eq!(policy_ids, &vec!["policy-1"]);
+                    }
+                    _ => panic!("Expected Ita verifier"),
+                }
+            }
+            _ => panic!("Expected BackgroundCheck variant"),
+        }
+    }
+
+    #[test]
+    fn test_ita_passport_verify_config() {
+        let json = json!({
+            "verify": {
+                "model": "passport",
+                "as_provider": "ita",
+                "ita_jwks_addr": "https://portal.custom.intel.com",
+                "policy_ids": ["my-policy"]
+            }
+        });
+
+        let ra_args: RaArgsUnchecked =
+            serde_json::from_value(json).expect("Failed to deserialize");
+
+        match &ra_args.verify {
+            Some(VerifyArgs::Passport { verifier }) => match verifier {
+                VerifierArgs::Ita {
+                    ita_jwks_addr,
+                    policy_ids,
+                } => {
+                    assert_eq!(ita_jwks_addr, "https://portal.custom.intel.com");
+                    assert_eq!(policy_ids, &vec!["my-policy"]);
+                }
+                _ => panic!("Expected Ita verifier"),
+            },
+            _ => panic!("Expected Passport variant"),
+        }
+    }
+
+    #[test]
+    fn test_ita_api_key_defaults_from_env() {
+        let json = json!({
+            "verify": {
+                "model": "background_check",
+                "as_provider": "ita"
+            }
+        });
+
+        std::env::set_var(ITA_API_KEY_ENV, "env-key-456");
+        let ra_args: RaArgsUnchecked =
+            serde_json::from_value(json).expect("Failed to deserialize");
+        std::env::remove_var(ITA_API_KEY_ENV);
+
+        match &ra_args.verify {
+            Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
+                ConverterArgs::Ita {
+                    as_addr, api_key, ..
+                } => {
+                    assert_eq!(as_addr, DEFAULT_ITA_API_URL);
+                    assert_eq!(api_key, &Some("env-key-456".to_string()));
+                }
+                _ => panic!("Expected Ita converter"),
+            },
+            _ => panic!("Expected BackgroundCheck variant"),
+        }
+    }
+
+    #[test]
+    fn test_ita_config_serialization_roundtrip() {
+        let json = json!({
+            "verify": {
+                "model": "background_check",
+                "as_provider": "ita",
+                "as_addr": "https://api.trustauthority.intel.com",
+                "api_key": "test-key",
+                "policy_ids": ["p1"]
+            }
+        });
+
+        let ra_args: RaArgsUnchecked =
+            serde_json::from_value(json).expect("Failed to deserialize");
+        let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
+        assert!(serialized.contains(r#""as_provider":"ita""#));
+        assert!(serialized.contains(r#""api_key":"test-key""#));
     }
 }
