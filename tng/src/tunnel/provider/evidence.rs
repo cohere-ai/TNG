@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Result};
-use rats_cert::tee::coco::evidence::CocoEvidence;
+use anyhow::Result;
 use rats_cert::tee::claims::Claims;
+use rats_cert::tee::coco::evidence::CocoEvidence;
 use rats_cert::tee::ita::ItaEvidence;
 use rats_cert::tee::{DiceParseEvidenceOutput, GenericEvidence};
 
@@ -57,38 +57,19 @@ impl TngEvidence {
         }
     }
 
-    /// Serialize to JSON with a provider type envelope for wire safety.
-    /// The receiver uses the `"provider"` tag to determine how to deserialize,
-    /// since ingress and egress are separate TNG instances with independent configs.
+    /// Serialize to the CoCo evidence JSON object. OHTTP adds `aa_provider` beside this value.
     pub fn serialize_to_json(&self) -> Result<serde_json::Value> {
-        let inner = match self {
-            Self::Coco(e) => e.serialize_to_json()?,
-            Self::Ita(e) => e.serialize_to_json()?,
-        };
-        Ok(serde_json::json!({
-            "provider": self.provider_type(),
-            "evidence": inner
-        }))
+        match self {
+            Self::Coco(e) => Ok(e.serialize_to_json()?),
+            Self::Ita(e) => Ok(e.serialize_to_json()?),
+        }
     }
 
-    /// Deserialize from JSON, dispatching on the `"provider"` tag.
-    pub fn deserialize_from_json(value: serde_json::Value) -> Result<Self> {
-        let mut obj = match value {
-            serde_json::Value::Object(map) => map,
-            _ => return Err(anyhow!("evidence envelope is not a JSON object")),
-        };
-        let provider: ProviderType = obj
-            .get("provider")
-            .ok_or_else(|| anyhow!("missing 'provider' field in evidence"))?
-            .as_str()
-            .ok_or_else(|| anyhow!("'provider' field is not a string"))?
-            .parse()?;
-        let inner = obj
-            .remove("evidence")
-            .ok_or_else(|| anyhow!("missing 'evidence' field"))?;
+    /// Deserialize evidence JSON for `provider` (OHTTP passes [`ProviderType`] from `aa_provider`).
+    pub fn deserialize_from_json(provider: ProviderType, value: serde_json::Value) -> Result<Self> {
         match provider {
-            ProviderType::Coco => Ok(Self::Coco(CocoEvidence::deserialize_from_json(inner)?)),
-            ProviderType::Ita => Ok(Self::Ita(ItaEvidence::deserialize_from_json(inner)?)),
+            ProviderType::Coco => Ok(Self::Coco(CocoEvidence::deserialize_from_json(value)?)),
+            ProviderType::Ita => Ok(Self::Ita(ItaEvidence::deserialize_from_json(value)?)),
         }
     }
 }
@@ -124,5 +105,27 @@ impl GenericEvidence for TngEvidence {
             .or_else(|| {
                 ItaEvidence::create_evidence_from_dice(cbor_tag, raw_evidence).map_ok::<Self>()
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal valid `CocoEvidence` JSON (`CocoEvidence::serialize_to_json` shape on master).
+    fn minimal_legacy_coco_evidence_json() -> serde_json::Value {
+        serde_json::json!({
+            "aa_tee_type": "tdx",
+            "aa_evidence": "aGVsbG8=",
+            "aa_runtime_data": "{}",
+            "aa_runtime_data_hash_algo": "sha256",
+        })
+    }
+
+    #[test]
+    fn coco_evidence_json_round_trip() {
+        let inner = minimal_legacy_coco_evidence_json();
+        let ev = TngEvidence::deserialize_from_json(ProviderType::Coco, inner.clone()).expect("deserialize");
+        assert_eq!(ev.serialize_to_json().expect("serialize"), inner);
     }
 }

@@ -76,8 +76,7 @@ impl RaArgsUnchecked {
 
         // Sanity check for the attest_args.
         #[cfg(unix)]
-        if let RaArgs::AttestOnly(attest_args) | RaArgs::AttestAndVerify(attest_args, _) =
-            &ra_args
+        if let RaArgs::AttestOnly(attest_args) | RaArgs::AttestAndVerify(attest_args, _) = &ra_args
         {
             match &attest_args {
                 AttestArgs::Passport { attester, .. }
@@ -124,7 +123,8 @@ impl RaArgsUnchecked {
 
             // Check token_verify
             match verify_args {
-                VerifyArgs::Passport { verifier } | VerifyArgs::BackgroundCheck { verifier, .. } => {
+                VerifyArgs::Passport { verifier }
+                | VerifyArgs::BackgroundCheck { verifier, .. } => {
                     match verifier {
                         VerifierArgs::Coco(coco_verifier) => match coco_verifier {
                             CocoVerifierArgs::Restful {
@@ -144,19 +144,19 @@ impl RaArgsUnchecked {
                                         "'as_headers' cannot be set without 'as_addr'"
                                     )));
                                 }
-                                if as_addr.is_none() && trusted_certs_paths.is_none() {
-                                    return Err(TngError::InvalidParameter(anyhow!(
-                                        "At least one of 'as_addr' or 'trusted_certs_paths' must be set to verify attestation token"
-                                    )));
+
+                                // Additional checks for Passport mode
+                                if matches!(verify_args, VerifyArgs::Passport { .. })
+                                    && as_addr.is_none()
+                                    && trusted_certs_paths.is_none()
+                                {
+                                    return Err(TngError::InvalidParameter(anyhow!("At least one of 'as_addr' or 'trusted_certs_paths' must be set to verify attestation token")));
                                 }
 
                                 if let Some(paths) = trusted_certs_paths {
                                     for path in paths {
                                         if !Path::new(path).exists() {
-                                            return Err(TngError::InvalidParameter(anyhow!(
-                                                "Attestation service trusted certificate path does not exist: {}",
-                                                path
-                                            )));
+                                            return Err(TngError::InvalidParameter(anyhow!("Attestation service trusted certificate path does not exist: {}", path)));
                                         }
                                     }
                                 }
@@ -202,6 +202,7 @@ impl RaArgsUnchecked {
                                     )));
                                 }
                             }
+
                             // Check reference value payload paths
                             for rv in reference_values {
                                 if let ReferenceValueConfig::Sample {
@@ -389,8 +390,18 @@ pub enum CocoVerifierArgs {
 }
 
 // ---------------------------------------------------------------------------
-// AttestArgs / VerifyArgs -- model-level enums with custom (De)Serialize
+// AttestArgs / VerifyArgs (custom serde)
 // ---------------------------------------------------------------------------
+// The wire format mixes an optional `model` field with provider-specific keys in one flat JSON
+// object, so `AttestArgs` / `VerifyArgs` use manual Serialize/Deserialize. Nested provider types
+// (`AttesterArgs`, `ConverterArgs`, …) still use ordinary serde derives with optional tags inserted
+// before hand.
+//
+// Compared with a MaybeTagged-style split between tagged and untagged wrapper structs, this:
+// 1. Avoids duplicating provider fields across those extra layers.
+// 2. Keeps validation on the same serde-derived provider enums used at runtime.
+// 3. Feeds the same deserialized args into provider factories and the RA stack without an extra
+//    mapping layer.
 
 const EVIDENCE_REFRESH_INTERVAL_SECOND: u64 = 10 * 60; // 10 minutes
 
@@ -398,7 +409,7 @@ const EVIDENCE_REFRESH_INTERVAL_SECOND: u64 = 10 * 60; // 10 minutes
 /// Note: refresh_interval lives here at the model level for consistency with
 /// ConverterArgs/VerifierArgs (all plain enums). If desired, it could be moved
 /// into AttesterArgs via a struct wrapper at the cost of one more level of
-/// indirection and inconsistency with the other *Args enums.
+/// indirection and inconsistency with the ConverterArgs/VerifierArgs enums.
 #[derive(Debug, Clone)]
 pub enum AttestArgs {
     /// Passport mode attestation parameters
@@ -601,14 +612,7 @@ fn inject_provider_defaults(obj: &mut serde_json::Map<String, serde_json::Value>
     obj.entry("aa_provider").or_insert("coco".into());
     obj.entry("as_provider").or_insert("coco".into());
 
-    // Backward compat: translate as_is_grpc -> as_type for old configs
-    if !obj.contains_key("as_type") {
-        if obj.get("as_is_grpc").and_then(|v| v.as_bool()) == Some(true) {
-            obj.insert("as_type".into(), "grpc".into());
-        }
-    }
-
-    // CoCo-specific sub-type defaults (only when provider is coco)
+    // CoCo-specific sub-type defaults
     if obj.get("aa_provider").and_then(|v| v.as_str()) == Some("coco") {
         obj.entry("aa_type").or_insert("uds".into());
     }
@@ -652,6 +656,7 @@ fn merge_into(target: &mut serde_json::Map<String, serde_json::Value>, source: &
 // Builtin AS/AA Configuration Types
 // ============================================================================
 
+// Re-export config types from rats-cert to ensure consistency
 #[cfg(feature = "__builtin-as")]
 pub use rats_cert::cert::verify::{
     PolicyConfig, ReferenceValueConfig, SampleProvenancePayloadConfig,
@@ -675,8 +680,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.attest {
             Some(AttestArgs::BackgroundCheck {
@@ -716,8 +720,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.attest {
             Some(AttestArgs::BackgroundCheck {
@@ -753,8 +756,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.attest {
             Some(AttestArgs::Passport {
@@ -791,8 +793,10 @@ mod tests {
         let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
         assert!(serialized.contains(r#""model":"passport""#));
         assert!(serialized.contains(r#""aa_type":"uds""#));
+        assert!(serialized.contains(r#""aa_addr":"unix:///run/confidential-containers/attestation-agent/attestation-agent.sock""#));
         assert!(serialized.contains(r#""as_type":"restful""#));
         assert!(serialized.contains(r#""as_addr":"localhost:8081""#));
+        assert!(serialized.contains(r#""policy_ids":["policy1","policy2"]"#));
     }
 
     #[test]
@@ -855,7 +859,6 @@ mod tests {
 
         serde_json::from_value::<RaArgsUnchecked>(json).unwrap();
     }
-
     #[test]
     fn test_background_check_verify_without_model() {
         let json = json!(
@@ -867,8 +870,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
@@ -898,8 +900,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
@@ -928,8 +929,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::Passport { verifier }) => match verifier {
@@ -959,8 +959,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
         let result = ra_args.into_checked();
         assert!(result.is_err());
         let error = result.unwrap_err();
@@ -983,8 +982,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
         let result = ra_args.into_checked();
         assert!(result.is_err());
         let error = result.unwrap_err();
@@ -1006,8 +1004,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
         let result = ra_args.into_checked();
         assert!(result.is_err());
         let error = result.unwrap_err();
@@ -1061,8 +1058,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
@@ -1072,10 +1068,7 @@ mod tests {
                 }) => {
                     match policy {
                         PolicyConfig::Inline { content } => {
-                            assert_eq!(
-                                content,
-                                "cGFja2FnZSBwb2xpY3kKZGVmYXVsdCBhbGxvdyA9IHRydWU="
-                            );
+                            assert_eq!(content, "cGFja2FnZSBwb2xpY3kKZGVmYXVsdCBhbGxvdyA9IHRydWU=");
                         }
                         _ => panic!("Expected Inline policy"),
                     }
@@ -1109,8 +1102,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
@@ -1151,8 +1143,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
@@ -1218,8 +1209,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
@@ -1228,17 +1218,36 @@ mod tests {
                 }) => {
                     assert_eq!(reference_values.len(), 1);
                     match &reference_values[0] {
-                        // Verify payload is inline with ReferenceValueListPayload content
-                        ReferenceValueConfig::Slsa { payload } => match payload {
-                            SlsaReferenceValuePayloadConfig::Inline { content } => {
-                                assert_eq!(content.rv_list.len(), 1);
-                                let rv = &content.rv_list[0];
-                                assert_eq!(rv.id, "test-artifact");
-                                assert_eq!(rv.version, "1.0.0");
-                                assert_eq!(rv.rv_type, "binary");
+                        ReferenceValueConfig::Slsa { payload } => {
+                            // Verify payload is inline with ReferenceValueListPayload content
+                            match payload {
+                                SlsaReferenceValuePayloadConfig::Inline { content } => {
+                                    assert_eq!(content.rv_list.len(), 1);
+                                    let rv = &content.rv_list[0];
+                                    assert_eq!(rv.id, "test-artifact");
+                                    assert_eq!(rv.version, "1.0.0");
+                                    assert_eq!(rv.rv_type, "binary");
+                                    assert_eq!(
+                                        rv.provenance_info.provenance_type,
+                                        "slsa-intoto-statements"
+                                    );
+                                    assert_eq!(
+                                        rv.provenance_info.rekor_url,
+                                        "https://log2025-1.rekor.sigstore.dev"
+                                    );
+                                    assert_eq!(rv.provenance_info.rekor_api_version, Some(2));
+                                    assert!(rv.provenance_source.is_some());
+                                    let ps = rv.provenance_source.as_ref().unwrap();
+                                    assert_eq!(ps.protocol, "oci");
+                                    assert_eq!(
+                                        ps.uri,
+                                        "oci://127.0.0.1:5000/trustee/provenance:test-artifact-1.0.0"
+                                    );
+                                    assert_eq!(ps.artifact, Some("bundle".to_string()));
+                                }
+                                _ => panic!("Expected Inline payload"),
                             }
-                            _ => panic!("Expected Inline payload"),
-                        },
+                        }
                         _ => panic!("Expected Slsa reference value"),
                     }
                 }
@@ -1264,8 +1273,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.attest {
             Some(AttestArgs::Passport {
@@ -1273,16 +1281,14 @@ mod tests {
                 converter,
                 refresh_interval,
             }) => {
-                assert!(matches!(attester, AttesterArgs::Coco(CocoAttesterArgs::Builtin)));
+                assert!(matches!(
+                    attester,
+                    AttesterArgs::Coco(CocoAttesterArgs::Builtin)
+                ));
                 assert_eq!(*refresh_interval, Some(600));
                 match converter {
-                    ConverterArgs::Coco(CocoConverterArgs::Restful {
-                        as_addr,
-                        policy_ids,
-                        ..
-                    }) => {
+                    ConverterArgs::Coco(CocoConverterArgs::Restful {as_addr, .. }) => {
                         assert_eq!(as_addr, "http://as-server:8080");
-                        assert_eq!(policy_ids, &vec!["default"]);
                     }
                     _ => panic!("Expected Coco/Restful converter"),
                 }
@@ -1309,15 +1315,17 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.attest {
             Some(AttestArgs::BackgroundCheck {
                 attester,
                 refresh_interval,
             }) => {
-                assert!(matches!(attester, AttesterArgs::Coco(CocoAttesterArgs::Builtin)));
+                assert!(matches!(
+                    attester,
+                    AttesterArgs::Coco(CocoAttesterArgs::Builtin)
+                ));
                 assert_eq!(*refresh_interval, Some(300));
             }
             _ => panic!("Expected BackgroundCheck variant with builtin AA"),
@@ -1342,8 +1350,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.attest {
             Some(AttestArgs::BackgroundCheck {
@@ -1382,8 +1389,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
@@ -1418,8 +1424,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
@@ -1453,8 +1458,7 @@ mod tests {
             }
         );
 
-        let ra_args: RaArgsUnchecked =
-            serde_json::from_value(json).expect("Failed to deserialize");
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.verify {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {

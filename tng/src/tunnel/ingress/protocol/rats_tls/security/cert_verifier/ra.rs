@@ -1,3 +1,6 @@
+//! Rustls server certificate verifier that validates the peer using remote attestation
+//! ([`TngCommonCertVerifier`]) when the client is configured to verify the server.
+
 use std::sync::Arc;
 
 use anyhow::Result;

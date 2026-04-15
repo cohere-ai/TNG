@@ -20,9 +20,7 @@ use super::verifier::TngVerifier;
 pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
     match config {
         AttesterArgs::Coco(coco) => match coco {
-            CocoAttesterArgs::Uds { aa_addr } => {
-                Ok(TngAttester::Coco(CocoAttester::new(aa_addr)?))
-            }
+            CocoAttesterArgs::Uds { aa_addr } => Ok(TngAttester::Coco(CocoAttester::new(aa_addr)?)),
             CocoAttesterArgs::Builtin => {
                 anyhow::bail!("Builtin AA is not yet implemented")
             }
@@ -32,7 +30,7 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
 }
 
 /// Instantiate a `TngConverter` from config. Dispatches on provider, then sub-type.
-/// Note: Builtin AS converter is special-cased in `ra_context.rs`, not here.
+/// Note: Builtin AS converter creation via factory is not supported.
 pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
     match config {
         ConverterArgs::Coco(coco) => match coco {
@@ -53,7 +51,7 @@ pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
             #[cfg(feature = "__builtin-as")]
             CocoConverterArgs::Builtin { .. } => {
                 anyhow::bail!(
-                    "Builtin AS converter should be created directly in ra_context, not via factory"
+                    "Builtin AS converter creation via factory is not supported"
                 )
             }
         },
@@ -73,7 +71,7 @@ pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
 }
 
 /// Instantiate a `TngVerifier` from config. Dispatches on provider, then sub-type.
-/// Note: Builtin AS verifier is special-cased in `ra_context.rs`, not here.
+/// Note: Builtin AS verifier creation via factory is not supported.
 pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
     match config {
         VerifierArgs::Coco(coco) => match coco {
@@ -83,14 +81,13 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
                 as_headers,
                 trusted_certs_paths,
             } => {
-                let as_addr_config =
-                    as_addr.as_ref().map(|addr| {
-                        rats_cert::cert::verify::AttestationServiceAddrArgs {
-                            as_addr: addr.clone(),
-                            as_is_grpc: false,
-                            as_headers: as_headers.clone(),
-                        }
-                    });
+                let as_addr_config = as_addr.as_ref().map(|addr| {
+                    rats_cert::cert::verify::AttestationServiceAddrArgs {
+                        as_addr: addr.clone(),
+                        as_is_grpc: false,
+                        as_headers: as_headers.clone(),
+                    }
+                });
                 Ok(TngVerifier::Coco(CocoVerifier::Remote(
                     CocoRemoteVerifier::new(&as_addr_config, trusted_certs_paths, policy_ids)
                         .await?,
@@ -102,14 +99,13 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
                 as_headers,
                 trusted_certs_paths,
             } => {
-                let as_addr_config =
-                    as_addr.as_ref().map(|addr| {
-                        rats_cert::cert::verify::AttestationServiceAddrArgs {
-                            as_addr: addr.clone(),
-                            as_is_grpc: true,
-                            as_headers: as_headers.clone(),
-                        }
-                    });
+                let as_addr_config = as_addr.as_ref().map(|addr| {
+                    rats_cert::cert::verify::AttestationServiceAddrArgs {
+                        as_addr: addr.clone(),
+                        as_is_grpc: true,
+                        as_headers: as_headers.clone(),
+                    }
+                });
                 Ok(TngVerifier::Coco(CocoVerifier::Remote(
                     CocoRemoteVerifier::new(&as_addr_config, trusted_certs_paths, policy_ids)
                         .await?,
@@ -118,7 +114,7 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
             #[cfg(feature = "__builtin-as")]
             CocoVerifierArgs::Builtin => {
                 anyhow::bail!(
-                    "Builtin AS verifier should be created directly in ra_context, not via factory"
+                    "Builtin AS verifier creation via factory is not supported"
                 )
             }
         },

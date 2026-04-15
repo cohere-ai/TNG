@@ -27,6 +27,7 @@ impl TngClientCertVerifier {
         let certs = rustls_pemfile::certs(&mut cert).collect::<Result<Vec<_>, _>>()?;
         let mut roots = RootCertStore::empty();
         roots.add_parsable_certificates(certs);
+        /* The WebPkiServerVerifier requires that the root certs not empty, or it will failed with 'no root trust anchors were provided'. So let's put a dummy cert here as a root cert to make WebPkiServerVerifier happy. */
         let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build()?;
 
         Ok(Self {
