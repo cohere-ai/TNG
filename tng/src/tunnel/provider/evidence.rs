@@ -30,9 +30,9 @@ impl TryFrom<&TngEvidence> for CocoEvidence {
     fn try_from(e: &TngEvidence) -> rats_cert::errors::Result<Self> {
         match e {
             TngEvidence::Coco(inner) => Ok(inner.clone()),
-            _ => Err(rats_cert::errors::Error::ItaError(
-                "expected CoCo evidence, got different provider".to_string(),
-            )),
+            _ => Err(rats_cert::errors::Error::UnsupportedConversion {
+                detail: "expected CoCo evidence, got different provider".to_string(),
+            }),
         }
     }
 }
@@ -42,9 +42,9 @@ impl TryFrom<&TngEvidence> for ItaEvidence {
     fn try_from(e: &TngEvidence) -> rats_cert::errors::Result<Self> {
         match e {
             TngEvidence::Ita(inner) => Ok(inner.clone()),
-            _ => Err(rats_cert::errors::Error::ItaError(
-                "expected ITA evidence, got different provider".to_string(),
-            )),
+            _ => Err(rats_cert::errors::Error::UnsupportedConversion {
+                detail: "expected ITA evidence, got different provider".to_string(),
+            }),
         }
     }
 }

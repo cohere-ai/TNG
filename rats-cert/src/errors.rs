@@ -394,4 +394,10 @@ pub enum Error {
 
     #[error("ITA error: {0}")]
     ItaError(String),
+
+    #[error("Unsupported conversion: {detail}")]
+    UnsupportedConversion { detail: String },
+
+    #[error("Incompatible types: {detail}")]
+    IncompatibleTypes { detail: String },
 }

@@ -28,9 +28,9 @@ impl GenericVerifier for TngVerifier {
         match (self, token) {
             (Self::Coco(v), TngToken::Coco(t)) => v.verify_evidence(t, report_data).await,
             (Self::Ita(v), TngToken::Ita(t)) => v.verify_evidence(t, report_data).await,
-            _ => Err(Error::ItaError(
-                "verifier/token provider mismatch".to_string(),
-            )),
+            _ => Err(Error::IncompatibleTypes {
+                detail: "verifier and token provider mismatch".to_string(),
+            }),
         }
     }
 }
