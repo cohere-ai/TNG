@@ -8,7 +8,6 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 
 use crate::errors::*;
-use crate::tee::coco::evidence::CocoEvidence;
 use crate::tee::{GenericVerifier, ReportData};
 
 use super::token::ItaToken;
@@ -139,7 +138,7 @@ impl ItaVerifier {
     }
 
     fn check_runtime_data_binding(claims: &Value, report_data: &ReportData) -> Result<()> {
-        let runtime_data_expected = CocoEvidence::wrap_runtime_data_as_structed(report_data)?;
+        let runtime_data_expected = crate::tee::wrap_runtime_data_as_structured(report_data)?;
 
         let tdx_claims = claims.get("tdx");
 

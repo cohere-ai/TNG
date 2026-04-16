@@ -1,55 +1,34 @@
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
-use canon_json::CanonicalFormatter;
-use serde::Serialize;
 use sha2::{Digest, Sha256, Sha512};
 
 use crate::errors::*;
-use crate::tee::coco::attester::ttrpc_protocol::attestation_agent::{
-    GetAdditionalEvidenceRequest, GetEvidenceRequest,
-};
-use crate::tee::coco::attester::ttrpc_protocol::attestation_agent_ttrpc::AttestationAgentServiceClient;
-use crate::tee::coco::evidence::CocoEvidence;
-use crate::tee::coco::TTRPC_DEFAULT_TIMEOUT_NANO;
-use crate::tee::{GenericAttester, ReportData};
+use crate::tee::coco::attester::AaClient;
+use crate::tee::{serialize_canon_json, wrap_runtime_data_as_structured, GenericAttester, ReportData};
 
 use super::evidence::{ItaEvidence, ItaNonce};
 
 pub struct ItaAttester {
-    client: AttestationAgentServiceClient,
-    timeout_nano: i64,
+    aa: AaClient,
 }
 
 impl ItaAttester {
     pub fn new(aa_addr: &str) -> Result<Self> {
-        Self::new_with_timeout_nano(aa_addr, TTRPC_DEFAULT_TIMEOUT_NANO)
+        Ok(Self {
+            aa: AaClient::new(aa_addr)?,
+        })
     }
 
     pub fn new_with_timeout_nano(aa_addr: &str, timeout_nano: i64) -> Result<Self> {
-        let inner = ttrpc::Client::connect(aa_addr).map_err(|e| {
-            Error::ItaError(format!(
-                "Failed to connect to attestation-agent ttrpc address {aa_addr}: {e}"
-            ))
-        })?;
-        let client = AttestationAgentServiceClient::new(inner);
         Ok(Self {
-            client,
-            timeout_nano,
+            aa: AaClient::new_with_timeout(aa_addr, timeout_nano)?,
         })
     }
 }
 
-fn serialize_canon_json<T: Serialize>(value: T) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    let mut ser = serde_json::Serializer::with_formatter(&mut buf, CanonicalFormatter::new());
-    value
-        .serialize(&mut ser)
-        .map_err(Error::SerializeCanonicalJsonFailed)?;
-    Ok(buf)
-}
-
-/// Derive `SHA-256(decode(nonce.val) || decode(nonce.iat))` for GPU evidence collection.
-fn derive_gpu_runtime_data(nonce: &ItaNonce) -> Result<[u8; 32]> {
+/// Derive `SHA-256(decode(nonce.val) || decode(nonce.iat))` for additonal evidence collection 
+/// (used in GPU evidence collection).
+fn derive_additional_evidence_runtime_data_hash(nonce: &ItaNonce) -> Result<[u8; 32]> {
     let val_bytes = BASE64.decode(&nonce.val).map_err(Error::Base64DecodeFailed)?;
     let iat_bytes = BASE64.decode(&nonce.iat).map_err(Error::Base64DecodeFailed)?;
     let mut hasher = Sha256::new();
@@ -58,10 +37,10 @@ fn derive_gpu_runtime_data(nonce: &ItaNonce) -> Result<[u8; 32]> {
     Ok(hasher.finalize().into())
 }
 
-/// Derive TDX REPORTDATA.
+/// Derive runtime data hash according to ITA expectations.
 /// With nonce: `SHA-512(decode(nonce.val) || decode(nonce.iat) || runtime_data_bytes)`
 /// Without nonce (RA-TLS): `SHA-512(runtime_data_bytes)`
-fn derive_tdx_report_data(nonce: Option<&ItaNonce>, runtime_data_bytes: &[u8]) -> Result<Vec<u8>> {
+fn derive_runtime_data_hash(nonce: Option<&ItaNonce>, runtime_data_bytes: &[u8]) -> Result<Vec<u8>> {
     let mut hasher = Sha512::new();
     if let Some(nonce) = nonce {
         let val_bytes = BASE64.decode(&nonce.val).map_err(Error::Base64DecodeFailed)?;
@@ -78,7 +57,7 @@ impl GenericAttester for ItaAttester {
     type Evidence = ItaEvidence;
 
     async fn get_evidence(&self, report_data: &ReportData) -> Result<ItaEvidence> {
-        let mut runtime_data_value = CocoEvidence::wrap_runtime_data_as_structed(report_data)?;
+        let mut runtime_data_value = wrap_runtime_data_as_structured(report_data)?;
 
         // Nonce is optional: present in OHTTP flows (converter fetches it and puts
         // it into challenge_token), absent in RA-TLS cert generation.
@@ -94,85 +73,61 @@ impl GenericAttester for ItaAttester {
             })
             .transpose()?;
 
-        // Collect GPU evidence FIRST (order reversed from CoCo).
-        // When a nonce is present (OHTTP flow), derive SHA-256(nonce.val || nonce.iat)
-        // as the GPU RuntimeData for nonce-binding. Without a nonce (RA-TLS),
-        // pass empty RuntimeData -- we still want GPU evidence in the cert.
-        let gpu_runtime_data = match nonce {
-            Some(ref n) => Some(derive_gpu_runtime_data(n)?),
+        // Collect addtional evidence FIRST (order reversed from CoCo).
+        // When a nonce is present (OHTTP flow), derive appropriate runtime data hash.
+        // Without a nonce (RA-TLS), pass empty runtime data (still want addtional evidence).
+        let ae_runtime_data_hash = match nonce {
+            Some(ref n) => Some(derive_additional_evidence_runtime_data_hash(n)?),
             None => None,
         };
 
-        let additional_evidence_res = self.client.get_additional_evidence(
-            ttrpc::context::with_timeout(self.timeout_nano),
-            &GetAdditionalEvidenceRequest {
-                RuntimeData: gpu_runtime_data
-                    .map(|rd| rd.to_vec())
-                    .unwrap_or_default(),
-                ..Default::default()
-            },
+        let additional_evidence = self.aa.get_additional_evidence(
+            ae_runtime_data_hash
+                .map(|rd| rd.to_vec())
+                .unwrap_or_default(),
         );
 
-        let additional_evidence = match additional_evidence_res {
-            Ok(res) if !res.Evidence.is_empty() => Some(res.Evidence),
-            Ok(_) => None,
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "GetAdditionalEvidence not supported by AA, proceeding without GPU evidence"
-                );
-                None
-            }
-        };
-
-        // If GPU evidence is present, embed the full evidence (base64-encoded)
-        // into the runtime_data claims for cryptographic binding via REPORTDATA.
+        // If addtional evidence is present, embed it into the runtime_data for the primary evidence
+        // for cryptographic binding.
         let gpu_runtime_data_for_evidence =
             if let Some(ref evidence_bytes) = additional_evidence {
-                let gpu_evidence_b64 = BASE64.encode(evidence_bytes);
+                let additional_evidence_b64 = BASE64.encode(evidence_bytes);
                 if let Some(obj) = runtime_data_value.as_object_mut() {
                     obj.insert(
-                        "gpu_evidence".to_string(),
-                        serde_json::Value::String(gpu_evidence_b64),
+                        "additional_evidence".to_string(),
+                        serde_json::Value::String(additional_evidence_b64),
                     );
                 }
-                gpu_runtime_data
+                ae_runtime_data_hash
             } else {
                 None
             };
 
         let runtime_data_bytes = serialize_canon_json(&runtime_data_value)?;
 
-        let tdx_report_data = derive_tdx_report_data(nonce.as_ref(), &runtime_data_bytes)?;
+        let runtime_data_hash = derive_runtime_data_hash(nonce.as_ref(), &runtime_data_bytes)?;
 
-        let get_evidence_req = GetEvidenceRequest {
-            RuntimeData: tdx_report_data,
-            ..Default::default()
-        };
-        let get_evidence_res = self
-            .client
-            .get_evidence(
-                ttrpc::context::with_timeout(self.timeout_nano),
-                &get_evidence_req,
-            )
-            .map_err(|e| Error::ItaError(format!("Failed to get TDX evidence from AA: {e}")))?;
+        let evidence_raw = self
+            .aa
+            .get_evidence(runtime_data_hash)
+            .map_err(|e| Error::ItaError(format!("Failed to get primary evidence from AA: {e}")))?;
 
         // AA returns evidence as a JSON object (e.g. {"cc_eventlog":"...", "quote":"..."}).
         let aa_evidence: serde_json::Value =
-            serde_json::from_slice(&get_evidence_res.Evidence)
+            serde_json::from_slice(&evidence_raw)
                 .map_err(Error::ParseEvidenceFromBytesFailed)?;
-        let tdx_quote_b64 = aa_evidence
+        let quote_b64 = aa_evidence
             .get("quote")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
                 Error::ItaError("AA evidence JSON missing 'quote' field".to_string())
             })?;
-        let tdx_quote = BASE64
-            .decode(tdx_quote_b64)
+        let quote = BASE64
+            .decode(quote_b64)
             .map_err(Error::Base64DecodeFailed)?;
 
         Ok(ItaEvidence::new(
-            tdx_quote,
+            quote,
             nonce,
             runtime_data_bytes,
             gpu_runtime_data_for_evidence,
