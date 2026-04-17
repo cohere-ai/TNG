@@ -12,6 +12,14 @@ use crate::tee::{GenericVerifier, ReportData};
 
 use super::token::ItaToken;
 
+const ITA_JWKS_PATH: &str = "/certs";
+
+/// Known `iss` (issuer) claim values that ITA tokens may contain.
+const ITA_TOKEN_ISSUERS: &[&str] = &[
+    "https://portal.trustauthority.intel.com",
+    "Intel Trust Authority",
+];
+
 /// Process-global JWKS cache, keyed by JWKS URL.
 static JWKS_CACHE: LazyLock<RwLock<HashMap<String, Vec<CachedKey>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
@@ -22,9 +30,13 @@ pub struct ItaVerifier {
 }
 
 impl ItaVerifier {
-    pub fn new(ita_jwks_addr: &str, policy_ids: &[String]) -> Result<Self> {
+    pub fn new(ita_jwks_base_addr: &str, policy_ids: &[String]) -> Result<Self> {
         Ok(Self {
-            jwks_url: format!("{}/certs", ita_jwks_addr.trim_end_matches('/')),
+            jwks_url: format!(
+                "{}{}",
+                ita_jwks_base_addr.trim_end_matches('/'),
+                ITA_JWKS_PATH
+            ),
             policy_ids: policy_ids.to_vec(),
         })
     }
@@ -82,10 +94,7 @@ impl ItaVerifier {
 
         let mut validation = Validation::new(Algorithm::PS384);
         validation.set_required_spec_claims(&["exp", "iss"]);
-        validation.set_issuer(&[
-            "https://portal.trustauthority.intel.com",
-            "Intel Trust Authority",
-        ]);
+        validation.set_issuer(ITA_TOKEN_ISSUERS);
         validation.validate_exp = true;
 
         let token_data = decode::<Value>(token, &decoding_key, &validation)
@@ -138,7 +147,7 @@ impl ItaVerifier {
     }
 
     fn check_runtime_data_binding(claims: &Value, report_data: &ReportData) -> Result<()> {
-        let runtime_data_expected = crate::tee::wrap_runtime_data_as_structured(report_data)?;
+        let runtime_data_expected = crate::tee::wrap_runtime_data_as_structed(report_data)?;
 
         let tdx_claims = claims.get("tdx");
 
@@ -174,24 +183,7 @@ impl ItaVerifier {
         Ok(())
     }
 
-    fn check_tdx_security(claims: &Value) -> Result<()> {
-        if let Some(tdx) = claims.get("tdx") {
-            if let Some(is_debuggable) = tdx.get("tdx_is_debuggable") {
-                if is_debuggable.as_bool() == Some(true) {
-                    return Err(Error::ItaDebugModeRejected {
-                        detail: "TDX TD is in debug mode (tdx_is_debuggable=true)".to_string(),
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-
     fn check_policy_matching(&self, claims: &Value) -> Result<()> {
-        if self.policy_ids.is_empty() {
-            return Ok(());
-        }
-
         if let Some(unmatched) = claims.get("policy_ids_unmatched") {
             if let Some(arr) = unmatched.as_array() {
                 if !arr.is_empty() {
@@ -204,6 +196,10 @@ impl ItaVerifier {
                     )));
                 }
             }
+        }
+
+        if self.policy_ids.is_empty() {
+            return Ok(());
         }
 
         if let Some(matched) = claims.get("policy_ids_matched") {
@@ -241,14 +237,10 @@ impl GenericVerifier for ItaVerifier {
 
     async fn verify_evidence(&self, evidence: &ItaToken, report_data: &ReportData) -> Result<()> {
         let token = evidence.as_str();
-        tracing::debug!(
-            "Verifying ITA token with policy_ids: {:?}",
-            self.policy_ids
-        );
+        tracing::debug!("Verifying ITA token with policy_ids: {:?}", self.policy_ids);
 
         let claims = self.verify_jwt(token).await?;
         Self::check_runtime_data_binding(&claims, report_data)?;
-        Self::check_tdx_security(&claims)?;
         self.check_policy_matching(&claims)?;
 
         Ok(())

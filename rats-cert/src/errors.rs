@@ -379,7 +379,9 @@ pub enum Error {
         source: reqwest::Error,
     },
 
-    #[error("ITA HTTP response error from `{endpoint}`: status={status_code}, body={response_body}")]
+    #[error(
+        "ITA HTTP response error from `{endpoint}`: status={status_code}, body={response_body}"
+    )]
     ItaHttpResponseError {
         endpoint: String,
         status_code: u16,
@@ -389,14 +391,8 @@ pub enum Error {
     #[error("ITA JWT verification failed: {0}")]
     ItaVerifyTokenFailed(#[source] jsonwebtoken::errors::Error),
 
-    #[error("ITA rejected debug-mode TD: {detail}")]
-    ItaDebugModeRejected { detail: String },
-
     #[error("ITA error: {0}")]
     ItaError(String),
-
-    #[error("Unsupported conversion: {detail}")]
-    UnsupportedConversion { detail: String },
 
     #[error("Incompatible types: {detail}")]
     IncompatibleTypes { detail: String },

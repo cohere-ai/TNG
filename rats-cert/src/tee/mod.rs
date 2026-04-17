@@ -170,9 +170,7 @@ pub enum ReportData {
 
 /// Wrap [`ReportData`] into a structured JSON value suitable for embedding
 /// into TEE REPORTDATA.  Used by both CoCo and ITA attesters/verifiers.
-pub(crate) fn wrap_runtime_data_as_structured(
-    report_data: &ReportData,
-) -> Result<serde_json::Value> {
+pub(crate) fn wrap_runtime_data_as_structed(report_data: &ReportData) -> Result<serde_json::Value> {
     match report_data {
         ReportData::Raw(report_data) => {
             Ok(json!({"rats-rs.raw_runtime_data": URL_SAFE_NO_PAD.encode(report_data)}))

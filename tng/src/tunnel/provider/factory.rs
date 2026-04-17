@@ -27,7 +27,7 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
                 anyhow::bail!("Builtin AA is not yet implemented")
             }
         },
-        AttesterArgs::Ita { aa_addr } => Ok(TngAttester::Ita(ItaAttester::new(aa_addr)?)),
+        AttesterArgs::Ita(ita) => Ok(TngAttester::Ita(ItaAttester::new(&ita.aa_addr)?)),
     }
 }
 
@@ -55,16 +55,15 @@ pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
                 anyhow::bail!("Builtin AS converter creation via factory is not supported")
             }
         },
-        ConverterArgs::Ita {
-            as_addr,
-            api_key,
-            policy_ids,
-        } => {
-            let api_key = api_key
+        ConverterArgs::Ita(ita) => {
+            let api_key = ita
+                .api_key
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("ITA api_key is required but not set"))?;
             Ok(TngConverter::Ita(ItaConverter::new(
-                api_key, as_addr, policy_ids,
+                api_key,
+                &ita.as_addr,
+                &ita.policy_ids,
             )?))
         }
     }
@@ -116,12 +115,9 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
                 anyhow::bail!("Builtin AS verifier creation via factory is not supported")
             }
         },
-        VerifierArgs::Ita {
-            ita_jwks_addr,
-            policy_ids,
-        } => Ok(TngVerifier::Ita(ItaVerifier::new(
-            ita_jwks_addr,
-            policy_ids,
+        VerifierArgs::Ita(ita) => Ok(TngVerifier::Ita(ItaVerifier::new(
+            &ita.ita_jwks_addr,
+            &ita.policy_ids,
         )?)),
     }
 }

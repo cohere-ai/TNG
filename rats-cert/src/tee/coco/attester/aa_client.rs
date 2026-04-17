@@ -31,10 +31,10 @@ impl AaClient {
         })
     }
 
-    /// Request a TEE evidence quote from the AA with the given REPORTDATA bytes.
-    pub fn get_evidence(&self, report_data: Vec<u8>) -> Result<Vec<u8>> {
+    /// Request a TEE evidence quote from the AA with the given runtime_data_hash_value bytes.
+    pub fn get_evidence(&self, runtime_data_hash_value: Vec<u8>) -> Result<Vec<u8>> {
         let req = GetEvidenceRequest {
-            RuntimeData: report_data,
+            RuntimeData: runtime_data_hash_value,
             ..Default::default()
         };
         let res = self
@@ -59,9 +59,9 @@ impl AaClient {
     /// Returns `Ok(None)` when the AA does not support additional evidence or
     /// when the response is empty. Never fails the caller — unsupported RPCs
     /// are logged and swallowed.
-    pub fn get_additional_evidence(&self, runtime_data: Vec<u8>) -> Option<Vec<u8>> {
+    pub fn get_additional_evidence(&self, runtime_data_hash_value: Vec<u8>) -> Option<Vec<u8>> {
         let req = GetAdditionalEvidenceRequest {
-            RuntimeData: runtime_data,
+            RuntimeData: runtime_data_hash_value,
             ..Default::default()
         };
         match self

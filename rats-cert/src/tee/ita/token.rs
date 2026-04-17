@@ -72,11 +72,12 @@ impl GenericEvidence for ItaToken {
         let claims_value: Value =
             serde_json::from_slice(&claims).map_err(Error::ParseJwtClaimsFailed)?;
 
-        let flattened = Flattener::new()
-            .flatten(&claims_value)
-            .map_err(|e| Error::JwtClaimsFlattenFailed {
-                message: e.to_string(),
-            })?;
+        let flattened =
+            Flattener::new()
+                .flatten(&claims_value)
+                .map_err(|e| Error::JwtClaimsFlattenFailed {
+                    message: e.to_string(),
+                })?;
 
         match flattened {
             Value::Object(m) => Ok(m),

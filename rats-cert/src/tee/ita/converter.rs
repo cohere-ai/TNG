@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
 use again::RetryPolicy;
@@ -13,34 +12,35 @@ use crate::tee::GenericConverter;
 use super::evidence::{ItaEvidence, ItaNonce};
 use super::token::ItaToken;
 
+/// ITA delegates GPU evidence verification to NVIDIA's Remote Attestation Service
+/// (NRAS), which may transiently fail. Intel recommends client-side retry logic for
+/// GPU attestation requests.
+/// See: https://docs.trustauthority.intel.com/main/articles/articles/ita/concept-gpu-attestation.html#:~:text=recommended%20to%20include-,retry%20logic,-in%20the%20client
 const ITA_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
 const ITA_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
 const ITA_RETRY_MAX_ATTEMPTS: usize = 4;
 
-fn is_retryable_ita_error(status: reqwest::StatusCode, body: &str) -> bool {
-    status.is_server_error()
-        || (status == reqwest::StatusCode::BAD_REQUEST
-            && body.contains("Failed to verify GPU evidence"))
-}
+const ITA_NONCE_PATH: &str = "/appraisal/v2/nonce";
+const ITA_ATTEST_PATH: &str = "/appraisal/v2/attest";
 
 // ---------------------------------------------------------------------------
 // ITA API request/response types (private)
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]
-struct AttestRequest {
+struct ItaAttestRequest {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     policy_ids: Vec<String>,
     token_signing_alg: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     policy_must_match: bool,
-    tdx: TdxNamespace,
+    tdx: TdxEvidence,
     #[serde(skip_serializing_if = "Option::is_none")]
-    nvgpu: Option<NvgpuNamespace>,
+    nvgpu: Option<NvgpuEvidence>,
 }
 
 #[derive(Serialize)]
-struct TdxNamespace {
+struct TdxEvidence {
     quote: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     verifier_nonce: Option<ItaNonce>,
@@ -49,7 +49,7 @@ struct TdxNamespace {
 }
 
 #[derive(Serialize)]
-struct NvgpuNamespace {
+struct NvgpuEvidence {
     evidence: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     verifier_nonce: Option<ItaNonce>,
@@ -59,20 +59,8 @@ struct NvgpuNamespace {
 }
 
 #[derive(Deserialize)]
-struct AaGpuDeviceEvidence {
-    evidence: String,
-    certificate: String,
-    #[serde(default = "default_gpu_arch")]
-    arch: String,
-}
-
-fn default_gpu_arch() -> String {
-    "hopper".to_string()
-}
-
-#[derive(Deserialize)]
-struct DeviceEvidenceList {
-    device_evidence_list: Vec<AaGpuDeviceEvidence>,
+struct ItaAttestResponse {
+    token: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -96,35 +84,54 @@ impl ItaConverter {
         })
     }
 
-    /// Re-encode GPU evidence from AA's base64 format to ITA's expected
-    /// `base64(hex(raw_bytes))` format.
-    fn reencode_gpu_evidence(aa_evidence_base64: &str) -> Result<String> {
-        let raw_bytes = BASE64
-            .decode(aa_evidence_base64)
-            .map_err(Error::Base64DecodeFailed)?;
-        let hex_str = hex::encode(&raw_bytes);
-        Ok(BASE64.encode(hex_str.as_bytes()))
+    fn is_retryable_error(status: reqwest::StatusCode, body: &str) -> bool {
+        status.is_server_error()
+            || (status == reqwest::StatusCode::BAD_REQUEST
+                && body.contains("Failed to verify GPU evidence"))
     }
 
-    /// Parse GPU evidence from CoCo AA's additional_evidence JSON blob.
-    /// Returns (re-encoded evidence, certificate, arch) for the first GPU device.
-    fn parse_gpu_evidence(additional_evidence: &[u8]) -> Result<(String, String, String)> {
-        let evidence_map: HashMap<String, serde_json::Value> =
-            serde_json::from_slice(additional_evidence)
-                .map_err(Error::ParseAdditionalEvidenceJsonFailed)?;
+    /// Send an HTTP request to ITA with retry logic, returning the response body
+    /// on success.
+    async fn ita_request(&self, request: reqwest::RequestBuilder, label: &str) -> Result<String> {
+        let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
+            .with_max_delay(ITA_RETRY_MAX_DELAY)
+            .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
 
-        for (_tee_type, value) in &evidence_map {
-            if let Ok(devices_list) = serde_json::from_value::<DeviceEvidenceList>(value.clone()) {
-                if let Some(device) = devices_list.device_evidence_list.into_iter().next() {
-                    let reencoded = Self::reencode_gpu_evidence(&device.evidence)?;
-                    return Ok((reencoded, device.certificate, device.arch));
+        let label = label.to_string();
+        let (status, body) = policy
+            .retry(|| async {
+                let resp = request
+                    .try_clone()
+                    .expect("request must be cloneable")
+                    .send()
+                    .await
+                    .map_err(|e| Error::ItaHttpRequestFailed {
+                        endpoint: label.clone(),
+                        source: e,
+                    })?;
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if Self::is_retryable_error(status, &body) {
+                    tracing::warn!(%status, body = %body, "{label} failed (retrying)");
+                    return Err(Error::ItaHttpResponseError {
+                        endpoint: label.clone(),
+                        status_code: status.as_u16(),
+                        response_body: body,
+                    });
                 }
-            }
+                Ok((status, body))
+            })
+            .await?;
+
+        if !status.is_success() {
+            return Err(Error::ItaHttpResponseError {
+                endpoint: label,
+                status_code: status.as_u16(),
+                response_body: body,
+            });
         }
 
-        Err(Error::ItaError(
-            "No GPU device evidence found in additional_evidence".to_string(),
-        ))
+        Ok(body)
     }
 }
 
@@ -135,53 +142,19 @@ impl GenericConverter for ItaConverter {
     type Nonce = String;
 
     async fn get_nonce(&self) -> Result<String> {
-        let url = format!("{}/appraisal/v2/nonce", self.base_url);
+        let url = format!("{}{}", self.base_url, ITA_NONCE_PATH);
         tracing::debug!(url = %url, "Fetching ITA nonce");
 
-        let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
-            .with_max_delay(ITA_RETRY_MAX_DELAY)
-            .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
+        let req = self
+            .http
+            .get(&url)
+            .header("x-api-key", &self.api_key)
+            .header("Accept", "application/json");
 
-        let (status, resp_body) = policy
-            .retry(|| async {
-                let resp = self
-                    .http
-                    .get(&url)
-                    .header("x-api-key", &self.api_key)
-                    .header("Accept", "application/json")
-                    .send()
-                    .await
-                    .map_err(|e| Error::ItaHttpRequestFailed {
-                        endpoint: url.clone(),
-                        source: e,
-                    })?;
-                let status = resp.status();
-                let resp_body = resp
-                    .text()
-                    .await
-                    .unwrap_or_default();
-                if is_retryable_ita_error(status, &resp_body) {
-                    tracing::warn!(%status, body = %resp_body, "ITA nonce request failed (retrying)");
-                    return Err(Error::ItaHttpResponseError {
-                        endpoint: url.clone(),
-                        status_code: status.as_u16(),
-                        response_body: resp_body,
-                    });
-                }
-                Ok((status, resp_body))
-            })
-            .await?;
+        let resp_body = self.ita_request(req, &url).await?;
 
-        if !status.is_success() {
-            return Err(Error::ItaHttpResponseError {
-                endpoint: url,
-                status_code: status.as_u16(),
-                response_body: resp_body,
-            });
-        }
-
-        let nonce: ItaNonce = serde_json::from_str(&resp_body)
-            .map_err(Error::ParseChallengeResponseFailed)?;
+        let nonce: ItaNonce =
+            serde_json::from_str(&resp_body).map_err(Error::ParseChallengeResponseFailed)?;
         let nonce_str =
             serde_json::to_string(&nonce).map_err(Error::SerializeCanonicalJsonFailed)?;
         tracing::debug!(nonce = %nonce_str, "ITA nonce request succeeded");
@@ -189,33 +162,27 @@ impl GenericConverter for ItaConverter {
     }
 
     async fn convert(&self, in_evidence: &ItaEvidence) -> Result<ItaToken> {
-        let tdx_quote_b64 = BASE64.encode(&in_evidence.tdx_quote);
+        let quote_b64 = BASE64.encode(&in_evidence.tdx_quote);
         let runtime_data_b64 = BASE64.encode(&in_evidence.runtime_data);
 
-        let tdx = TdxNamespace {
-            quote: tdx_quote_b64,
+        let tdx = TdxEvidence {
+            quote: quote_b64,
             verifier_nonce: in_evidence.nonce.clone(),
             runtime_data: Some(runtime_data_b64),
         };
 
-        let nvgpu = if let (Some(gpu_rd), Some(ref add_ev)) =
-            (in_evidence.gpu_runtime_data, &in_evidence.additional_evidence)
-        {
-            let (reencoded_evidence, certificate, arch) = Self::parse_gpu_evidence(add_ev)?;
-            let gpu_nonce_hex = hex::encode(gpu_rd);
-
-            Some(NvgpuNamespace {
-                evidence: reencoded_evidence,
+        let nvgpu = in_evidence
+            .nvgpu_evidence
+            .as_ref()
+            .map(|gpu| NvgpuEvidence {
+                evidence: gpu.evidence.clone(),
                 verifier_nonce: in_evidence.nonce.clone(),
-                gpu_nonce: gpu_nonce_hex,
-                certificate,
-                arch,
-            })
-        } else {
-            None
-        };
+                gpu_nonce: hex::encode(gpu.runtime_data_hash),
+                certificate: gpu.certificate.clone(),
+                arch: gpu.arch.clone(),
+            });
 
-        let body = AttestRequest {
+        let body = ItaAttestRequest {
             policy_ids: self.policy_ids.clone(),
             token_signing_alg: "PS384".to_string(),
             policy_must_match: !self.policy_ids.is_empty(),
@@ -223,7 +190,7 @@ impl GenericConverter for ItaConverter {
             nvgpu,
         };
 
-        let url = format!("{}/appraisal/v2/attest", self.base_url);
+        let url = format!("{}{}", self.base_url, ITA_ATTEST_PATH);
 
         tracing::debug!(
             url = %url,
@@ -231,59 +198,19 @@ impl GenericConverter for ItaConverter {
             "Sending ITA attest request"
         );
 
-        let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
-            .with_max_delay(ITA_RETRY_MAX_DELAY)
-            .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
+        let req = self
+            .http
+            .post(&url)
+            .header("x-api-key", &self.api_key)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .json(&body);
 
-        let (status, resp_body) = policy
-            .retry(|| async {
-                let resp = self
-                    .http
-                    .post(&url)
-                    .header("x-api-key", &self.api_key)
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/json")
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|e| Error::ItaHttpRequestFailed {
-                        endpoint: url.clone(),
-                        source: e,
-                    })?;
-                let status = resp.status();
-                let resp_body = resp
-                    .text()
-                    .await
-                    .unwrap_or_default();
-                if is_retryable_ita_error(status, &resp_body) {
-                    tracing::warn!(%status, body = %resp_body, "ITA attest request failed (retrying)");
-                    return Err(Error::ItaHttpResponseError {
-                        endpoint: url.clone(),
-                        status_code: status.as_u16(),
-                        response_body: resp_body,
-                    });
-                }
-                Ok((status, resp_body))
-            })
-            .await?;
-
-        if !status.is_success() {
-            return Err(Error::ItaHttpResponseError {
-                endpoint: url,
-                status_code: status.as_u16(),
-                response_body: resp_body,
-            });
-        }
-
-        #[derive(Deserialize)]
-        struct AttestResponse {
-            token: String,
-        }
-
-        let attest_resp: AttestResponse = serde_json::from_str(&resp_body)
+        let resp_body = self.ita_request(req, &url).await?;
+        let attest_resp: ItaAttestResponse = serde_json::from_str(&resp_body)
             .map_err(|e| Error::ItaError(format!("Failed to parse ITA attest response: {e}")))?;
 
-        tracing::debug!("ITA attest request succeeded");
+        tracing::debug!(token = %attest_resp.token, "ITA attest request succeeded");
         ItaToken::new(attest_resp.token)
     }
 }

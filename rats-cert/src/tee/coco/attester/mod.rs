@@ -2,7 +2,9 @@ use super::evidence::CocoEvidence;
 use crate::crypto::{DefaultCrypto, HashAlgo};
 use crate::errors::*;
 use crate::tee::coco::evidence::tee_from_str;
-use crate::tee::{serialize_canon_json, wrap_runtime_data_as_structured, GenericAttester, ReportData};
+use crate::tee::{
+    serialize_canon_json, wrap_runtime_data_as_structed, GenericAttester, ReportData,
+};
 
 pub(crate) mod aa_client;
 mod ttrpc_protocol;
@@ -33,7 +35,7 @@ impl GenericAttester for CocoAttester {
 
     async fn get_evidence(&self, report_data: &ReportData) -> Result<CocoEvidence> {
         // Here we wrap rats-rs's report_data to a StructuredRuntimeData instead of RawRuntimeData, so that we can check the value in our verifier. See: https://github.com/confidential-containers/trustee/blob/86a407ecb1bc1897ef8fba5ee59e33e56e11ef4d/attestation-service/attestation-service/src/lib.rs#L245
-        let aa_runtime_data = wrap_runtime_data_as_structured(report_data)?;
+        let aa_runtime_data = wrap_runtime_data_as_structed(report_data)?;
         let aa_runtime_data_bytes = serialize_canon_json(&aa_runtime_data)?;
         let aa_runtime_data_hash_algo = HashAlgo::Sha384; // TODO: make this configable from user
 

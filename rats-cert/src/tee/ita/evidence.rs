@@ -18,7 +18,27 @@ pub struct ItaNonce {
     pub signature: String,
 }
 
-/// Evidence produced by `ItaAttester` and consumed by `ItaConverter`.
+/// Parsed Nvidia GPU device evidence ready for the ITAConverter.
+///
+/// The attester is responsible for extracting this from whatever evidence
+/// source it uses (e.g. CoCo AA's `get_additional_evidence()` blob).
+/// The converter consumes these fields directly without knowing the
+/// attester's evidence source format.
+#[derive(Clone)]
+pub struct ItaNvgpuEvidence {
+    /// GPU attestation evidence, already re-encoded as `base64(hex(raw_bytes))`
+    /// per ITA's expected format.
+    pub(crate) evidence: String,
+    /// PEM certificate chain for the GPU device.
+    pub(crate) certificate: String,
+    /// GPU architecture identifier (e.g. "hopper").
+    pub(crate) arch: String,
+    /// Hash of the runtime data used during GPU evidence collection:
+    /// `SHA-256(decode(nonce.val) || decode(nonce.iat))`.
+    pub(crate) runtime_data_hash: [u8; 32],
+}
+
+/// Evidence produced by an ITA-compatible attester and consumed by `ItaConverter`.
 ///
 /// Contains all fields needed to build the ITA `/appraisal/v2/attest` request.
 /// Transmitted over the wire (JSON-serialized) between attester and converter
@@ -26,19 +46,16 @@ pub struct ItaNonce {
 #[derive(Clone)]
 pub struct ItaEvidence {
     pub(crate) tdx_quote: Vec<u8>,
-    /// `None` in the RA-TLS (no-nonce) flow; `Some` in the OHTTP/converter flow
-    /// where the converter fetches a nonce from ITA before attestation.
+    /// `None` in the no-nonce flow; `Some` in the OHTTP flow
+    /// where the converter fetches a nonce from ITA before evidence collection.
     pub(crate) nonce: Option<ItaNonce>,
     /// `canonical_json(runtime_data_claims)` -- deterministic serialization of
-    /// runtime_data claims. These exact bytes are hashed into REPORTDATA and
+    /// runtime_data claims. These exact bytes are hashed into evidence and
     /// sent to ITA in the attest request.
     pub(crate) runtime_data: Vec<u8>,
-    /// `SHA-256(decode(nonce.val) || decode(nonce.iat))`, passed to GPU evidence
-    /// collection. `None` when no GPU is present or no nonce is available.
-    pub(crate) gpu_runtime_data: Option<[u8; 32]>,
-    /// Raw additional device evidence (e.g., GPU) from CoCo AA's
-    /// `get_additional_evidence()`.
-    pub(crate) additional_evidence: Option<Vec<u8>>,
+    /// Parsed GPU device evidence, if present. `None` when the platform has
+    /// no NVIDIA GPU or no additional evidence was collected.
+    pub(crate) nvgpu_evidence: Option<ItaNvgpuEvidence>,
 }
 
 impl ItaEvidence {
@@ -47,15 +64,13 @@ impl ItaEvidence {
         tdx_quote: Vec<u8>,
         nonce: Option<ItaNonce>,
         runtime_data: Vec<u8>,
-        gpu_runtime_data: Option<[u8; 32]>,
-        additional_evidence: Option<Vec<u8>>,
+        nvgpu_evidence: Option<ItaNvgpuEvidence>,
     ) -> Self {
         Self {
             tdx_quote,
             nonce,
             runtime_data,
-            gpu_runtime_data,
-            additional_evidence,
+            nvgpu_evidence,
         }
     }
 
@@ -110,15 +125,21 @@ impl GenericEvidence for ItaEvidence {
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize)]
+struct ItaNvgpuEvidenceCborHelper {
+    evidence: String,
+    certificate: String,
+    arch: String,
+    runtime_data_hash: ByteBuf,
+}
+
+#[derive(Serialize, Deserialize)]
 struct ItaEvidenceCborHelper {
     tdx_quote: ByteBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nonce: Option<ItaNonce>,
     runtime_data: ByteBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    gpu_runtime_data: Option<ByteBuf>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    additional_evidence: Option<ByteBuf>,
+    nvgpu_evidence: Option<ItaNvgpuEvidenceCborHelper>,
 }
 
 impl ItaEvidence {
@@ -127,24 +148,37 @@ impl ItaEvidence {
             tdx_quote: ByteBuf::from(self.tdx_quote.clone()),
             nonce: self.nonce.clone(),
             runtime_data: ByteBuf::from(self.runtime_data.clone()),
-            gpu_runtime_data: self.gpu_runtime_data.map(|b| ByteBuf::from(b.to_vec())),
-            additional_evidence: self
-                .additional_evidence
+            nvgpu_evidence: self
+                .nvgpu_evidence
                 .as_ref()
-                .map(|e| ByteBuf::from(e.clone())),
+                .map(|g| ItaNvgpuEvidenceCborHelper {
+                    evidence: g.evidence.clone(),
+                    certificate: g.certificate.clone(),
+                    arch: g.arch.clone(),
+                    runtime_data_hash: ByteBuf::from(g.runtime_data_hash.to_vec()),
+                }),
         }
     }
 
     fn from_cbor_helper(helper: ItaEvidenceCborHelper) -> Result<Self> {
-        let gpu_runtime_data = match helper.gpu_runtime_data {
-            Some(buf) => {
-                let bytes: [u8; 32] = buf.into_vec().try_into().map_err(|v: Vec<u8>| {
-                    Error::ItaError(format!(
-                        "gpu_runtime_data must be 32 bytes, got {}",
-                        v.len()
-                    ))
-                })?;
-                Some(bytes)
+        let nvgpu_evidence = match helper.nvgpu_evidence {
+            Some(g) => {
+                let hash: [u8; 32] =
+                    g.runtime_data_hash
+                        .into_vec()
+                        .try_into()
+                        .map_err(|v: Vec<u8>| {
+                            Error::ItaError(format!(
+                                "nvgpu runtime_data_hash must be 32 bytes, got {}",
+                                v.len()
+                            ))
+                        })?;
+                Some(ItaNvgpuEvidence {
+                    evidence: g.evidence,
+                    certificate: g.certificate,
+                    arch: g.arch,
+                    runtime_data_hash: hash,
+                })
             }
             None => None,
         };
@@ -152,8 +186,7 @@ impl ItaEvidence {
             tdx_quote: helper.tdx_quote.into_vec(),
             nonce: helper.nonce,
             runtime_data: helper.runtime_data.into_vec(),
-            gpu_runtime_data,
-            additional_evidence: helper.additional_evidence.map(|e| e.into_vec()),
+            nvgpu_evidence,
         })
     }
 }
@@ -163,15 +196,21 @@ impl ItaEvidence {
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize, Deserialize)]
+struct ItaNvgpuEvidenceJsonHelper {
+    evidence: String,
+    certificate: String,
+    arch: String,
+    runtime_data_hash: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct ItaEvidenceJsonHelper {
     tdx_quote: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     nonce: Option<ItaNonce>,
     runtime_data: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    gpu_runtime_data: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    additional_evidence: Option<String>,
+    nvgpu_evidence: Option<ItaNvgpuEvidenceJsonHelper>,
 }
 
 impl ItaEvidence {
@@ -180,27 +219,36 @@ impl ItaEvidence {
             tdx_quote: BASE64_STANDARD.encode(&self.tdx_quote),
             nonce: self.nonce.clone(),
             runtime_data: BASE64_STANDARD.encode(&self.runtime_data),
-            gpu_runtime_data: self.gpu_runtime_data.map(|b| hex::encode(b)),
-            additional_evidence: self
-                .additional_evidence
+            nvgpu_evidence: self
+                .nvgpu_evidence
                 .as_ref()
-                .map(|e| BASE64_STANDARD.encode(e)),
+                .map(|g| ItaNvgpuEvidenceJsonHelper {
+                    evidence: g.evidence.clone(),
+                    certificate: g.certificate.clone(),
+                    arch: g.arch.clone(),
+                    runtime_data_hash: hex::encode(g.runtime_data_hash),
+                }),
         }
     }
 
     fn from_json_helper(helper: ItaEvidenceJsonHelper) -> Result<Self> {
-        let gpu_runtime_data = match helper.gpu_runtime_data {
-            Some(hex_str) => {
-                let bytes = hex::decode(&hex_str).map_err(|e| {
-                    Error::ItaError(format!("Failed to decode gpu_runtime_data hex: {e}"))
+        let nvgpu_evidence = match helper.nvgpu_evidence {
+            Some(g) => {
+                let bytes = hex::decode(&g.runtime_data_hash).map_err(|e| {
+                    Error::ItaError(format!("Failed to decode nvgpu runtime_data_hash hex: {e}"))
                 })?;
-                let arr: [u8; 32] = bytes.try_into().map_err(|v: Vec<u8>| {
+                let hash: [u8; 32] = bytes.try_into().map_err(|v: Vec<u8>| {
                     Error::ItaError(format!(
-                        "gpu_runtime_data must be 32 bytes, got {}",
+                        "nvgpu runtime_data_hash must be 32 bytes, got {}",
                         v.len()
                     ))
                 })?;
-                Some(arr)
+                Some(ItaNvgpuEvidence {
+                    evidence: g.evidence,
+                    certificate: g.certificate,
+                    arch: g.arch,
+                    runtime_data_hash: hash,
+                })
             }
             None => None,
         };
@@ -212,15 +260,7 @@ impl ItaEvidence {
             runtime_data: BASE64_STANDARD
                 .decode(&helper.runtime_data)
                 .map_err(Error::Base64DecodeFailed)?,
-            gpu_runtime_data,
-            additional_evidence: match helper.additional_evidence {
-                Some(b64) => Some(
-                    BASE64_STANDARD
-                        .decode(&b64)
-                        .map_err(Error::Base64DecodeFailed)?,
-                ),
-                None => None,
-            },
+            nvgpu_evidence,
         })
     }
 }
