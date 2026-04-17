@@ -454,6 +454,7 @@ pub enum CocoVerifierArgs {
 // AttestArgs / VerifyArgs (serde-derived)
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 const EVIDENCE_REFRESH_INTERVAL_SECOND: u64 = 10 * 60; // 10 minutes
 
 /// Attestation parameters configuration enum.
@@ -1197,7 +1198,7 @@ mod tests {
                 ));
                 assert_eq!(*refresh_interval, Some(600));
                 match converter {
-                    ConverterArgs::Coco(CocoConverterArgs::Restful {as_addr, .. }) => {
+                    ConverterArgs::Coco(CocoConverterArgs::Restful { as_addr, .. }) => {
                         assert_eq!(as_addr, "http://as-server:8080");
                     }
                     _ => panic!("Expected Coco/Restful converter"),
