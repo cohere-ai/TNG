@@ -8,6 +8,20 @@ use crate::tee::{serialize_canon_json, wrap_runtime_data_as_structured, GenericA
 
 use super::evidence::{ItaEvidence, ItaNonce};
 
+/// ITA-specific attester wrapping the shared [`AaClient`].
+///
+/// Although evidence for ITA can be collected using the same CoCo Attestation Agent
+/// as [`CocoAttester`], the  Intel Trust Authority service requires runtime data and nonce
+///  to be hashed and embedded into TDX REPORTDATA differently:
+///   - **Hash algorithm**: SHA-512 (vs SHA-384 for CoCo).
+///   - **Nonce binding**: `SHA-512(nonce.val || nonce.iat || runtime_data)` — components of
+///     the ITA nonce str mixed into REPORTDATA so the verifier can prove freshness.
+///   - **GPU evidence binding**: The nonce must also be featured in the GPU evidence with
+///     hash `SHA-256(nonce.val || nonce.iat)`. We also fold the resulting GPU evidence blob
+///     into the runtime_data for TDX, creating a cross-device binding (thoughthis isn't required by ITA).
+///
+/// `ItaAttester` encapsulates these ITA-specific derivation rules while
+/// delegating the actual AA ttrpc calls to `AaClient`.
 pub struct ItaAttester {
     aa: AaClient,
 }
@@ -60,7 +74,7 @@ impl GenericAttester for ItaAttester {
         let mut runtime_data_value = wrap_runtime_data_as_structured(report_data)?;
 
         // Nonce is optional: present in OHTTP flows (converter fetches it and puts
-        // it into challenge_token), absent in RA-TLS cert generation.
+        // it into challenge_token), currently absent in RA-TLS cert generation.
         let nonce: Option<ItaNonce> = runtime_data_value
             .get("challenge_token")
             .and_then(|v| v.as_str())
