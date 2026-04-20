@@ -16,7 +16,7 @@ use http_body_util::BodyDataStream;
 use serde::Serialize;
 use tng::config::{
     ingress::{self},
-    ra::{CocoConverterArgs, CocoVerifierArgs, ConverterArgs, VerifierArgs, VerifyArgs},
+    ra::VerifyArgs,
 };
 use wasm_bindgen::prelude::*;
 
@@ -179,11 +179,12 @@ async fn convert_to_web_response(
 }
 
 #[derive(Serialize)]
-struct AttestationInfo {
-    /// Attestation service address
-    as_addr: Option<String>,
-    /// Policy ID list
-    policy_ids: Option<Vec<String>>,
+struct AttestationInfo<'a> {
+    /// Verification config (includes provider, mode, and all provider-specific fields).
+    /// Flattened so fields like `as_provider`, `model`, `as_addr`/`ita_jwks_addr`, `policy_ids`
+    /// appear at the top level of the serialized JSON.
+    #[serde(skip_serializing_if = "Option::is_none", flatten)]
+    verify_args: Option<&'a VerifyArgs>,
     /// A JWT string which represent the result of remote attestation.
     attestation_result: AttestationResult,
 }
@@ -193,52 +194,15 @@ fn bind_attestation_result(
     attestation_result: AttestationResult,
     ra_args: &RaArgs,
 ) -> Result<web_sys::Response, JsValue> {
-    // Create the attest_info object
-    let mut attest_info = AttestationInfo {
-        as_addr: None,
-        policy_ids: None,
-        attestation_result,
+    let verify_args = match ra_args {
+        RaArgs::VerifyOnly(v) => Some(v),
+        RaArgs::NoRa => None,
     };
 
-    match ra_args {
-        RaArgs::VerifyOnly(verify_args) => match verify_args {
-            VerifyArgs::Passport { verifier } => match verifier {
-                VerifierArgs::Coco(coco) => match coco {
-                    CocoVerifierArgs::Restful {
-                        as_addr,
-                        policy_ids,
-                        ..
-                    }
-                    | CocoVerifierArgs::Grpc {
-                        as_addr,
-                        policy_ids,
-                        ..
-                    } => {
-                        attest_info.as_addr = as_addr.clone();
-                        attest_info.policy_ids = Some(policy_ids.clone());
-                    }
-                },
-            },
-            VerifyArgs::BackgroundCheck { converter, .. } => match converter {
-                ConverterArgs::Coco(coco) => match coco {
-                    CocoConverterArgs::Restful {
-                        as_addr,
-                        policy_ids,
-                        ..
-                    }
-                    | CocoConverterArgs::Grpc {
-                        as_addr,
-                        policy_ids,
-                        ..
-                    } => {
-                        attest_info.as_addr = Some(as_addr.clone());
-                        attest_info.policy_ids = Some(policy_ids.clone());
-                    }
-                },
-            },
-        },
-        RaArgs::NoRa => { /* nothing */ }
-    }
+    let attest_info = AttestationInfo {
+        verify_args,
+        attestation_result,
+    };
 
     // Create a JavaScript object
     let attest_info_obj = JsValue::from_serde(&attest_info)

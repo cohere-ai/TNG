@@ -104,41 +104,61 @@ impl ItaVerifier {
     }
 
     async fn refresh_jwks(&self) -> Result<()> {
-        let client = Client::new();
-        let resp = client
-            .get(&self.jwks_url)
-            .header("Accept", "application/json")
-            .send()
+        let jwks_url = self.jwks_url.clone();
+
+        let fut = async move {
+            let client = Client::new();
+            let resp = client
+                .get(&jwks_url)
+                .header("Accept", "application/json")
+                .send()
+                .await
+                .map_err(|e| Error::ItaHttpRequestFailed {
+                    endpoint: jwks_url.clone(),
+                    source: e,
+                })?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(Error::ItaHttpResponseError {
+                    endpoint: jwks_url,
+                    status_code: status.as_u16(),
+                    response_body: body,
+                });
+            }
+
+            let jwks: JwksResponse = resp
+                .json()
+                .await
+                .map_err(|e| Error::ItaError(format!("Failed to parse JWKS response: {e}")))?;
+
+            Ok(jwks
+                .keys
+                .into_iter()
+                .map(|k| CachedKey {
+                    kid: k.kid,
+                    n: k.n,
+                    e: k.e,
+                })
+                .collect::<Vec<CachedKey>>())
+        };
+
+        #[cfg(all(
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        ))]
+        let keys = tokio_with_wasm::task::spawn(fut)
             .await
-            .map_err(|e| Error::ItaHttpRequestFailed {
-                endpoint: self.jwks_url.clone(),
-                source: e,
-            })?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(Error::ItaHttpResponseError {
-                endpoint: self.jwks_url.clone(),
-                status_code: status.as_u16(),
-                response_body: body,
-            });
-        }
-
-        let jwks: JwksResponse = resp
-            .json()
-            .await
-            .map_err(|e| Error::ItaError(format!("Failed to parse JWKS response: {e}")))?;
-
-        let keys: Vec<CachedKey> = jwks
-            .keys
-            .into_iter()
-            .map(|k| CachedKey {
-                kid: k.kid,
-                n: k.n,
-                e: k.e,
-            })
-            .collect();
+            .map_err(|e| Error::ItaError(format!("Failed to spawn JWKS refresh task: {e}")))
+            .and_then(|e| e)?;
+        #[cfg(not(all(
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        )))]
+        let keys = fut.await?;
 
         let mut cache = JWKS_CACHE.write().await;
         cache.insert(self.jwks_url.clone(), keys);

@@ -6,7 +6,9 @@ use rats_cert::tee::coco::converter::restful::CocoRestfulConverter;
 use rats_cert::tee::coco::converter::CocoConverter;
 use rats_cert::tee::coco::verifier::remote::CocoRemoteVerifier;
 use rats_cert::tee::coco::verifier::CocoVerifier;
-use rats_cert::tee::ita::{ItaAttester, ItaConverter, ItaVerifier};
+#[cfg(unix)]
+use rats_cert::tee::ita::ItaAttester;
+use rats_cert::tee::ita::{ItaConverter, ItaVerifier};
 
 #[cfg(unix)]
 use crate::config::ra::{AttesterArgs, CocoAttesterArgs};

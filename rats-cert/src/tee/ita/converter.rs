@@ -93,45 +93,66 @@ impl ItaConverter {
     /// Send an HTTP request to ITA with retry logic, returning the response body
     /// on success.
     async fn ita_request(&self, request: reqwest::RequestBuilder, label: &str) -> Result<String> {
-        let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
-            .with_max_delay(ITA_RETRY_MAX_DELAY)
-            .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
-
         let label = label.to_string();
-        let (status, body) = policy
-            .retry(|| async {
-                let resp = request
-                    .try_clone()
-                    .expect("request must be cloneable")
-                    .send()
-                    .await
-                    .map_err(|e| Error::ItaHttpRequestFailed {
-                        endpoint: label.clone(),
-                        source: e,
-                    })?;
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                if Self::is_retryable_error(status, &body) {
-                    tracing::warn!(%status, body = %body, "{label} failed (retrying)");
-                    return Err(Error::ItaHttpResponseError {
-                        endpoint: label.clone(),
-                        status_code: status.as_u16(),
-                        response_body: body,
-                    });
-                }
-                Ok((status, body))
-            })
-            .await?;
 
-        if !status.is_success() {
-            return Err(Error::ItaHttpResponseError {
-                endpoint: label,
-                status_code: status.as_u16(),
-                response_body: body,
-            });
-        }
+        let fut = async move {
+            let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
+                .with_max_delay(ITA_RETRY_MAX_DELAY)
+                .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
 
-        Ok(body)
+            let (status, body) = policy
+                .retry(|| async {
+                    let resp = request
+                        .try_clone()
+                        .expect("request must be cloneable")
+                        .send()
+                        .await
+                        .map_err(|e| Error::ItaHttpRequestFailed {
+                            endpoint: label.clone(),
+                            source: e,
+                        })?;
+                    let status = resp.status();
+                    let body = resp.text().await.unwrap_or_default();
+                    if Self::is_retryable_error(status, &body) {
+                        tracing::warn!(%status, body = %body, "{label} failed (retrying)");
+                        return Err(Error::ItaHttpResponseError {
+                            endpoint: label.clone(),
+                            status_code: status.as_u16(),
+                            response_body: body,
+                        });
+                    }
+                    Ok((status, body))
+                })
+                .await?;
+
+            if !status.is_success() {
+                return Err(Error::ItaHttpResponseError {
+                    endpoint: label,
+                    status_code: status.as_u16(),
+                    response_body: body,
+                });
+            }
+
+            Ok(body)
+        };
+
+        #[cfg(all(
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        ))]
+        let result = tokio_with_wasm::task::spawn(fut)
+            .await
+            .map_err(|e| Error::ItaError(format!("Failed to spawn ITA request task: {e}")))
+            .and_then(|e| e);
+        #[cfg(not(all(
+            target_arch = "wasm32",
+            target_vendor = "unknown",
+            target_os = "unknown"
+        )))]
+        let result = fut.await;
+
+        result
     }
 }
 

@@ -372,6 +372,7 @@ pub enum Error {
     SerializeCanonicalJsonFailed(#[source] serde_json::Error),
 
     // ITA-specific errors
+    #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
     #[error("ITA HTTP request to `{endpoint}` failed: {source}")]
     ItaHttpRequestFailed {
         endpoint: String,
@@ -379,6 +380,7 @@ pub enum Error {
         source: reqwest::Error,
     },
 
+    #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
     #[error(
         "ITA HTTP response error from `{endpoint}`: status={status_code}, body={response_body}"
     )]
@@ -388,9 +390,11 @@ pub enum Error {
         response_body: String,
     },
 
+    #[cfg(feature = "verifier-ita")]
     #[error("ITA JWT verification failed: {0}")]
     ItaVerifyTokenFailed(#[source] jsonwebtoken::errors::Error),
 
+    #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
     #[error("ITA error: {0}")]
     ItaError(String),
 

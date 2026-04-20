@@ -6,7 +6,7 @@ name = "rats-cert"
 version.workspace = true
 
 [dependencies]
-again = {workspace = true}
+again = {workspace = true, optional = true}
 anyhow = {workspace = true}
 as-any = {workspace = true}
 async-trait = {workspace = true}
@@ -84,6 +84,16 @@ verifier-coco = [
   "dep:prost",
   "dep:rustls-webpki",
   "dep:rustls-pki-types",
+  "dep:reqwest",
+  "dep:flatten-json-object",
+]
+
+attester-ita = [
+  "attester-coco",
+  "dep:again",
+]
+verifier-ita = [
+  "dep:again",
   "dep:reqwest",
   "dep:flatten-json-object",
 ]

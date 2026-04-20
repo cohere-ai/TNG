@@ -14,6 +14,7 @@ pub mod claims;
 #[cfg(any(feature = "attester-coco", feature = "verifier-coco"))]
 pub mod coco;
 
+#[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
 pub mod ita;
 
 pub enum DiceParseEvidenceOutput<T> {
