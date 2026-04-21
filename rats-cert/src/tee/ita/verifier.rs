@@ -182,22 +182,31 @@ impl ItaVerifier {
             ));
         };
 
-        if let (Some(expected_map), Some(token_map)) = (
-            runtime_data_expected.as_object(),
-            runtime_data_in_token.as_object(),
-        ) {
-            let is_subset = expected_map
-                .iter()
-                .all(|(key, value)| token_map.get(key) == Some(value));
+        let expected_map =
+            runtime_data_expected
+                .as_object()
+                .ok_or_else(|| Error::IncompatibleTypes {
+                    detail: "runtime_data_expected is not a map".to_string(),
+                })?;
 
-            if !is_subset {
-                tracing::debug!(
-                    expected = ?expected_map,
-                    in_token = ?token_map,
-                    "ITA runtime_data subset check failed"
-                );
-                return Err(Error::RuntimeDataMismatch);
-            }
+        let token_map =
+            runtime_data_in_token
+                .as_object()
+                .ok_or_else(|| Error::IncompatibleTypes {
+                    detail: "runtime_data_in_token is not a map".to_string(),
+                })?;
+
+        let is_subset = expected_map
+            .iter()
+            .all(|(key, value)| token_map.get(key) == Some(value));
+
+        if !is_subset {
+            tracing::debug!(
+                expected = ?expected_map,
+                in_token = ?token_map,
+                "ITA runtime_data subset check failed"
+            );
+            return Err(Error::RuntimeDataMismatch);
         }
 
         Ok(())
@@ -377,5 +386,23 @@ mod tests {
         let report_data =
             ReportData::Claims(serde_json::from_value(json!({"key": "value"})).unwrap());
         assert!(ItaVerifier::check_runtime_data_binding(&json!({}), &report_data).is_err());
+    }
+
+    #[test]
+    fn runtime_data_binding_non_object_token_data_fails() {
+        let report_data =
+            ReportData::Claims(serde_json::from_value(json!({"key": "value"})).unwrap());
+
+        for non_object in [json!("a string"), json!(0xBAD), json!([1, 2]), json!(null)] {
+            let claims = json!({
+                "tdx": {
+                    "attester_runtime_data": non_object,
+                }
+            });
+            assert!(
+                ItaVerifier::check_runtime_data_binding(&claims, &report_data).is_err(),
+                "should reject non-object attester_runtime_data: {claims}"
+            );
+        }
     }
 }

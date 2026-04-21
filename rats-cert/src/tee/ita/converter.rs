@@ -18,7 +18,7 @@ use super::token::ItaToken;
 /// See: https://docs.trustauthority.intel.com/main/articles/articles/ita/concept-gpu-attestation.html#:~:text=recommended%20to%20include-,retry%20logic,-in%20the%20client
 const ITA_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
 const ITA_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
-const ITA_RETRY_MAX_ATTEMPTS: usize = 4;
+const ITA_MAX_RETRIES: usize = 4;
 
 const ITA_NONCE_PATH: &str = "/appraisal/v2/nonce";
 const ITA_ATTEST_PATH: &str = "/appraisal/v2/attest";
@@ -98,7 +98,7 @@ impl ItaConverter {
         let fut = async move {
             let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
                 .with_max_delay(ITA_RETRY_MAX_DELAY)
-                .with_max_retries(ITA_RETRY_MAX_ATTEMPTS);
+                .with_max_retries(ITA_MAX_RETRIES);
 
             let (status, body) = policy
                 .retry(|| async {
