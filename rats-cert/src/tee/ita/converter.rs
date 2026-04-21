@@ -176,8 +176,7 @@ impl GenericConverter for ItaConverter {
 
         let nonce: ItaNonce =
             serde_json::from_str(&resp_body).map_err(Error::ParseChallengeResponseFailed)?;
-        let nonce_str =
-            serde_json::to_string(&nonce).map_err(Error::SerializeCanonicalJsonFailed)?;
+        let nonce_str = serde_json::to_string(&nonce).map_err(Error::SerializeJsonFailed)?;
         tracing::debug!(nonce = %nonce_str, "ITA nonce request succeeded");
         Ok(nonce_str)
     }

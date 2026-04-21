@@ -371,6 +371,9 @@ pub enum Error {
     #[error("Failed to serialize canonical JSON")]
     SerializeCanonicalJsonFailed(#[source] serde_json::Error),
 
+    #[error("Failed to serialize JSON")]
+    SerializeJsonFailed(#[source] serde_json::Error),
+
     // ITA-specific errors
     #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
     #[error("ITA HTTP request to `{endpoint}` failed: {source}")]

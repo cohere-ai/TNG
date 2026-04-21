@@ -16,9 +16,7 @@ use http_body_util::BodyDataStream;
 use serde::Serialize;
 use tng::config::{
     ingress::{self},
-    ra::{
-        CocoConverterArgs, CocoVerifierArgs, ConverterArgs, VerifierArgs, VerifyArgs,
-    },
+    ra::{CocoConverterArgs, CocoVerifierArgs, ConverterArgs, VerifierArgs, VerifyArgs},
 };
 use wasm_bindgen::prelude::*;
 

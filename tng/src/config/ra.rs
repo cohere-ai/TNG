@@ -363,7 +363,7 @@ pub enum ConverterArgs {
     Ita(ItaConverterArgs),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ItaConverterArgs {
     #[serde(default = "default_ita_api_url")]
     pub as_addr: String,
@@ -373,6 +373,17 @@ pub struct ItaConverterArgs {
     pub api_key: Option<String>,
     #[serde(default)]
     pub policy_ids: Vec<String>,
+}
+
+/// Manual impl to redact `api_key` from debug/log output.
+impl std::fmt::Debug for ItaConverterArgs {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ItaConverterArgs")
+            .field("as_addr", &self.as_addr)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("policy_ids", &self.policy_ids)
+            .finish()
+    }
 }
 
 impl ItaConverterArgs {
