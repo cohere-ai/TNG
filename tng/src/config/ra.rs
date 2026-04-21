@@ -1401,16 +1401,23 @@ mod tests {
         assert!(serialized.contains(r#""as_type":"builtin""#));
     }
 
+    // =====================================================================
+    // ITA mode tests
+    // =====================================================================
+
     #[test]
     fn test_ita_attest_config_passport() {
+        let aa_addr = "unix:///tmp/ita-aa.sock";
+        let as_addr = "https://api.trustauthority.intel.com";
+        let api_key = "test-key";
         let json = json!({
             "attest": {
                 "model": "passport",
                 "aa_provider": "ita",
-                "aa_addr": "unix:///tmp/ita-aa.sock",
+                "aa_addr": aa_addr,
                 "as_provider": "ita",
-                "as_addr": "https://api.trustauthority.intel.com",
-                "api_key": "test-key"
+                "as_addr": as_addr,
+                "api_key": api_key
             }
         });
 
@@ -1424,14 +1431,14 @@ mod tests {
             }) => {
                 match attester {
                     AttesterArgs::Ita(ita) => {
-                        assert_eq!(ita.aa_addr, "unix:///tmp/ita-aa.sock");
+                        assert_eq!(ita.aa_addr, aa_addr);
                     }
                     _ => panic!("Expected Ita attester"),
                 }
                 match converter {
                     ConverterArgs::Ita(ita) => {
-                        assert_eq!(ita.as_addr, "https://api.trustauthority.intel.com");
-                        assert_eq!(ita.api_key, Some("test-key".to_string()));
+                        assert_eq!(ita.as_addr, as_addr);
+                        assert_eq!(ita.api_key, Some(api_key.to_string()));
                     }
                     _ => panic!("Expected Ita converter"),
                 }
@@ -1442,10 +1449,11 @@ mod tests {
 
     #[test]
     fn test_ita_attest_config_background_check() {
+        let aa_addr = "unix:///tmp/ita-aa.sock";
         let json = json!({
             "attest": {
                 "aa_provider": "ita",
-                "aa_addr": "unix:///tmp/ita-aa.sock"
+                "aa_addr": aa_addr
             }
         });
 
@@ -1454,7 +1462,7 @@ mod tests {
         match &ra_args.attest {
             Some(AttestArgs::BackgroundCheck { attester, .. }) => match attester {
                 AttesterArgs::Ita(ita) => {
-                    assert_eq!(ita.aa_addr, "unix:///tmp/ita-aa.sock");
+                    assert_eq!(ita.aa_addr, aa_addr);
                 }
                 _ => panic!("Expected Ita attester"),
             },
@@ -1464,13 +1472,16 @@ mod tests {
 
     #[test]
     fn test_ita_background_check_verify_config() {
+        let as_addr = "https://api.trustauthority.intel.com";
+        let api_key = "test-key-123";
+        let policy_ids = vec!["policy-1"];
         let json = json!({
             "verify": {
                 "model": "background_check",
                 "as_provider": "ita",
-                "as_addr": "https://api.trustauthority.intel.com",
-                "api_key": "test-key-123",
-                "policy_ids": ["policy-1"]
+                "as_addr": as_addr,
+                "api_key": api_key,
+                "policy_ids": policy_ids
             }
         });
 
@@ -1483,16 +1494,16 @@ mod tests {
             }) => {
                 match converter {
                     ConverterArgs::Ita(ita) => {
-                        assert_eq!(ita.as_addr, "https://api.trustauthority.intel.com");
-                        assert_eq!(ita.api_key, Some("test-key-123".to_string()));
-                        assert_eq!(ita.policy_ids, vec!["policy-1"]);
+                        assert_eq!(ita.as_addr, as_addr);
+                        assert_eq!(ita.api_key, Some(api_key.to_string()));
+                        assert_eq!(ita.policy_ids, policy_ids);
                     }
                     _ => panic!("Expected Ita converter"),
                 }
                 match verifier {
                     VerifierArgs::Ita(ita) => {
                         assert_eq!(ita.ita_jwks_addr, DEFAULT_ITA_PORTAL_URL);
-                        assert_eq!(ita.policy_ids, vec!["policy-1"]);
+                        assert_eq!(ita.policy_ids, policy_ids);
                     }
                     _ => panic!("Expected Ita verifier"),
                 }
@@ -1503,12 +1514,14 @@ mod tests {
 
     #[test]
     fn test_ita_passport_verify_config() {
+        let jwks_addr = "https://portal.custom.intel.com";
+        let policy_ids = vec!["my-policy"];
         let json = json!({
             "verify": {
                 "model": "passport",
                 "as_provider": "ita",
-                "ita_jwks_addr": "https://portal.custom.intel.com",
-                "policy_ids": ["my-policy"]
+                "ita_jwks_addr": jwks_addr,
+                "policy_ids": policy_ids
             }
         });
 
@@ -1517,8 +1530,8 @@ mod tests {
         match &ra_args.verify {
             Some(VerifyArgs::Passport { verifier }) => match verifier {
                 VerifierArgs::Ita(ita) => {
-                    assert_eq!(ita.ita_jwks_addr, "https://portal.custom.intel.com");
-                    assert_eq!(ita.policy_ids, vec!["my-policy"]);
+                    assert_eq!(ita.ita_jwks_addr, jwks_addr);
+                    assert_eq!(ita.policy_ids, policy_ids);
                 }
                 _ => panic!("Expected Ita verifier"),
             },
@@ -1528,6 +1541,7 @@ mod tests {
 
     #[test]
     fn test_ita_api_key_defaults_from_env() {
+        let env_key = "env-key-456";
         let json = json!({
             "verify": {
                 "model": "background_check",
@@ -1535,7 +1549,7 @@ mod tests {
             }
         });
 
-        std::env::set_var(ITA_API_KEY_ENV, "env-key-456");
+        std::env::set_var(ITA_API_KEY_ENV, env_key);
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
         std::env::remove_var(ITA_API_KEY_ENV);
 
@@ -1543,7 +1557,7 @@ mod tests {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
                 ConverterArgs::Ita(ita) => {
                     assert_eq!(ita.as_addr, DEFAULT_ITA_API_URL);
-                    assert_eq!(ita.api_key, Some("env-key-456".to_string()));
+                    assert_eq!(ita.api_key, Some(env_key.to_string()));
                 }
                 _ => panic!("Expected Ita converter"),
             },
@@ -1552,20 +1566,62 @@ mod tests {
     }
 
     #[test]
-    fn test_ita_config_serialization_roundtrip() {
+    fn test_ita_config_serde_round_trip() {
+        let as_addr = "https://api.trustauthority.intel.com";
+        let api_key = "test-key";
+        let policy_ids = vec!["p1"];
         let json = json!({
             "verify": {
                 "model": "background_check",
                 "as_provider": "ita",
-                "as_addr": "https://api.trustauthority.intel.com",
-                "api_key": "test-key",
-                "policy_ids": ["p1"]
+                "as_addr": as_addr,
+                "api_key": api_key,
+                "policy_ids": policy_ids
             }
         });
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
         let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
-        assert!(serialized.contains(r#""as_provider":"ita""#));
-        assert!(serialized.contains(r#""api_key":"test-key""#));
+        let back: RaArgsUnchecked =
+            serde_json::from_str(&serialized).expect("Failed to re-deserialize");
+
+        match &back.verify {
+            Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
+                ConverterArgs::Ita(ita) => {
+                    assert_eq!(ita.as_addr, as_addr);
+                    assert_eq!(ita.api_key, Some(api_key.to_string()));
+                    assert_eq!(ita.policy_ids, policy_ids);
+                }
+                _ => panic!("Expected Ita converter after round-trip"),
+            },
+            _ => panic!("Expected BackgroundCheck after round-trip"),
+        }
+    }
+
+    #[test]
+    fn test_ita_verify_into_checked_rejects_missing_api_key() {
+        std::env::remove_var(ITA_API_KEY_ENV);
+        let json = json!({
+            "verify": {
+                "model": "background_check",
+                "as_provider": "ita"
+            }
+        });
+        let ra: RaArgsUnchecked = serde_json::from_value(json).unwrap();
+        ra.into_checked().expect_err("should reject missing api_key");
+    }
+
+    #[test]
+    fn test_ita_verify_into_checked_rejects_invalid_as_addr() {
+        let json = json!({
+            "verify": {
+                "model": "background_check",
+                "as_provider": "ita",
+                "as_addr": "not a url",
+                "api_key": "key"
+            }
+        });
+        let ra: RaArgsUnchecked = serde_json::from_value(json).unwrap();
+        assert!(ra.into_checked().is_err());
     }
 }

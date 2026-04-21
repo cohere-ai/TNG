@@ -90,18 +90,30 @@ mod tests {
             ProviderType::from_optional_wire_str("coco").unwrap(),
             ProviderType::Coco
         );
+        assert_eq!(
+            ProviderType::from_optional_wire_str("ita").unwrap(),
+            ProviderType::Ita
+        );
+    }
+
+    #[test]
+    fn from_optional_wire_str_rejects_unknown() {
+        assert!(ProviderType::from_optional_wire_str("notaprovider").is_err());
     }
 
     #[test]
     fn serde_json_round_trip() {
-        let original = ProviderType::Coco;
-        let json = serde_json::to_value(original).unwrap();
-        let back: ProviderType = serde_json::from_value(json).unwrap();
-        assert_eq!(back, original);
+        for original in [ProviderType::Coco, ProviderType::Ita] {
+            let json = serde_json::to_value(original).unwrap();
+            let back: ProviderType = serde_json::from_value(json).unwrap();
+            assert_eq!(back, original);
+        }
     }
 
     #[test]
     fn display_matches_as_str() {
-        assert_eq!(ProviderType::Coco.to_string(), ProviderType::Coco.as_str());
+        for p in [ProviderType::Coco, ProviderType::Ita] {
+            assert_eq!(p.to_string(), p.as_str());
+        }
     }
 }

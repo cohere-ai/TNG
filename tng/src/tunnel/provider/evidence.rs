@@ -129,4 +129,29 @@ mod tests {
             .expect("deserialize");
         assert_eq!(ev.serialize_to_json().expect("serialize"), inner);
     }
+
+    fn minimal_ita_evidence_json() -> serde_json::Value {
+        use base64::prelude::BASE64_STANDARD;
+        use base64::Engine as _;
+        serde_json::json!({
+            "tdx_quote": BASE64_STANDARD.encode(b"fake-tdx-quote"),
+            "runtime_data": BASE64_STANDARD.encode(b"{}"),
+        })
+    }
+
+    #[test]
+    fn ita_evidence_json_round_trip() {
+        let inner = minimal_ita_evidence_json();
+        let ev = TngEvidence::deserialize_from_json(ProviderType::Ita, inner.clone())
+            .expect("deserialize");
+        assert_eq!(ev.provider_type(), ProviderType::Ita);
+        assert_eq!(ev.serialize_to_json().expect("serialize"), inner);
+    }
+
+    #[test]
+    fn cross_provider_try_from_fails() {
+        let inner = minimal_ita_evidence_json();
+        let ev = TngEvidence::deserialize_from_json(ProviderType::Ita, inner).expect("deserialize");
+        assert!(CocoEvidence::try_from(&ev).is_err());
+    }
 }

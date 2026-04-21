@@ -294,3 +294,88 @@ struct CachedKey {
     n: String,
     e: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn verifier(policy_ids: &[&str]) -> ItaVerifier {
+        let ids: Vec<String> = policy_ids.iter().copied().map(String::from).collect();
+        ItaVerifier::new("https://portal.trustauthority.intel.com", &ids).unwrap()
+    }
+
+    // ---- check_policy_matching ----
+
+    #[test]
+    fn policy_no_ids_configured_passes() {
+        let v = verifier(&[]);
+        v.check_policy_matching(&json!({})).unwrap();
+    }
+
+    #[test]
+    fn policy_unmatched_ids_fail() {
+        let v = verifier(&[]);
+        let claims = json!({
+            "policy_ids_unmatched": [{"id": "bad-policy"}]
+        });
+        assert!(v.check_policy_matching(&claims).is_err());
+    }
+
+    #[test]
+    fn policy_expected_id_present_passes() {
+        let v = verifier(&["p1"]);
+        let claims = json!({
+            "policy_ids_matched": [{"id": "p1"}]
+        });
+        v.check_policy_matching(&claims).unwrap();
+    }
+
+    #[test]
+    fn policy_expected_id_missing_fails() {
+        let v = verifier(&["p1", "p2"]);
+        let claims = json!({
+            "policy_ids_matched": [{"id": "p1"}]
+        });
+        assert!(v.check_policy_matching(&claims).is_err());
+    }
+
+    #[test]
+    fn policy_ids_configured_but_field_missing_fails() {
+        let v = verifier(&["p1"]);
+        assert!(v.check_policy_matching(&json!({})).is_err());
+    }
+
+    // ---- check_runtime_data_binding ----
+
+    #[test]
+    fn runtime_data_binding_claims_subset_passes() {
+        let claims = json!({
+            "tdx": {
+                "attester_runtime_data": {"key": "value", "extra": true}
+            }
+        });
+        let report_data =
+            ReportData::Claims(serde_json::from_value(json!({"key": "value"})).unwrap());
+        ItaVerifier::check_runtime_data_binding(&claims, &report_data).unwrap();
+    }
+
+    #[test]
+    fn runtime_data_binding_mismatch_fails() {
+        let claims = json!({
+            "tdx": {
+                "attester_runtime_data": {"key": "wrong"}
+            }
+        });
+        let report_data =
+            ReportData::Claims(serde_json::from_value(json!({"key": "value"})).unwrap());
+        assert!(ItaVerifier::check_runtime_data_binding(&claims, &report_data).is_err());
+    }
+
+    #[test]
+    fn runtime_data_binding_missing_tdx_claims_fails() {
+        let report_data =
+            ReportData::Claims(serde_json::from_value(json!({"key": "value"})).unwrap());
+        assert!(ItaVerifier::check_runtime_data_binding(&json!({}), &report_data).is_err());
+    }
+}

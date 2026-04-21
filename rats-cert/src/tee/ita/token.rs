@@ -104,3 +104,72 @@ impl GenericEvidence for ItaToken {
         DiceParseEvidenceOutput::NotMatch
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a structurally valid but unsigned JWT for parsing tests.
+    /// Signature verification is not exercised here.
+    fn make_jwt(claims: &serde_json::Value) -> String {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine as _;
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).unwrap());
+        let sig = URL_SAFE_NO_PAD.encode(b"fake-sig");
+        format!("{header}.{payload}.{sig}")
+    }
+
+    #[test]
+    fn exp_extracted_from_claims() {
+        let expected_exp = 1700000000u64;
+        let jwt = make_jwt(&serde_json::json!({"sub": "test", "exp": expected_exp}));
+        let token = ItaToken::new(jwt).unwrap();
+        assert_eq!(token.exp().unwrap(), expected_exp);
+    }
+
+    #[test]
+    fn exp_missing_returns_error() {
+        let jwt = make_jwt(&serde_json::json!({"sub": "test"}));
+        let token = ItaToken::new(jwt).unwrap();
+        assert!(token.exp().is_err());
+    }
+
+    #[test]
+    fn malformed_jwt_exp_error() {
+        let token = ItaToken::new("not.a-jwt".into()).unwrap();
+        assert!(token.exp().is_err());
+    }
+
+    #[test]
+    fn dice_cbor_round_trip() {
+        let jwt = make_jwt(&serde_json::json!({"sub": "test", "exp": 99}));
+        let token = ItaToken::new(jwt.clone()).unwrap();
+        assert_eq!(token.get_dice_cbor_tag(), OCBR_TAG_EVIDENCE_ITA_TOKEN);
+
+        let raw = token.get_dice_raw_evidence().unwrap();
+        let DiceParseEvidenceOutput::Ok(back) =
+            ItaToken::create_evidence_from_dice(OCBR_TAG_EVIDENCE_ITA_TOKEN, &raw)
+        else {
+            panic!("expected DiceParseEvidenceOutput::Ok");
+        };
+        assert_eq!(back.as_str(), jwt);
+    }
+
+    #[test]
+    fn wrong_tag_not_match() {
+        assert!(matches!(
+            ItaToken::create_evidence_from_dice(0xDEAD, b"anything"),
+            DiceParseEvidenceOutput::NotMatch
+        ));
+    }
+
+    #[test]
+    fn get_claims_flattens_jwt_payload() {
+        let jwt = make_jwt(&serde_json::json!({"sub": "test", "nested": {"a": 1}}));
+        let token = ItaToken::new(jwt).unwrap();
+        let claims = token.get_claims().unwrap();
+        assert_eq!(claims.get("sub").and_then(|v| v.as_str()), Some("test"));
+        assert!(claims.contains_key("nested.a"));
+    }
+}

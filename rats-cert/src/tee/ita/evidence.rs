@@ -264,3 +264,91 @@ impl ItaEvidence {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_evidence(with_nonce: bool) -> ItaEvidence {
+        ItaEvidence {
+            tdx_quote: b"fake-quote".to_vec(),
+            nonce: if with_nonce {
+                Some(ItaNonce {
+                    val: "nonce-val".into(),
+                    iat: "nonce-iat".into(),
+                    signature: "nonce-sig".into(),
+                })
+            } else {
+                None
+            },
+            runtime_data: b"{}".to_vec(),
+            nvgpu_evidence: None,
+        }
+    }
+
+    #[test]
+    fn json_round_trip_without_nonce() {
+        let ev = sample_evidence(false);
+        let json = ev.serialize_to_json().unwrap();
+        let back = ItaEvidence::deserialize_from_json(json).unwrap();
+        assert_eq!(back.tdx_quote, ev.tdx_quote);
+        assert!(back.nonce.is_none());
+    }
+
+    #[test]
+    fn json_round_trip_with_nonce() {
+        let ev = sample_evidence(true);
+        let json = ev.serialize_to_json().unwrap();
+        let back = ItaEvidence::deserialize_from_json(json).unwrap();
+        let orig = ev.nonce.as_ref().unwrap();
+        let back_nonce = back.nonce.as_ref().unwrap();
+        assert_eq!(back_nonce.val, orig.val);
+        assert_eq!(back_nonce.iat, orig.iat);
+        assert_eq!(back_nonce.signature, orig.signature);
+    }
+
+    #[test]
+    fn cbor_round_trip_via_dice() {
+        let ev = sample_evidence(true);
+        assert_eq!(ev.get_dice_cbor_tag(), OCBR_TAG_EVIDENCE_ITA_EVIDENCE);
+
+        let raw = ev.get_dice_raw_evidence().unwrap();
+        let DiceParseEvidenceOutput::Ok(back) =
+            ItaEvidence::create_evidence_from_dice(OCBR_TAG_EVIDENCE_ITA_EVIDENCE, &raw)
+        else {
+            panic!("expected DiceParseEvidenceOutput::Ok");
+        };
+        assert_eq!(back.tdx_quote, ev.tdx_quote);
+        assert_eq!(back.runtime_data, ev.runtime_data);
+    }
+
+    #[test]
+    fn wrong_cbor_tag_is_not_match() {
+        let raw = b"anything";
+        assert!(matches!(
+            ItaEvidence::create_evidence_from_dice(0xDEAD, raw),
+            DiceParseEvidenceOutput::NotMatch
+        ));
+    }
+
+    #[test]
+    fn json_with_nvgpu_round_trips() {
+        let ev = ItaEvidence {
+            tdx_quote: b"q".to_vec(),
+            nonce: None,
+            runtime_data: b"rt".to_vec(),
+            nvgpu_evidence: Some(ItaNvgpuEvidence {
+                evidence: "gpu-ev".into(),
+                certificate: "gpu-cert".into(),
+                arch: "hopper".into(),
+                runtime_data_hash: [0xAB; 32],
+            }),
+        };
+        let json = ev.serialize_to_json().unwrap();
+        let back = ItaEvidence::deserialize_from_json(json).unwrap();
+        let orig = ev.nvgpu_evidence.as_ref().unwrap();
+        let gpu = back.nvgpu_evidence.unwrap();
+        assert_eq!(gpu.arch, orig.arch);
+        assert_eq!(gpu.runtime_data_hash, orig.runtime_data_hash);
+    }
+}

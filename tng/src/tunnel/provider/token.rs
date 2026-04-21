@@ -154,4 +154,29 @@ mod tests {
         let t2 = TngToken::deserialize_from_wire_str(ProviderType::Coco, &s).expect("parse");
         assert_eq!(t.as_str(), t2.as_str());
     }
+
+    #[test]
+    fn ita_token_json_round_trip() {
+        let jwt = minimal_jwt();
+        let t = TngToken::from_wire(ProviderType::Ita, jwt.clone()).expect("tok");
+        assert_eq!(t.provider_type(), ProviderType::Ita);
+        let json = t.serialize_to_json().expect("ser");
+        let t2 = TngToken::deserialize_from_json(ProviderType::Ita, json).expect("de");
+        assert_eq!(t.as_str(), t2.as_str());
+    }
+
+    #[test]
+    fn ita_token_wire_str_round_trip() {
+        let jwt = minimal_jwt();
+        let t = TngToken::from_wire(ProviderType::Ita, jwt.clone()).expect("tok");
+        let s = t.serialize_to_wire_str().expect("wire");
+        let t2 = TngToken::deserialize_from_wire_str(ProviderType::Ita, &s).expect("parse");
+        assert_eq!(t.as_str(), t2.as_str());
+    }
+
+    #[test]
+    fn deserialize_non_string_json_fails() {
+        let bad = serde_json::json!(0xBAD);
+        assert!(TngToken::deserialize_from_json(ProviderType::Ita, bad).is_err());
+    }
 }
