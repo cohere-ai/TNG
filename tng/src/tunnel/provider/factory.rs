@@ -6,9 +6,6 @@ use rats_cert::tee::coco::converter::restful::CocoRestfulConverter;
 use rats_cert::tee::coco::converter::CocoConverter;
 use rats_cert::tee::coco::verifier::remote::CocoRemoteVerifier;
 use rats_cert::tee::coco::verifier::CocoVerifier;
-#[cfg(unix)]
-use rats_cert::tee::ita::ItaAttester;
-use rats_cert::tee::ita::{ItaConverter, ItaVerifier};
 
 #[cfg(unix)]
 use crate::config::ra::{AttesterArgs, CocoAttesterArgs};
@@ -29,7 +26,7 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
                 anyhow::bail!("Builtin AA is not yet implemented")
             }
         },
-        AttesterArgs::Ita(ita) => Ok(TngAttester::Ita(ItaAttester::new(&ita.aa_addr)?)),
+        AttesterArgs::Ita(args) => Ok(TngAttester::Ita(args.to_attester()?)),
     }
 }
 
@@ -57,17 +54,7 @@ pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
                 anyhow::bail!("Builtin AS converter creation via factory is not supported")
             }
         },
-        ConverterArgs::Ita(ita) => {
-            let api_key = ita
-                .api_key
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("ITA api_key is required but not set"))?;
-            Ok(TngConverter::Ita(ItaConverter::new(
-                api_key,
-                &ita.as_addr,
-                &ita.policy_ids,
-            )?))
-        }
+        ConverterArgs::Ita(args) => Ok(TngConverter::Ita(args.to_converter()?)),
     }
 }
 
@@ -117,9 +104,6 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
                 anyhow::bail!("Builtin AS verifier creation via factory is not supported")
             }
         },
-        VerifierArgs::Ita(ita) => Ok(TngVerifier::Ita(ItaVerifier::new(
-            &ita.ita_jwks_addr,
-            &ita.policy_ids,
-        )?)),
+        VerifierArgs::Ita(args) => Ok(TngVerifier::Ita(args.to_verifier()?)),
     }
 }

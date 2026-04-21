@@ -322,6 +322,13 @@ pub struct ItaAttesterArgs {
     pub aa_addr: String,
 }
 
+#[cfg(unix)]
+impl ItaAttesterArgs {
+    pub fn to_attester(&self) -> anyhow::Result<rats_cert::tee::ita::ItaAttester> {
+        rats_cert::tee::ita::ItaAttester::new(&self.aa_addr).map_err(Into::into)
+    }
+}
+
 /// CoCo-internal attester variants. Serde reads "aa_type" from flat JSON.
 /// Default is Uds when aa_type is omitted (injected by custom Deserialize).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -366,6 +373,17 @@ pub struct ItaConverterArgs {
     pub api_key: Option<String>,
     #[serde(default)]
     pub policy_ids: Vec<String>,
+}
+
+impl ItaConverterArgs {
+    pub fn to_converter(&self) -> anyhow::Result<rats_cert::tee::ita::ItaConverter> {
+        let api_key = self
+            .api_key
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("ITA api_key is required but not set"))?;
+        rats_cert::tee::ita::ItaConverter::new(api_key, &self.as_addr, &self.policy_ids)
+            .map_err(Into::into)
+    }
 }
 
 /// CoCo-internal converter variants. Serde reads "as_type" from flat JSON.
@@ -419,6 +437,13 @@ pub struct ItaVerifierArgs {
     pub ita_jwks_addr: String,
     #[serde(default)]
     pub policy_ids: Vec<String>,
+}
+
+impl ItaVerifierArgs {
+    pub fn to_verifier(&self) -> anyhow::Result<rats_cert::tee::ita::ItaVerifier> {
+        rats_cert::tee::ita::ItaVerifier::new(&self.ita_jwks_addr, &self.policy_ids)
+            .map_err(Into::into)
+    }
 }
 
 /// CoCo-internal verifier variants. Serde reads "as_type" from flat JSON.
@@ -1608,7 +1633,8 @@ mod tests {
             }
         });
         let ra: RaArgsUnchecked = serde_json::from_value(json).unwrap();
-        ra.into_checked().expect_err("should reject missing api_key");
+        ra.into_checked()
+            .expect_err("should reject missing api_key");
     }
 
     #[test]
