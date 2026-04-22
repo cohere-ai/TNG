@@ -570,7 +570,7 @@ dependencies = [
  "ear",
  "futures",
  "hex",
- "jsonwebtoken",
+ "jsonwebtoken 9.3.1",
  "kbs-types",
  "lazy_static",
  "log",
@@ -1958,7 +1958,7 @@ dependencies = [
  "ciborium",
  "cose-rust",
  "hex",
- "jsonwebtoken",
+ "jsonwebtoken 9.3.1",
  "lazy_static",
  "openssl",
  "phf 0.11.3",
@@ -3726,6 +3726,20 @@ dependencies = [
  "serde",
  "serde_json",
  "simple_asn1",
+]
+
+[[package]]
+name = "jsonwebtoken"
+version = "10.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0529410abe238729a60b108898784df8984c87f6054c9c4fcacc47e4803c1ce1"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.2.15",
+ "js-sys",
+ "serde",
+ "serde_json",
+ "signature",
 ]
 
 [[package]]
@@ -5750,7 +5764,7 @@ dependencies = [
  "futures",
  "hex",
  "itertools 0.14.0",
- "jsonwebtoken",
+ "jsonwebtoken 10.3.0",
  "kbs-types",
  "p256",
  "pkcs8",
