@@ -31,7 +31,7 @@ axum = {version = "0.8.4", default-features = false}
 axum-extra = "0.10.1"
 base64 = "0.22.1"
 bitflags = "2.8.0"
-bytes = "1.10.1"
+bytes = "1.11.1"
 canon-json = { git = "https://github.com/inclavare-containers/canon-json-rs" }
 cfg_aliases = "0.2.1"
 chromedriver-manager = "0.4.0"
