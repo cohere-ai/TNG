@@ -91,7 +91,7 @@ reference-value-provider-service = {git = "https://github.com/openanolis/trustee
 regex = "1.11.1"
 reqwest = {version = "=0.12.9", default-features = false, features = ["json", "http2", "rustls-tls-webpki-roots", "brotli", "gzip", "zstd"]}# select 0.12.9 version since we have to align to the hyper-util=0.1.7 version used by hyper-util-wasm
 ring = "0.17.8"
-rsa = {version = "0.9.7", features = ["sha2"]}
+rsa = {version = "0.9.10", features = ["sha2"]}
 rstest = "0.25.0"
 rtnetlink = "0.17.0"
 rustls = {version = "0.23.27", default-features = false, features = ["logging", "std", "tls12", "ring"]}
