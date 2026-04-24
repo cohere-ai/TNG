@@ -17,6 +17,7 @@ ciborium = {workspace = true}
 const-oid = {workspace = true, optional = true}
 flatten-json-object = {workspace = true, optional = true}
 futures = {workspace = true}
+hex = {workspace = true}
 itertools = {workspace = true}
 jsonwebtoken = {workspace = true}
 kbs-types = {workspace = true}
@@ -86,6 +87,14 @@ verifier-coco = [
   "dep:flatten-json-object",
 ]
 
+attester-ita = [
+  "attester-coco",
+]
+verifier-ita = [
+  "dep:reqwest",
+  "dep:flatten-json-object",
+]
+
 crypto-rustcrypto = [
   "dep:x509-cert",
   "dep:sha2",
@@ -106,17 +115,19 @@ builtin-as-sgx = ["__builtin-as", "attestation-service/sgx-verifier"]
 builtin-as-snp = ["__builtin-as", "attestation-service/snp-verifier"]
 builtin-as-tdx = ["__builtin-as", "attestation-service/tdx-verifier"]
 
-default = ["crypto-rustcrypto", "attester-coco", "verifier-coco", "__builtin-as"]
+default = ["crypto-rustcrypto", "attester-coco", "verifier-coco", "attester-ita", "verifier-ita", "__builtin-as"]
 
 [dev-dependencies]
 ctor = {workspace = true}
-hex = {workspace = true}
 rayon = {workspace = true}
+rsa = {workspace = true}
 rstest = {workspace = true}
 serial_test = {workspace = true}
 tempfile = {workspace = true}
+test-with = {version = "0.16.1", default-features = false}
 tokio = {workspace = true, features = ["rt", "rt-multi-thread", "macros"]}
 tracing-subscriber = {workspace = true}
+wiremock = "0.6"
 
 [build-dependencies]
 tonic-prost-build = {workspace = true, optional = true}
