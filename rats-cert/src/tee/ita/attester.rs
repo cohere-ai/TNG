@@ -73,7 +73,7 @@ impl ItaAttester {
 /// Returns `Ok(None)` when the blob contains no NVIDIA GPU device evidence.
 fn parse_aa_gpu_evidence(
     aa_blob: &[u8],
-    runtime_data_hash: [u8; 32],
+    runtime_data_hash: Option<[u8; 32]>,
 ) -> Result<Option<ItaNvgpuEvidence>> {
     let tee_map: HashMap<Tee, serde_json::Value> =
         serde_json::from_slice(aa_blob).map_err(Error::ParseAdditionalEvidenceJsonFailed)?;
@@ -272,12 +272,39 @@ mod tests {
         });
         let hash = [0xABu8; 32];
         let result =
-            parse_aa_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), hash).unwrap();
+            parse_aa_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), Some(hash))
+                .unwrap();
 
         let gpu = result.expect("should return Some for valid nvidia blob");
         assert_eq!(gpu.certificate, cert);
         assert_eq!(gpu.arch, arch);
-        assert_eq!(gpu.runtime_data_hash, hash);
+        assert_eq!(gpu.runtime_data_hash, Some(hash));
+        let expected_evidence = BASE64.encode(hex::encode(&raw_bytes).as_bytes());
+        assert_eq!(gpu.evidence, expected_evidence);
+    }
+
+    #[test]
+    fn parse_gpu_evidence_valid_nvidia_blob_no_nonce() {
+        let raw_bytes = vec![4u8, 5, 6];
+        let input_b64 = BASE64.encode(&raw_bytes);
+        let cert = "test-cert-pem";
+        let arch = "hopper";
+        let blob = serde_json::json!({
+            "nvidia": {
+                "device_evidence_list": [{
+                    "evidence": input_b64,
+                    "certificate": cert,
+                    "arch": arch
+                }]
+            }
+        });
+        let result =
+            parse_aa_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), None).unwrap();
+
+        let gpu = result.expect("should return Some even without nonce hash");
+        assert_eq!(gpu.certificate, cert);
+        assert_eq!(gpu.arch, arch);
+        assert!(gpu.runtime_data_hash.is_none());
         let expected_evidence = BASE64.encode(hex::encode(&raw_bytes).as_bytes());
         assert_eq!(gpu.evidence, expected_evidence);
     }
@@ -286,8 +313,7 @@ mod tests {
     fn parse_gpu_evidence_no_nvidia_key() {
         let blob = serde_json::json!({"sample": {}});
         let result =
-            parse_aa_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), [0u8; 32])
-                .unwrap();
+            parse_aa_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), None).unwrap();
         assert!(result.is_none());
     }
 
@@ -297,14 +323,13 @@ mod tests {
             "nvidia": {"device_evidence_list": []}
         });
         let result =
-            parse_aa_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), [0u8; 32])
-                .unwrap();
+            parse_aa_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), None).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn parse_gpu_evidence_invalid_json() {
-        assert!(parse_aa_gpu_evidence(b"not json", [0u8; 32]).is_err());
+        assert!(parse_aa_gpu_evidence(b"not json", None).is_err());
     }
 
     // -- derive_additional_evidence_runtime_data_hash --
