@@ -154,6 +154,10 @@ pub struct OHttpArgs {
     /// Defaults to 0 (disabled) when not specified.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_refresh_before_expiry_seconds: Option<u64>,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tls_ca_certs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
