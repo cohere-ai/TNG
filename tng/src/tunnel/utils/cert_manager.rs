@@ -3,7 +3,7 @@ use anyhow::{Context as _, Result};
 use rats_cert::{
     cert::create::CertBuilder,
     crypto::{AsymmetricAlgo, HashAlgo},
-    tee::AttesterPipeline,
+    tee::{claims::Claims, AttesterPipeline, GenericConverter},
 };
 use std::{pin::Pin, sync::Arc, time::Duration};
 
@@ -56,8 +56,21 @@ impl CertManager {
                 converter,
                 ..
             } => {
+                let challenge_token = converter
+                    .get_nonce()
+                    .await
+                    .context("Failed to fetch challenge token (nonce) from Attestation Service")?;
+                tracing::debug!("Fetched challenge token from AS for RA-TLS cert freshness");
+
+                let mut claims = Claims::new();
+                claims.insert(
+                    "challenge_token".to_string(),
+                    serde_json::Value::String(challenge_token),
+                );
+
                 let attester_pipeline = AttesterPipeline::new(attester, converter);
                 let cert_bundle = CertBuilder::new(attester_pipeline, HashAlgo::Sha256)
+                    .with_claims(claims)
                     .with_subject("CN=TNG,O=Inclavare Containers")
                     .build(AsymmetricAlgo::P256)
                     .await?;
