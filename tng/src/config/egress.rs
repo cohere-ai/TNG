@@ -241,6 +241,17 @@ pub struct PeerSharedArgs {
     #[serde(default = "default_push_pull_interval")]
     pub push_pull_interval: u64,
 
+    /// Base interval (in seconds) for retrying cluster join when the initial attempt fails.
+    /// Uses exponential backoff (doubling each time) starting from this value, capped at 30 seconds.
+    /// If unset or 0, no retry is performed (default behavior).
+    #[serde(default)]
+    pub retry_join_interval: Option<u64>,
+
+    /// Maximum number of retry-join attempts. 0 means unlimited retries (default when
+    /// retry_join_interval is set). Only meaningful when retry_join_interval is set.
+    #[serde(default)]
+    pub retry_join_max: Option<u32>,
+
     /// Define how this node proves its identity when connecting to others, and how to verify
     /// the identity of remote peers.
     #[serde(flatten)]
