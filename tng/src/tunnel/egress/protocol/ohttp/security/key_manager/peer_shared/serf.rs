@@ -17,6 +17,7 @@ use bytes::BytesMut;
 use futures::StreamExt;
 use itertools::Itertools;
 use prost::Message;
+use rand::Rng;
 use scopeguard::defer;
 use serf::delegate::CompositeDelegate;
 use serf::event::{Event, EventProducer, EventSubscriber, MemberEventType};
@@ -34,7 +35,7 @@ use std::net::SocketAddr;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::tunnel::ra_context::RaContext;
 use crate::tunnel::utils::file_watcher::FileWatcher;
@@ -47,6 +48,8 @@ pub struct PeerSharedKeyManager {
     serf: Arc<SerfGracefulShutdown>,
     #[allow(unused)]
     peers_file_watch_task: Option<JoinHandle<SupervisedTaskResult<()>>>,
+    #[allow(unused)]
+    retry_join_task: Option<JoinHandle<SupervisedTaskResult<()>>>,
 }
 
 type InstrumentedTokioRuntime = InstrumentedRuntime<serf::agnostic::tokio::TokioRuntime>;
@@ -73,7 +76,7 @@ impl PeerSharedKeyManager {
         let (serf, node_id_str, subscriber) = Self::setup_serf(&runtime, &peer_shared).await?;
 
         // Step 2: Join cluster via static peers and optional file
-        let peers_file_watch_task =
+        let (peers_file_watch_task, retry_join_task) =
             Self::spawn_cluster_join_tasks(&runtime, &serf, &peer_shared).await?;
 
         // Step 3: Initialize internal key state
@@ -118,6 +121,7 @@ impl PeerSharedKeyManager {
             inner,
             serf,
             peers_file_watch_task,
+            retry_join_task,
         })
     }
 
@@ -181,7 +185,13 @@ impl PeerSharedKeyManager {
         runtime: &TokioRuntime,
         serf: &Arc<SerfGracefulShutdown>,
         peer_shared: &PeerSharedArgs,
-    ) -> Result<Option<JoinHandle<SupervisedTaskResult<()>>>, TngError> {
+    ) -> Result<
+        (
+            Option<JoinHandle<SupervisedTaskResult<()>>>,
+            Option<JoinHandle<SupervisedTaskResult<()>>>,
+        ),
+        TngError,
+    > {
         // First, join using static peers
         if !peer_shared.peers.is_empty() {
             if let Err(e) = join_serf_cluster(serf.as_ref(), &peer_shared.peers).await {
@@ -190,7 +200,7 @@ impl PeerSharedKeyManager {
         }
 
         // If peers_file is configured, start monitoring it for changes
-        if let Some(peers_file) = &peer_shared.peers_file {
+        let peers_file_watch_task = if let Some(peers_file) = &peer_shared.peers_file {
             let peers_file_path = peers_file.clone();
 
             // Load initial peers from file and join if any
@@ -252,10 +262,85 @@ impl PeerSharedKeyManager {
 
                     tracing::info!(peers_file = ?peers_file_path_for_watcher, "Peers file watcher stopped");
                 });
-            Ok(Some(watch_task))
+            Some(watch_task)
         } else {
-            Ok(None)
-        }
+            None
+        };
+
+        // Spawn retry-join task if configured via retry_join_interval.
+        // Retries with exponential backoff until this node joins the cluster.
+        let retry_join_task =
+            if let Some(base_secs) = peer_shared.retry_join_interval.filter(|&v| v > 0) {
+                let serf_weak = Arc::downgrade(serf);
+                let peers = peer_shared.peers.clone();
+                let max_attempts = peer_shared.retry_join_max.unwrap_or(0); // 0 = unlimited
+                Some(runtime.spawn_supervised_task_current_span(async move {
+                    const MAX_INTERVAL: Duration = Duration::from_secs(30);
+                    let base_interval = Duration::from_secs(base_secs);
+                    let mut attempt: u32 = 0;
+
+                    loop {
+                        let Some(serf_ref) = serf_weak.upgrade() else {
+                            tracing::debug!("Serf dropped, stopping retry-join task");
+                            break;
+                        };
+
+                        if serf_ref.members().await.len() > 1 {
+                            tracing::info!("Retry-join: cluster has peers, stopping");
+                            break;
+                        }
+
+                        drop(serf_ref);
+
+                        attempt = attempt.saturating_add(1);
+                        if max_attempts > 0 && attempt > max_attempts {
+                            tracing::warn!(
+                                max_attempts,
+                                "Retry-join: exhausted max attempts without joining"
+                            );
+                            break;
+                        }
+
+                        // Exponential backoff capped at MAX_INTERVAL, plus jitter up to 25% of backoff
+                        let backoff = Duration::from_secs(
+                            (base_interval.as_secs() << attempt.min(5)).min(MAX_INTERVAL.as_secs()),
+                        );
+                        let jitter = Duration::from_millis(
+                            rand::rng().random_range(0..=backoff.as_millis() as u64 / 4),
+                        );
+
+                        tracing::info!(
+                            attempt,
+                            sleep_ms = (backoff + jitter).as_millis() as u64,
+                            "Retry-join: no peers yet, waiting before next attempt"
+                        );
+                        tokio::time::sleep(backoff + jitter).await;
+
+                        let Some(serf_ref) = serf_weak.upgrade() else {
+                            tracing::debug!("Serf dropped, stopping retry-join task");
+                            break;
+                        };
+
+                        match join_serf_cluster(&serf_ref, &peers).await {
+                            Ok(()) => {
+                                tracing::info!(attempt, "Retry-join: successfully joined cluster");
+                                break;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    attempt,
+                                    error = ?e,
+                                    "Retry-join: failed, will retry"
+                                );
+                            }
+                        }
+                    }
+                }))
+            } else {
+                None
+            };
+
+        Ok((peers_file_watch_task, retry_join_task))
     }
 
     /// Creates a callback that broadcasts key changes across the Serf cluster.
@@ -464,11 +549,20 @@ async fn resolve_peer_addresses(addr: &String) -> Result<Vec<SocketAddr>, TngErr
 }
 
 /// Joins the Serf cluster via a list of peer addresses.
+/// Tries all peers and succeeds if at least one join succeeds.
 async fn join_serf_cluster(serf: &Serf, peers: &[String]) -> Result<(), TngError> {
+    let mut any_joined = false;
+
     for (i, peer) in peers.iter().enumerate() {
         tracing::info!(peer, "Attempting to join Serf cluster");
 
-        let socket_addrs = resolve_peer_addresses(peer).await?;
+        let socket_addrs = match resolve_peer_addresses(peer).await {
+            Ok(addrs) => addrs,
+            Err(e) => {
+                tracing::warn!(peer, error = ?e, "Failed to resolve peer address, skipping");
+                continue;
+            }
+        };
 
         // Attempt to join the cluster using every resolved socket address for this host.
         // Since a hostname (e.g., via DNS) may resolve to multiple IPs (A/AAAA records),
@@ -509,15 +603,17 @@ async fn join_serf_cluster(serf: &Serf, peers: &[String]) -> Result<(), TngError
         }).count().await;
 
         if count_success > 0 {
-            continue;
+            any_joined = true;
         } else {
-            return Err(TngError::SerfCrateError(anyhow!(
-                "Failed to join any address of peer: {peer}"
-            )));
+            tracing::warn!(peer, "Failed to join via any address of this peer");
         }
     }
 
-    Ok(())
+    if any_joined {
+        Ok(())
+    } else {
+        Err(TngError::SerfCrateError(anyhow!("Failed to join any peer")))
+    }
 }
 
 /// Loads peer list from JSON file.
@@ -583,6 +679,9 @@ pub struct KeyUpdateMessage<'a> {
 impl Drop for PeerSharedKeyManager {
     fn drop(&mut self) {
         if let Some(task) = self.peers_file_watch_task.take() {
+            task.abort();
+        }
+        if let Some(task) = self.retry_join_task.take() {
             task.abort();
         }
     }

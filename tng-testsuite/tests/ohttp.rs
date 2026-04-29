@@ -1498,3 +1498,145 @@ async fn test_egress_key_from_peer_shared() -> Result<()> {
 
     Ok(())
 }
+
+#[serial]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn test_peer_shared_retry_join_on_delayed_peer_startup() -> Result<()> {
+    let node1 = NodeType::Customized { host_num: 1 };
+    let node2 = NodeType::Customized { host_num: 2 };
+
+    run_test(vec![
+        // Node 1: peers with node 2, has retry_join_interval so it will keep trying
+        TngInstance::TngServer(
+            r#"
+            {
+                "add_egress": [
+                    {
+                        "netfilter": {
+                            "capture_dst": {
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {
+                            "key": {
+                                "source": "peer_shared",
+                                "peers": [
+                                    "192.168.1.2:8301"
+                                ],
+                                "rotation_interval": 300,
+                                "retry_join_interval": 1,
+                                "no_ra": true
+                            }
+                        },
+                        "no_ra": true
+                    }
+                ]
+            }
+            "#,
+        )
+        .with_overwrite_node_type(node1)
+        .boxed(),
+        AppType::HttpServer {
+            port: 30001,
+            expected_host_header: "example.com",
+            expected_path_and_query: "/foo/bar/www?type=1&case=1",
+        }
+        .with_overwrite_node_type(node1)
+        .boxed(),
+        // Delay node 2 startup by 5 seconds to ensure node 1 fails its initial join
+        ShellTask {
+            name: "delay_node2_startup".to_owned(),
+            node_type: node2,
+            script: "sleep 5".to_owned(),
+            stop_test_on_finish: false,
+            run_in_foreground: true,
+        }
+        .boxed(),
+        // Node 2: no peers, starts late
+        TngInstance::TngServer(
+            r#"
+            {
+                "add_egress": [
+                    {
+                        "netfilter": {
+                            "capture_dst": {
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {
+                            "key": {
+                                "source": "peer_shared",
+                                "peers": [],
+                                "rotation_interval": 300,
+                                "no_ra": true
+                            }
+                        },
+                        "no_ra": true
+                    }
+                ]
+            }
+            "#,
+        )
+        .with_overwrite_node_type(node2)
+        .boxed(),
+        AppType::HttpServer {
+            port: 30001,
+            expected_host_header: "example.com",
+            expected_path_and_query: "/foo/bar/www?type=1&case=1",
+        }
+        .with_overwrite_node_type(node2)
+        .boxed(),
+        // Wait for retry-join to form the cluster and keys to be shared
+        ShellTask {
+            name: "wait_for_cluster_formation".to_owned(),
+            node_type: NodeType::Client,
+            script: "sleep 3".to_owned(),
+            stop_test_on_finish: false,
+            run_in_foreground: true,
+        }
+        .boxed(),
+        // Load balancer across both nodes
+        AppType::LoadBalancer {
+            listen_port: 30001,
+            upstream_servers: vec![(node1.ip(), 30001), (node2.ip(), 30001)],
+            path_matcher: r"^/foo/(.*)$",
+            rewrite_to: r"/foo/$1",
+        }
+        .boxed(),
+        TngInstance::TngClient(
+            r#"
+            {
+                "add_ingress": [
+                    {
+                        "netfilter": {
+                            "capture_dst": {
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {
+                            "path_rewrites": [
+                                {
+                                    "match_regex": "^/foo/([^/]+)([/]?.*)$",
+                                    "substitution": "/foo/\\1"
+                                }
+                            ]
+                        },
+                        "no_ra": true
+                    }
+                ]
+            }
+            "#,
+        )
+        .boxed(),
+        AppType::HttpClient {
+            host: "192.168.1.252",
+            port: 30001,
+            host_header: "example.com",
+            path_and_query: "/foo/bar/www?type=1&case=1",
+        }
+        .boxed(),
+    ])
+    .await?;
+
+    Ok(())
+}
