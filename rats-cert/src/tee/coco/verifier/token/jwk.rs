@@ -168,10 +168,12 @@ impl JwkAttestationTokenVerifier {
 
         // Fetch certificates from AS address if provided
         if let Some(as_addr) = &config.as_addr {
-            let certs = Self::fetch_certs_from_as(&client, as_addr, &config.as_headers)
-                .await
-                .context("Failed to fetch certificates from AS")?;
-            trusted_certs.extend(certs);
+            match Self::fetch_certs_from_as(&client, as_addr, &config.as_headers).await {
+                Ok(certs) => trusted_certs.extend(certs),
+                Err(error) => {
+                    tracing::warn!(?error, "Failed to fetch certificates from AS")
+                }
+            }
         }
 
         // Load certificates from file paths
