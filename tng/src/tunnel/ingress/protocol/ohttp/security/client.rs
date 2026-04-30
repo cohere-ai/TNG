@@ -75,6 +75,9 @@ use crate::{
 
 const DEFAULT_KEY_CONFIG_REFRESH_SECOND: u64 = 5 * 60; // 5 minutes
 
+const DEFAULT_OHTTP_422_MAX_RETRIES: u32 = 1;
+const DEFAULT_OHTTP_422_RETRY_DELAY_MS: u64 = 200;
+
 pub struct OHttpClient {
     inner: Arc<OHttpClientInner>,
     key_store_value: MaybeCached<KeyStoreValue, TngError>,
@@ -458,6 +461,17 @@ impl OHttpClientInner {
         client_auth: &ClientAuth,
         request: axum::extract::Request,
     ) -> Result<axum::response::Response, TngError> {
+        let max_retries: u32 = std::env::var("OHTTP_422_MAX_RETRIES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_OHTTP_422_MAX_RETRIES);
+        let retry_delay = std::time::Duration::from_millis(
+            std::env::var("OHTTP_422_RETRY_DELAY_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_OHTTP_422_RETRY_DELAY_MS),
+        );
+
         // Encode the request to bhttp message
         let bhttp_encoder = BhttpEncoder::from_request(request);
 
@@ -475,7 +489,7 @@ impl OHttpClientInner {
 
         let client = ohttp::ClientRequest::from_config(&mut key_config)?;
 
-        let (encrypted_request, client_response_decapsulator) = {
+        let (mut encrypted_request, client_response_decapsulator) = {
             #[cfg(wasm)]
             let mut encrypted_request = Vec::new();
             #[cfg(wasm)]
@@ -521,61 +535,110 @@ impl OHttpClientInner {
             (encrypted_request, client_response_decapsulator)
         };
 
-        let ohttp_request_body = {
-            let metadata_buf = {
-                let metadata = Metadata {
-                    client_auth: Some(client_auth.clone()), // TODO: optimize this clone
-                    key_config_hint: Some(ServerKeyConfigHint {
-                        public_key: key_config.public_key_data()?.into_vec(),
-                    }),
-                };
-
-                let metadata_len = metadata.encoded_len();
-                if metadata_len > METADATA_MAX_LEN {
-                    return Err(TngError::MetadataTooLong);
-                }
-                let mut metadata_buf = BytesMut::new();
-                metadata_buf
-                    .put_u32(u32::try_from(metadata_len).map_err(|_| TngError::MetadataTooLong)?); // big-endian
-                metadata_buf.reserve(metadata_len); // to prevent reallocations during encoding
-                metadata
-                    .encode(&mut metadata_buf)
-                    .map_err(TngError::MetadataEncodeError)?;
-                tracing::trace!("metadata length: {:?}", metadata_buf.len());
-                metadata_buf
+        let metadata_buf = {
+            let metadata = Metadata {
+                client_auth: Some(client_auth.clone()), // TODO: optimize this clone
+                key_config_hint: Some(ServerKeyConfigHint {
+                    public_key: key_config.public_key_data()?.into_vec(),
+                }),
             };
 
-            #[cfg(wasm)]
-            {
-                let mut body_bytes = metadata_buf;
-                body_bytes.extend_from_slice(&encrypted_request);
-                tracing::debug!("Encrypted request body length: {:?}", body_bytes.len());
-                reqwest::Body::from(body_bytes.freeze())
+            let metadata_len = metadata.encoded_len();
+            if metadata_len > METADATA_MAX_LEN {
+                return Err(TngError::MetadataTooLong);
             }
-            #[cfg(unix)]
-            {
-                let body = std::io::Cursor::new(metadata_buf).chain(encrypted_request);
-                reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(body))
-            }
+            let mut metadata_buf = BytesMut::new();
+            metadata_buf
+                .put_u32(u32::try_from(metadata_len).map_err(|_| TngError::MetadataTooLong)?); // big-endian
+            metadata_buf.reserve(metadata_len); // to prevent reallocations during encoding
+            metadata
+                .encode(&mut metadata_buf)
+                .map_err(TngError::MetadataEncodeError)?;
+            tracing::trace!("metadata length: {:?}", metadata_buf.len());
+            metadata_buf
         };
 
-        // Forward the request to the upstream server
+        // When retries are enabled, buffer the body into Bytes so the same
+        // encrypted payload can be replayed to a different backend on 422.
+        // When retries are 0, use a streaming body for efficiency.
+        #[cfg(wasm)]
+        let replay_bytes: Option<bytes::Bytes> = {
+            let mut body_bytes = metadata_buf;
+            body_bytes.extend_from_slice(&encrypted_request);
+            tracing::debug!("Encrypted request body length: {:?}", body_bytes.len());
+            Some(body_bytes.freeze())
+        };
+        #[cfg(unix)]
+        let (replay_bytes, streaming_body): (Option<bytes::Bytes>, Option<reqwest::Body>) =
+            if max_retries > 0 {
+                let mut body = metadata_buf.to_vec();
+                encrypted_request
+                    .read_to_end(&mut body)
+                    .await
+                    .map_err(|e| TngError::InvalidOHttpRequest(e.into()))?;
+                tracing::debug!("Encrypted request body length: {:?}", body.len());
+                (Some(bytes::Bytes::from(body)), None)
+            } else {
+                let body = std::io::Cursor::new(metadata_buf).chain(encrypted_request);
+                (
+                    None,
+                    Some(reqwest::Body::wrap_stream(
+                        tokio_util::io::ReaderStream::new(body),
+                    )),
+                )
+            };
+
+        // Forward the request to the upstream server.
+        // On HTTP 422 (key not found on that egress instance), retry up to
+        // OHTTP_422_MAX_RETRIES times: the load balancer will likely route the
+        // replay to a different backend that does hold the key.
         let url = self.base_url.clone();
 
         tracing::debug!(?url, "Sending OHTTP request to upstream server");
 
-        let response = self
-            .http_client
-            .post(url)
-            .header(OhttpApi::HEADER_NAME, OhttpApi::TUNNEL)
-            .header(
-                http::header::CONTENT_TYPE,
-                OHTTP_CHUNKED_REQUEST_CONTENT_TYPE,
-            )
-            .body(ohttp_request_body)
-            .send()
-            .await
-            .map_err(TngError::HttpCipherTextForwardError)?;
+        #[cfg(unix)]
+        let mut streaming_body = streaming_body;
+        #[cfg(not(unix))]
+        let mut streaming_body: Option<reqwest::Body> = None;
+
+        let response = 'send: {
+            let mut remaining_retries = max_retries;
+            loop {
+                let body: reqwest::Body = match replay_bytes {
+                    Some(ref bytes) => bytes.clone().into(),
+                    None => streaming_body.take().ok_or_else(|| {
+                        TngError::InvalidOHttpRequest(anyhow!("streaming body already consumed"))
+                    })?,
+                };
+
+                let response = self
+                    .http_client
+                    .post(url.clone())
+                    .header(OhttpApi::HEADER_NAME, OhttpApi::TUNNEL)
+                    .header(
+                        http::header::CONTENT_TYPE,
+                        OHTTP_CHUNKED_REQUEST_CONTENT_TYPE,
+                    )
+                    .body(body)
+                    .send()
+                    .await
+                    .map_err(TngError::HttpCipherTextForwardError)?;
+
+                if response.status() == StatusCode::UNPROCESSABLE_ENTITY && remaining_retries > 0 {
+                    remaining_retries -= 1;
+                    let delay = retry_delay;
+                    tracing::warn!(
+                        remaining_retries,
+                        ?delay,
+                        "Upstream returned 422 (key not found), retrying after delay"
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+
+                break 'send response;
+            }
+        };
 
         #[cfg(unix)]
         tracing::debug!(
