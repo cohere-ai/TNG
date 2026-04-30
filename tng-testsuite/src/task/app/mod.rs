@@ -48,6 +48,14 @@ pub enum AppType {
         rewrite_to: &'static str,
     },
     #[allow(dead_code)]
+    LoadBalancerWithHeaderCheck {
+        listen_port: u16,
+        upstream_servers: Vec<(String, u16)>,
+        path_matcher: &'static str,
+        rewrite_to: &'static str,
+        required_headers: Vec<(&'static str, &'static str)>,
+    },
+    #[allow(dead_code)]
     TcpServer { port: u16 },
     #[allow(dead_code)]
     TcpClient {
@@ -65,7 +73,9 @@ impl Task for AppType {
             AppType::HttpClient { .. }
             | AppType::HttpClientWithReverseProxy { .. }
             | AppType::TcpClient { .. } => "app_client",
-            AppType::LoadBalancer { .. } => "load_balancer",
+            AppType::LoadBalancer { .. } | AppType::LoadBalancerWithHeaderCheck { .. } => {
+                "load_balancer"
+            }
             #[cfg(feature = "js-sdk")]
             AppType::BrowserClient { .. } => "browser_client",
         }
@@ -78,7 +88,9 @@ impl Task for AppType {
             AppType::HttpClient { .. }
             | AppType::HttpClientWithReverseProxy { .. }
             | AppType::TcpClient { .. } => NodeType::Client,
-            AppType::LoadBalancer { .. } => NodeType::Middleware,
+            AppType::LoadBalancer { .. } | AppType::LoadBalancerWithHeaderCheck { .. } => {
+                NodeType::Middleware
+            }
             #[cfg(feature = "js-sdk")]
             AppType::BrowserClient { .. } => NodeType::Client,
         }
@@ -149,6 +161,28 @@ impl Task for AppType {
                     upstream_servers,
                     path_matcher,
                     rewrite_to,
+                    &[],
+                )
+                .await
+            }
+            AppType::LoadBalancerWithHeaderCheck {
+                listen_port,
+                upstream_servers,
+                path_matcher,
+                rewrite_to,
+                required_headers,
+            } => {
+                let required_headers = required_headers
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect::<Vec<_>>();
+                load_balancer::launch_load_balancer(
+                    token,
+                    *listen_port,
+                    upstream_servers,
+                    path_matcher,
+                    rewrite_to,
+                    &required_headers,
                 )
                 .await
             }
