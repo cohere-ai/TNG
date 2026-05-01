@@ -301,7 +301,10 @@ impl PeerSharedKeyManager {
                     }
                 };
 
-                // broadcast a key update event to all members
+                // Small delay before broadcasting to avoid Serf deduplicating
+                // rapid-fire user events that share the same Lamport clock tick.
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
                 if let Err(error) = serf_clone
                     .user_event(SERF_USER_EVENT_KEY_UPDATE, message_buf, false)
                     .await
