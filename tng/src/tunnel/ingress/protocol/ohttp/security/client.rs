@@ -77,6 +77,7 @@ const DEFAULT_KEY_CONFIG_REFRESH_SECOND: u64 = 5 * 60; // 5 minutes
 
 const DEFAULT_OHTTP_422_MAX_RETRIES: u32 = 1;
 const DEFAULT_OHTTP_422_RETRY_DELAY_MS: u64 = 200;
+const DEFAULT_KEY_EXPIRE_BUFFER_SECS: u64 = 5;
 
 pub struct OHttpClient {
     inner: Arc<OHttpClientInner>,
@@ -300,9 +301,17 @@ impl OHttpClientInner {
             }
         };
 
+        let key_expire_buffer: u64 = std::env::var("OHTTP_KEY_EXPIRE_BUFFER_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_KEY_EXPIRE_BUFFER_SECS);
         expire = std::cmp::min(
             expire,
-            Expire::from_timestamp(server_key_config.expire_timestamp)?,
+            Expire::from_timestamp(
+                server_key_config
+                    .expire_timestamp
+                    .saturating_sub(key_expire_buffer),
+            )?,
         );
 
         let server_attestation_result = match token {
