@@ -127,12 +127,6 @@ pub enum TngError {
     #[error("Error from serf crate")]
     SerfCrateError(#[source] anyhow::Error),
 
-    #[error("Failed to decode KeyUpdateMessage")]
-    KeyUpdateMessageDecodeError(#[source] anyhow::Error),
-
-    #[error("Failed to encode KeyUpdateMessage")]
-    KeyUpdateMessageEncodeError(#[source] prost::EncodeError),
-
     #[error("Should request new KeyConfig from server")]
     ShouldRequestNewKeyConfigFromServerError(#[source] anyhow::Error),
 
@@ -216,9 +210,6 @@ impl IntoResponse for TngError {
             TngError::WatchFileFailed(..) => StatusCode::INTERNAL_SERVER_ERROR,
             #[cfg(feature = "__egress-common")]
             TngError::SerfCrateError(..) => StatusCode::INTERNAL_SERVER_ERROR,
-            TngError::KeyUpdateMessageEncodeError(..)
-            | TngError::KeyUpdateMessageDecodeError(..) => StatusCode::INTERNAL_SERVER_ERROR,
-
             // See the RFC 9458 section 6.4. Key Management
             // The client should request new KeyConfig from server when got UNPROCESSABLE_ENTITY from server.
             TngError::ServerKeyConfigNotFound { .. } => StatusCode::UNPROCESSABLE_ENTITY,

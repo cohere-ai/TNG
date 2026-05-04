@@ -4,22 +4,11 @@ pub mod pb {
 
 use anyhow::{anyhow, Context};
 use prost_types::Timestamp;
-use std::{borrow::Cow, time::SystemTime};
+use std::time::SystemTime;
 
-use crate::tunnel::egress::protocol::ohttp::security::key_manager::{self, callback_manager};
+use crate::tunnel::egress::protocol::ohttp::security::key_manager::{self};
 
 // === rust type to protobuf type ===
-
-impl<'a> TryFrom<super::serf::KeyUpdateMessage<'a>> for pb::KeyUpdateMessage {
-    type Error = anyhow::Error;
-
-    fn try_from(value: super::serf::KeyUpdateMessage) -> Result<Self, Self::Error> {
-        Ok(Self {
-            node_id: value.node_id.to_string(),
-            event: Some(value.event.try_into()?),
-        })
-    }
-}
 
 impl TryFrom<key_manager::KeyInfo> for pb::KeyInfo {
     type Error = anyhow::Error;
@@ -61,63 +50,11 @@ impl From<&ohttp::SymmetricSuite> for pb::SymmetricSuite {
     }
 }
 
-impl<'a> TryFrom<callback_manager::KeyChangeEvent<'a>> for pb::key_update_message::Event {
-    type Error = anyhow::Error;
-
-    fn try_from(event: callback_manager::KeyChangeEvent<'a>) -> Result<Self, Self::Error> {
-        use pb::key_update_message::Event;
-        match event {
-            callback_manager::KeyChangeEvent::Created { key_info } => {
-                let key_info = pb::KeyInfo::try_from(key_info.into_owned())
-                    .context("failed to convert KeyInfo for Created event")?;
-                Ok(Event::Created(pb::KeyEventCreated {
-                    key_info: Some(key_info),
-                }))
-            }
-            callback_manager::KeyChangeEvent::Removed { key_info } => {
-                let key_info = pb::KeyInfo::try_from(key_info.into_owned())
-                    .context("failed to convert KeyInfo for Removed event")?;
-                Ok(Event::Removed(pb::KeyEventRemoved {
-                    key_info: Some(key_info),
-                }))
-            }
-            callback_manager::KeyChangeEvent::StatusChanged {
-                key_info,
-                old_status,
-                new_status,
-            } => {
-                let key_info = pb::KeyInfo::try_from(key_info.into_owned())
-                    .context("failed to convert KeyInfo for StatusChanged event")?;
-                Ok(Event::StatusChanged(pb::KeyEventStatusChanged {
-                    key_info: Some(key_info),
-                    old_status: old_status as i32,
-                    new_status: new_status as i32,
-                }))
-            }
-        }
-    }
-}
-
 // === protobuf type to rust type ===
 
 impl pb::KeyInfo {
     fn system_time_to_timestamp(t: SystemTime) -> Timestamp {
         t.into()
-    }
-}
-
-impl TryFrom<pb::KeyUpdateMessage> for super::serf::KeyUpdateMessage<'static> {
-    type Error = anyhow::Error;
-
-    fn try_from(value: pb::KeyUpdateMessage) -> Result<Self, Self::Error> {
-        Ok(Self {
-            node_id: value.node_id,
-            event: value
-                .event
-                .ok_or_else(|| anyhow::anyhow!("missing event"))?
-                .try_into()
-                .context("failed to convert key event")?,
-        })
     }
 }
 
@@ -217,54 +154,4 @@ fn timestamp_to_system_time(ts: Option<Timestamp>) -> Result<SystemTime, anyhow:
     std::time::UNIX_EPOCH
         .checked_add(std::time::Duration::new(secs, ts.nanos as u32))
         .ok_or_else(|| anyhow!("invalid duration derived from timestamp"))
-}
-
-impl TryFrom<pb::key_update_message::Event> for callback_manager::KeyChangeEvent<'static> {
-    type Error = anyhow::Error;
-
-    fn try_from(event: pb::key_update_message::Event) -> Result<Self, Self::Error> {
-        use pb::key_update_message::Event;
-        match event {
-            Event::Created(pb::KeyEventCreated { key_info }) => {
-                let key_info = key_info
-                    .ok_or_else(|| anyhow!("missing key_info in KeyEventCreated"))?
-                    .try_into()
-                    .context("failed to convert KeyInfo in Created event")?;
-                Ok(callback_manager::KeyChangeEvent::Created {
-                    key_info: Cow::Owned(key_info),
-                })
-            }
-            Event::Removed(pb::KeyEventRemoved { key_info }) => {
-                let key_info = key_info
-                    .ok_or_else(|| anyhow!("missing key_info in KeyEventRemoved"))?
-                    .try_into()
-                    .context("failed to convert KeyInfo in Removed event")?;
-                Ok(callback_manager::KeyChangeEvent::Removed {
-                    key_info: Cow::Owned(key_info),
-                })
-            }
-            Event::StatusChanged(pb::KeyEventStatusChanged {
-                key_info,
-                old_status,
-                new_status,
-            }) => {
-                let key_info = key_info
-                    .ok_or_else(|| anyhow!("missing key_info in KeyEventStatusChanged"))?
-                    .try_into()
-                    .context("failed to convert KeyInfo in StatusChanged event")?;
-                let old_status = old_status
-                    .try_into()
-                    .context("invalid old_status in StatusChanged")?;
-                let new_status = new_status
-                    .try_into()
-                    .context("invalid new_status in StatusChanged")?;
-
-                Ok(callback_manager::KeyChangeEvent::StatusChanged {
-                    key_info: Cow::Owned(key_info),
-                    old_status,
-                    new_status,
-                })
-            }
-        }
-    }
 }

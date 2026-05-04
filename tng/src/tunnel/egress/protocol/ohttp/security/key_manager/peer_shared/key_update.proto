@@ -67,3 +67,7 @@ enum KeyStatus {
   ACTIVE = 0;
   STALE = 1;
 }
+
+message KeySetExchange {
+  repeated KeyInfo keys = 1;
+}

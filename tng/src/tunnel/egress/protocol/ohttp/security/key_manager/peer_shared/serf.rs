@@ -3,44 +3,35 @@ use crate::error::TngError;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::callback_manager::{
     KeyChangeCallback, KeyChangeEvent,
 };
-use crate::tunnel::egress::protocol::ohttp::security::key_manager::peer_shared::memberlist_rats_tls::RatsTls;
+use crate::tunnel::egress::protocol::ohttp::security::key_manager::peer_shared::memberlist_rats_tls::{
+    KeyExchangeStore, RatsTls,
+};
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::peer_shared::runtime::InstrumentedRuntime;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::self_generated::SelfGeneratedKeyManager;
-use crate::tunnel::egress::protocol::ohttp::security::key_manager::{KeyInfo, KeyManager};
-use crate::tunnel::ohttp::key_config::{KeyConfigExtend, PublicKeyData};
+use crate::tunnel::egress::protocol::ohttp::security::key_manager::KeyManager;
 use crate::tunnel::utils::runtime::TokioRuntime;
 use crate::tunnel::utils::runtime::supervised_task::SupervisedTaskResult;
 use tokio::task::JoinHandle;
 
-use anyhow::{anyhow, Context, Result};
-use bytes::BytesMut;
+use anyhow::{anyhow, Context};
 use futures::StreamExt;
-use itertools::Itertools;
-use prost::Message;
-use scopeguard::defer;
 use serf::delegate::CompositeDelegate;
-use serf::event::{Event, EventProducer, EventSubscriber, MemberEventType};
 use serf::net::hostaddr::Host;
 use serf::net::resolver::socket_addr::SocketAddrResolver;
 use serf::net::{HostAddr, NetTransport, NetTransportOptions, Node, NodeId};
 use serf::types::MaybeResolvedAddress;
 use serf::{MemberlistOptions, Options};
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use std::borrow::Cow;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::Duration;
 
 use crate::tunnel::ra_context::RaContext;
 use crate::tunnel::utils::file_watcher::FileWatcher;
 use std::path::Path;
-
-const SERF_USER_EVENT_KEY_UPDATE: &str = "key_update";
 
 pub struct PeerSharedKeyManager {
     pub(super) inner: Arc<PeerSharedKeyManagerInner>,
@@ -64,55 +55,52 @@ type Serf = serf::Serf<SerfTransport, SerfDelegate>;
 
 pub(super) struct PeerSharedKeyManagerInner {
     pub(super) inner_key_manager: SelfGeneratedKeyManager,
-    pub(super) keys_from_peers: RwLock<HashMap<PublicKeyData, KeyInfo>>,
+    pub(super) key_exchange_store: Arc<KeyExchangeStore>,
 }
 
 impl PeerSharedKeyManager {
     pub async fn new(runtime: TokioRuntime, peer_shared: PeerSharedArgs) -> Result<Self, TngError> {
-        // Step 1: Initialize Serf node and network transport
-        let (serf, node_id_str, subscriber) = Self::setup_serf(&runtime, &peer_shared).await?;
+        // Step 1: Create shared key exchange store (used by stream layer for TCP key exchange)
+        let key_exchange_store = Arc::new(KeyExchangeStore::new());
 
-        // Step 2: Join cluster via static peers and optional file
+        // Step 2: Initialize Serf node and network transport
+        let (serf, _node_id_str) =
+            Self::setup_serf(&runtime, &peer_shared, key_exchange_store.clone()).await?;
+
+        // Step 3: Join cluster via static peers and optional file
         let peers_file_watch_task =
             Self::spawn_cluster_join_tasks(&runtime, &serf, &peer_shared).await?;
 
-        // Step 3: Initialize internal key state
+        // Step 4: Initialize internal key state
         let inner = Arc::new(PeerSharedKeyManagerInner {
             inner_key_manager: SelfGeneratedKeyManager::new_with_auto_refresh(
                 runtime.clone(),
                 peer_shared.rotation_interval,
             )?,
-            keys_from_peers: Default::default(),
+            key_exchange_store: key_exchange_store.clone(),
         });
 
-        // Step 4: Set up broadcast callback for key changes
-        let broadcast_func = Self::make_broadcast_callback(&node_id_str, &serf);
+        // Step 5: Register callback to sync own key changes into the exchange store
+        let store_for_callback = key_exchange_store.clone();
+        let update_store_callback: KeyChangeCallback = Arc::new(move |event| {
+            let store = store_for_callback.clone();
+            Box::pin(async move {
+                store.handle_own_key_event(event).await;
+            })
+        });
+        inner
+            .inner_key_manager
+            .register_callback(update_store_callback)
+            .await;
 
-        // Register callback to broadcast self generated key change event to all serf members
-        {
-            // We need to broadcast all key change events to the cluster
-            inner
-                .inner_key_manager
-                .register_callback(broadcast_func.clone())
-                .await;
-
-            // Make sure we have broadcast all existing keys to the cluster
-            for key_info in inner.inner_key_manager.get_client_visible_keys().await? {
-                broadcast_func(&KeyChangeEvent::Created {
-                    key_info: Cow::Owned(key_info),
+        // Seed the store with any keys that already exist
+        for key_info in inner.inner_key_manager.get_client_visible_keys().await? {
+            key_exchange_store
+                .handle_own_key_event(&KeyChangeEvent::Created {
+                    key_info: std::borrow::Cow::Owned(key_info),
                 })
                 .await;
-            }
         }
-
-        // Step 5: Spawn peer key sharing task (handles incoming events)
-        let _peer_keys_sharing_task = Self::spawn_key_sharing_task(
-            runtime.clone(),
-            subscriber,
-            inner.clone(),
-            broadcast_func,
-            node_id_str.clone(),
-        );
 
         Ok(Self {
             inner,
@@ -125,17 +113,11 @@ impl PeerSharedKeyManager {
     async fn setup_serf(
         runtime: &TokioRuntime,
         peer_shared: &PeerSharedArgs,
-    ) -> Result<
-        (
-            Arc<SerfGracefulShutdown>,
-            String,
-            EventSubscriber<SerfTransport, SerfDelegate>,
-        ),
-        TngError,
-    > {
-        let opts = Options::new()
-            .with_memberlist_options(MemberlistOptions::lan())
-            .with_event_buffer_size(256);
+        key_exchange_store: Arc<KeyExchangeStore>,
+    ) -> Result<(Arc<SerfGracefulShutdown>, String), TngError> {
+        let memberlist_opts =
+            MemberlistOptions::lan().with_push_pull_interval(Duration::from_secs(5));
+        let opts = Options::new().with_memberlist_options(memberlist_opts);
         let node_id_str = Uuid::new_v4().to_string();
         let node_id = NodeId::<255>::new(&node_id_str)
             .with_context(|| format!("invalid node id {node_id_str}"))
@@ -153,7 +135,7 @@ impl PeerSharedKeyManager {
         let net_opts =
             NetTransportOptions::<_, SocketAddrResolver<InstrumentedTokioRuntime>, _>::with_stream_layer_options(
                 node_id,
-                (ra_context, runtime.clone()),
+                (ra_context, runtime.clone(), key_exchange_store),
             )
             .with_bind_addresses(
                 [{
@@ -166,14 +148,13 @@ impl PeerSharedKeyManager {
                 .collect(),
             );
 
-        let (producer, subscriber) = EventProducer::unbounded();
-        let serf = Serf::with_event_producer(net_opts, opts, producer)
+        let serf = Serf::new(net_opts, opts)
             .await
             .map_err(|error| TngError::SerfCrateError(anyhow!(error)))?;
 
         let graceful_serf = Arc::new(SerfGracefulShutdown::new(serf, runtime.clone()));
 
-        Ok((graceful_serf, node_id_str, subscriber))
+        Ok((graceful_serf, node_id_str))
     }
 
     /// Handles joining the Serf cluster using both static peers and file-based dynamic peers.
@@ -256,190 +237,6 @@ impl PeerSharedKeyManager {
         } else {
             Ok(None)
         }
-    }
-
-    /// Creates a callback that broadcasts key changes across the Serf cluster.
-    fn make_broadcast_callback(
-        node_id_str: &str,
-        serf: &Arc<SerfGracefulShutdown>,
-    ) -> KeyChangeCallback {
-        let node_id_str = node_id_str.to_owned();
-        // Here we use weak reference to avoid memory leak due to reference cycle
-        let serf_weak = Arc::downgrade(serf);
-
-        Arc::new(move |event| {
-            let node_id_str = node_id_str.clone();
-            let serf_weak = serf_weak.clone();
-
-            Box::pin(async move {
-                let Some(serf_clone) = serf_weak.upgrade() else {
-                    tracing::debug!("stop broadcast key change event since serf has been dropped");
-                    return;
-                };
-
-                tracing::info!(?event, "broadcast key change event to all serf members");
-
-                let message_buf = async {
-                    let message = self::KeyUpdateMessage {
-                        node_id: node_id_str.clone(),
-                        event: event.clone(),
-                    };
-                    let message = super::key_update::pb::KeyUpdateMessage::try_from(message)?;
-
-                    let mut message_buf = BytesMut::new();
-                    message_buf.reserve(message.encoded_len()); // to prevent reallocations during encoding
-                    message.encode(&mut message_buf)?;
-                    Ok::<_, anyhow::Error>(message_buf)
-                }
-                .await;
-
-                let message_buf = match message_buf {
-                    Ok(v) => v,
-                    Err(error) => {
-                        tracing::error!(?error, "Failed to encode key update message");
-                        return;
-                    }
-                };
-
-                // Small delay before broadcasting to avoid Serf deduplicating
-                // rapid-fire user events that share the same Lamport clock tick.
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-
-                if let Err(error) = serf_clone
-                    .user_event(SERF_USER_EVENT_KEY_UPDATE, message_buf, false)
-                    .await
-                {
-                    tracing::error!(?error, "failed to send key update event");
-                }
-            })
-        })
-    }
-
-    /// Spawns background task to handle Serf events (key updates, joins).
-    fn spawn_key_sharing_task(
-        runtime: TokioRuntime,
-        subscriber: EventSubscriber<SerfTransport, SerfDelegate>,
-        inner: Arc<PeerSharedKeyManagerInner>,
-        broadcast_func: KeyChangeCallback,
-        node_id_str: String,
-    ) -> JoinHandle<()> {
-        runtime.spawn_unsupervised_task_current_span(async move {
-            defer! {
-                tracing::info!("Peer keys sharing stopped");
-            }
-
-            tracing::info!("Start Peer keys sharing");
-
-            loop {
-                let Ok(event) = subscriber.recv().await else {
-                    tracing::debug!("serf event channel closed, task quit now");
-                    break;
-                };
-
-                let fut = async {
-                    'skip: {
-                        match event {
-                            Event::User(ev) => {
-                                match ev.name().as_str() {
-                                    SERF_USER_EVENT_KEY_UPDATE => {
-                                        let payload = ev.payload();
-
-                                        let key_update: KeyUpdateMessage =
-                                            super::key_update::pb::KeyUpdateMessage::decode(
-                                                payload.as_ref(),
-                                            )
-                                            .context("decode protobuf data")
-                                            .map_err(TngError::KeyUpdateMessageDecodeError)?
-                                            .try_into()
-                                            .map_err(TngError::KeyUpdateMessageDecodeError)?;
-
-                                        if key_update.node_id == node_id_str {
-                                            break 'skip;
-                                        }
-
-                                        tracing::info!(
-                                            node_id = ?key_update.node_id,
-                                            event = ?key_update.event,
-                                            "Got key update serf event"
-                                        );
-
-                                        let now = SystemTime::now();
-
-                                        match key_update.event {
-                                            KeyChangeEvent::Created { key_info }
-                                            | KeyChangeEvent::StatusChanged { key_info, .. } => {
-                                                // Ignore the key if it has already expired yet
-                                                if now < key_info.expire_at {
-                                                    inner.keys_from_peers.write().await.insert(
-                                                        key_info.key_config.public_key_data()?,
-                                                        key_info.into_owned(),
-                                                    );
-                                                }
-                                            }
-                                            KeyChangeEvent::Removed { key_info } => {
-                                                inner.keys_from_peers.write().await.remove(
-                                                    &key_info.key_config.public_key_data()?,
-                                                );
-                                            }
-                                        }
-
-                                        // Scan and remove all the expired keys
-                                        inner
-                                            .keys_from_peers
-                                            .write()
-                                            .await
-                                            .retain(|_, key_info| now < key_info.expire_at)
-                                    }
-                                    event => {
-                                        tracing::warn!(event, "unknown user serf event");
-                                    }
-                                }
-                            }
-                            Event::Member(member_event) => {
-                                if matches!(member_event.ty(), MemberEventType::Join) {
-                                    tracing::info!(
-                                        nodes=?member_event
-                                            .members()
-                                            .iter()
-                                            .map(|member| member.node())
-                                            .collect_vec(),
-                                        "New serf node joined, start sharing keys"
-                                    );
-                                    // Notify self generated keys as key update event to all peers, when a new node joins
-                                    async {
-                                        for key_info in inner
-                                            .inner_key_manager
-                                            .get_client_visible_keys()
-                                            .await?
-                                        {
-                                            broadcast_func(&KeyChangeEvent::Created {
-                                                key_info: Cow::Owned(key_info),
-                                            })
-                                            .await;
-                                        }
-                                        Ok::<(), TngError>(())
-                                    }
-                                    .await
-                                    .unwrap_or_else(|error| {
-                                        tracing::warn!(
-                                            ?error,
-                                            "Error during broadcasting keys to peers"
-                                        )
-                                    });
-                                }
-                            }
-                            _ => { /* ignore */ }
-                        }
-                    }
-
-                    Ok::<(), anyhow::Error>(())
-                };
-
-                if let Err(error) = fut.await {
-                    tracing::info!(?error, "Error during handling serf event");
-                }
-            }
-        })
     }
 }
 
@@ -575,12 +372,6 @@ impl Drop for SerfGracefulShutdown {
                 });
         }
     }
-}
-
-#[derive(Debug)]
-pub struct KeyUpdateMessage<'a> {
-    pub node_id: String,
-    pub event: KeyChangeEvent<'a>,
 }
 
 impl Drop for PeerSharedKeyManager {

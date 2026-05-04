@@ -19,8 +19,8 @@ impl KeyManager for super::PeerSharedKeyManager {
         {
             Ok(key) => Ok(key),
             Err(_) => {
-                let keys_from_peers = self.inner.keys_from_peers.read().await;
-                keys_from_peers
+                let peer_keys = self.inner.key_exchange_store.read_peer_keys().await;
+                peer_keys
                     .values()
                     .find(|key_info| key_info.key_config.key_id() == key_id)
                     .cloned()
@@ -43,12 +43,13 @@ impl KeyManager for super::PeerSharedKeyManager {
         {
             Ok(key) => Ok(key),
             Err(_) => {
-                let keys_from_peers = self.inner.keys_from_peers.read().await;
-                keys_from_peers.get(public_key_data).cloned().ok_or(
-                    TngError::ServerKeyConfigNotFound(either::Either::Right(
+                let peer_keys = self.inner.key_exchange_store.read_peer_keys().await;
+                peer_keys
+                    .get(public_key_data)
+                    .cloned()
+                    .ok_or(TngError::ServerKeyConfigNotFound(either::Either::Right(
                         public_key_data.clone(),
-                    )),
-                )
+                    )))
             }
         }
     }
