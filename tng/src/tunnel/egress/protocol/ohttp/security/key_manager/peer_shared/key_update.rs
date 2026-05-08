@@ -144,6 +144,7 @@ impl TryFrom<pb::KeyInfo> for key_manager::KeyInfo {
             key_config,
             status,
             created_at,
+            active_at: created_at,
             stale_at,
             expire_at,
         })

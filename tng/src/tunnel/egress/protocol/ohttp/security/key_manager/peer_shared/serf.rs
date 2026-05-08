@@ -81,6 +81,7 @@ impl PeerSharedKeyManager {
             inner_key_manager: SelfGeneratedKeyManager::new_with_auto_refresh(
                 runtime.clone(),
                 peer_shared.rotation_interval,
+                peer_shared.activation_delay,
             )?,
             keys_from_peers: Default::default(),
         });

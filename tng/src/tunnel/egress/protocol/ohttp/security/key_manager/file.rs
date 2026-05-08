@@ -198,6 +198,7 @@ impl FileBasedKeyManager {
             key_config,
             status: KeyStatus::Active,
             created_at,
+            active_at: created_at,
             stale_at,
             expire_at,
         })
