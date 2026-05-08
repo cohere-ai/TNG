@@ -7,6 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 #[async_trait]
 impl KeyManager for super::PeerSharedKeyManager {
@@ -19,10 +20,13 @@ impl KeyManager for super::PeerSharedKeyManager {
         {
             Ok(key) => Ok(key),
             Err(_) => {
+                let now = SystemTime::now();
                 let keys_from_peers = self.inner.keys_from_peers.read().await;
                 keys_from_peers
                     .values()
-                    .find(|key_info| key_info.key_config.key_id() == key_id)
+                    .find(|key_info| {
+                        key_info.key_config.key_id() == key_id && key_info.expire_at > now
+                    })
                     .cloned()
                     .ok_or(TngError::ServerKeyConfigNotFound(either::Either::Left(
                         key_id,
@@ -43,12 +47,15 @@ impl KeyManager for super::PeerSharedKeyManager {
         {
             Ok(key) => Ok(key),
             Err(_) => {
+                let now = SystemTime::now();
                 let keys_from_peers = self.inner.keys_from_peers.read().await;
-                keys_from_peers.get(public_key_data).cloned().ok_or(
-                    TngError::ServerKeyConfigNotFound(either::Either::Right(
+                keys_from_peers
+                    .get(public_key_data)
+                    .filter(|key_info| key_info.expire_at > now)
+                    .cloned()
+                    .ok_or(TngError::ServerKeyConfigNotFound(either::Either::Right(
                         public_key_data.clone(),
-                    )),
-                )
+                    )))
             }
         }
     }
