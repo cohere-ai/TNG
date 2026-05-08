@@ -91,8 +91,8 @@ impl PeerSharedKeyManager {
         peer_shared: &PeerSharedArgs,
         inner: Arc<PeerSharedKeyManagerInner>,
     ) -> Result<(Arc<SerfGracefulShutdown>, String), TngError> {
-        let memberlist_opts =
-            MemberlistOptions::lan().with_push_pull_interval(Duration::from_secs(5));
+        let memberlist_opts = MemberlistOptions::lan()
+            .with_push_pull_interval(Duration::from_secs(peer_shared.push_pull_interval));
         let opts = Options::new().with_memberlist_options(memberlist_opts);
         let node_id_str = Uuid::new_v4().to_string();
         let node_id = NodeId::<255>::new(&node_id_str)
