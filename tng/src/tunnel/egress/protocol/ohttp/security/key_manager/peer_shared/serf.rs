@@ -1,14 +1,11 @@
 use crate::config::egress::PeerSharedArgs;
 use crate::error::TngError;
-use crate::tunnel::egress::protocol::ohttp::security::key_manager::callback_manager::{
-    KeyChangeCallback, KeyChangeEvent,
-};
-use crate::tunnel::egress::protocol::ohttp::security::key_manager::peer_shared::memberlist_rats_tls::{
-    KeyStore, RatsTls,
-};
+use crate::tunnel::egress::protocol::ohttp::security::key_manager::peer_shared::key_exchange_layer::KeyExchangeLayer;
+use crate::tunnel::egress::protocol::ohttp::security::key_manager::peer_shared::memberlist_rats_tls::RatsTls;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::peer_shared::runtime::InstrumentedRuntime;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::self_generated::SelfGeneratedKeyManager;
-use crate::tunnel::egress::protocol::ohttp::security::key_manager::KeyManager;
+use crate::tunnel::egress::protocol::ohttp::security::key_manager::KeyInfo;
+use crate::tunnel::ohttp::key_config::PublicKeyData;
 use crate::tunnel::utils::runtime::TokioRuntime;
 use crate::tunnel::utils::runtime::supervised_task::SupervisedTaskResult;
 use tokio::task::JoinHandle;
@@ -23,11 +20,13 @@ use serf::types::MaybeResolvedAddress;
 use serf::{MemberlistOptions, Options};
 use uuid::Uuid;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 
 use crate::tunnel::ra_context::RaContext;
 use crate::tunnel::utils::file_watcher::FileWatcher;
@@ -45,7 +44,7 @@ type InstrumentedTokioRuntime = InstrumentedRuntime<serf::agnostic::tokio::Tokio
 type SerfTransport = NetTransport<
     NodeId,
     SocketAddrResolver<InstrumentedTokioRuntime>,
-    RatsTls<InstrumentedTokioRuntime>,
+    KeyExchangeLayer<RatsTls<InstrumentedTokioRuntime>>,
     InstrumentedTokioRuntime,
 >;
 
@@ -53,53 +52,29 @@ type SerfDelegate = CompositeDelegate<NodeId, SocketAddr>;
 
 type Serf = serf::Serf<SerfTransport, SerfDelegate>;
 
-pub(super) struct PeerSharedKeyManagerInner {
+pub struct PeerSharedKeyManagerInner {
     pub(super) inner_key_manager: SelfGeneratedKeyManager,
-    pub(super) key_store: Arc<KeyStore>,
+    pub(super) keys_from_peers: RwLock<HashMap<PublicKeyData, KeyInfo>>,
 }
 
 impl PeerSharedKeyManager {
     pub async fn new(runtime: TokioRuntime, peer_shared: PeerSharedArgs) -> Result<Self, TngError> {
-        // Step 1: Create shared key exchange store (used by stream layer for TCP key exchange)
-        let key_store = Arc::new(KeyStore::new());
-
-        // Step 2: Generate own key and seed the exchange store before joining,
-        // so the very first key exchange already includes our key
+        // Step 1: Initialize internal key state
         let inner = Arc::new(PeerSharedKeyManagerInner {
             inner_key_manager: SelfGeneratedKeyManager::new_with_auto_refresh(
                 runtime.clone(),
                 peer_shared.rotation_interval,
                 peer_shared.activation_delay,
             )?,
-            key_store: key_store.clone(),
+            keys_from_peers: Default::default(),
         });
 
-        let store_for_callback = key_store.clone();
-        let update_store_callback: KeyChangeCallback = Arc::new(move |event| {
-            let store = store_for_callback.clone();
-            Box::pin(async move {
-                store.handle_own_key_event(event).await;
-            })
-        });
-        inner
-            .inner_key_manager
-            .register_callback(update_store_callback)
-            .await;
+        // Step 2: Initialize Serf node and network transport.
+        // The exchange layer holds a reference to `inner` so it can read own keys
+        // and merge peer keys directly during TCP push-pull connections.
+        let (serf, _node_id_str) = Self::setup_serf(&runtime, &peer_shared, inner.clone()).await?;
 
-        for key_info in inner.inner_key_manager.get_all_keys().await? {
-            key_store
-                .handle_own_key_event(&KeyChangeEvent::Created {
-                    key_info: std::borrow::Cow::Owned(key_info),
-                })
-                .await;
-        }
-
-        // Step 3: Initialize Serf node and network transport
-        let (serf, _node_id_str) =
-            Self::setup_serf(&runtime, &peer_shared, key_store.clone()).await?;
-
-        // Step 4: Join cluster via static peers and optional file.
-        // Own key is already in the exchange store, so peers receive it immediately.
+        // Step 3: Join cluster via static peers and optional file
         let peers_file_watch_task =
             Self::spawn_cluster_join_tasks(&runtime, &serf, &peer_shared).await?;
 
@@ -114,7 +89,7 @@ impl PeerSharedKeyManager {
     async fn setup_serf(
         runtime: &TokioRuntime,
         peer_shared: &PeerSharedArgs,
-        key_store: Arc<KeyStore>,
+        inner: Arc<PeerSharedKeyManagerInner>,
     ) -> Result<(Arc<SerfGracefulShutdown>, String), TngError> {
         let memberlist_opts =
             MemberlistOptions::lan().with_push_pull_interval(Duration::from_secs(5));
@@ -136,7 +111,7 @@ impl PeerSharedKeyManager {
         let net_opts =
             NetTransportOptions::<_, SocketAddrResolver<InstrumentedTokioRuntime>, _>::with_stream_layer_options(
                 node_id,
-                (ra_context, runtime.clone(), key_store),
+                ((ra_context, runtime.clone()), inner),
             )
             .with_bind_addresses(
                 [{
