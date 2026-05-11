@@ -59,7 +59,7 @@ async fn get_all_keys_for_exchange(inner: &PeerSharedKeyManagerInner) -> Vec<Key
     let now = SystemTime::now();
     let own_keys = inner
         .inner_key_manager
-        .get_client_visible_keys()
+        .get_all_keys()
         .await
         .unwrap_or_default();
     let peer_keys = inner.keys_from_peers.read().await;
@@ -105,7 +105,7 @@ async fn merge_received_keys(
 ) {
     let own_pkds: HashSet<PublicKeyData> = inner
         .inner_key_manager
-        .get_client_visible_keys()
+        .get_all_keys()
         .await
         .unwrap_or_default()
         .iter()
