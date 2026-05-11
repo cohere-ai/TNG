@@ -87,6 +87,7 @@ pub mod tests {
                             match_regex: "^/foo/bar/([^/]+)([/]?.*)$".to_owned(),
                             substitution: "/foo/bar/\\1".to_owned(),
                         }],
+                        key_refresh_before_expiry_seconds: None,
                     }),
                     ra_args: RaArgsUnchecked {
                         no_ra: false,
