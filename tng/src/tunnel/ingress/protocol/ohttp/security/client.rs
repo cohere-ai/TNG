@@ -38,6 +38,11 @@ use url::Url;
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 #[cfg(unix)]
+use std::time::SystemTime;
+#[cfg(wasm)]
+use web_time::SystemTime;
+
+#[cfg(unix)]
 use crate::tunnel::ohttp::protocol::metadata::AttestedPublicKey;
 #[cfg(unix)]
 use crate::tunnel::ohttp::protocol::userdata::ClientUserData;
@@ -322,8 +327,23 @@ impl OHttpClientInner {
 
         // Shift the expiry earlier by the configured buffer so the background
         // refresh fires before the egress actually evicts the key.
+        // If the buffer exceeds the key's remaining TTL the adjusted time would
+        // land in the past, causing MaybeCached to spin in a tight refetch loop.
+        // In that case we keep the original expiry and log a warning.
         let expire = match expire {
-            Expire::ExpireAt(t) => Expire::ExpireAt(t - self.refresh_before_expiry),
+            Expire::ExpireAt(t) => match t.checked_sub(self.refresh_before_expiry) {
+                Some(adjusted) if adjusted > SystemTime::now() => Expire::ExpireAt(adjusted),
+                _ => {
+                    if !self.refresh_before_expiry.is_zero() {
+                        tracing::warn!(
+                            refresh_before_expiry = ?self.refresh_before_expiry,
+                            "key_refresh_before_expiry_seconds exceeds key's remaining TTL; \
+                             skipping early refresh",
+                        );
+                    }
+                    Expire::ExpireAt(t)
+                }
+            },
             other => other,
         };
 
