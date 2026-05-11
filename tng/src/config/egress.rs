@@ -183,6 +183,7 @@ pub enum KeyArgs {
 ///     "tng-service.default.svc.cluster.local:8301"
 ///   ],
 ///   "rotation_interval": 300,
+///   "activation_delay": 15,
 ///   "attest": {
 ///     "model": "background_check",
 ///     "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
