@@ -98,7 +98,7 @@ impl PeerSharedKeyManager {
                 .await;
 
             // Make sure we have broadcast all existing keys to the cluster
-            for key_info in inner.inner_key_manager.get_client_visible_keys().await? {
+            for key_info in inner.inner_key_manager.get_all_keys().await? {
                 broadcast_func(&KeyChangeEvent::Created {
                     key_info: Cow::Owned(key_info),
                 })
@@ -405,10 +405,8 @@ impl PeerSharedKeyManager {
                                     );
                                     // Notify self generated keys as key update event to all peers, when a new node joins
                                     async {
-                                        for key_info in inner
-                                            .inner_key_manager
-                                            .get_client_visible_keys()
-                                            .await?
+                                        for key_info in
+                                            inner.inner_key_manager.get_all_keys().await?
                                         {
                                             broadcast_func(&KeyChangeEvent::Created {
                                                 key_info: Cow::Owned(key_info),

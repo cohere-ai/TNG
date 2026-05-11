@@ -280,6 +280,11 @@ impl KeyManager for SelfGeneratedKeyManager {
             .collect())
     }
 
+    /// Returns all keys regardless of activation delay or status.
+    async fn get_all_keys(&self) -> Result<Vec<KeyInfo>, TngError> {
+        Ok(self.inner.keys.read().await.values().cloned().collect())
+    }
+
     async fn register_callback(&self, callback: KeyChangeCallback) {
         self.inner
             .callback_manager
@@ -364,6 +369,27 @@ mod tests {
             let keys = manager.get_client_visible_keys().await.unwrap();
             assert_ne!(keys[0].key_config.key_id(), k1_id, "K2 now visible");
             assert_eq!(keys[0].key_config.key_id(), k2_id, "K2 is the active key");
+
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn get_all_keys_includes_non_active_keys_during_activation_delay() {
+        run_test_with_tokio_runtime(|rt| async move {
+            let manager = SelfGeneratedKeyManager::new_with_auto_refresh(rt, 2, 1).unwrap();
+            // wait for first key to be generated and go stale, second key to be generated but not yet active
+            tokio::time::sleep(Duration::from_millis(2500)).await;
+
+            // get_all_keys must include both K1 (stale) and K2 (pending)
+            let all = manager.get_all_keys().await.unwrap();
+            assert_eq!(all.len(), 2, "both stale and pending keys are returned");
+            let now = SystemTime::now();
+            let (stale, not_stale): (Vec<_>, Vec<_>) = all.iter().partition(|k| now >= k.stale_at);
+            assert_eq!(stale.len(), 1, "one key should be stale");
+            assert_eq!(not_stale.len(), 1, "one key should not be stale");
 
             Ok(())
         })

@@ -242,6 +242,14 @@ impl KeyManager for FileBasedKeyManager {
         }
     }
 
+    async fn get_all_keys(&self) -> Result<Vec<KeyInfo>, TngError> {
+        let key = self.inner.key.read().await;
+        Ok(key
+            .as_ref()
+            .map(|(_, info)| vec![info.clone()])
+            .unwrap_or_default())
+    }
+
     async fn register_callback(&self, callback: KeyChangeCallback) {
         self.inner
             .callback_manager

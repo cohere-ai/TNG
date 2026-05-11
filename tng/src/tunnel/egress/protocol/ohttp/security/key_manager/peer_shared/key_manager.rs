@@ -56,6 +56,10 @@ impl KeyManager for super::PeerSharedKeyManager {
         self.inner.inner_key_manager.get_client_visible_keys().await
     }
 
+    async fn get_all_keys(&self) -> Result<Vec<KeyInfo>, TngError> {
+        self.inner.inner_key_manager.get_all_keys().await
+    }
+
     async fn register_callback(&self, callback: KeyChangeCallback) {
         // We ignore key change events from peers, as they do not affect user-visible keys.
         self.inner

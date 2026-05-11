@@ -90,6 +90,11 @@ pub trait KeyManager: Send + Sync {
     /// Returns only keys that are active, valid, and safe to expose.
     async fn get_client_visible_keys(&self) -> Result<Vec<KeyInfo>, TngError>;
 
+    /// Get a list of all keys regardless of their status
+    ///
+    /// Returns all keys, including those that are stale.
+    async fn get_all_keys(&self) -> Result<Vec<KeyInfo>, TngError>;
+
     /// Register a callback that will be called whenever a key is created or modified.
     ///
     /// The callback receives a reference to the updated `KeyInfo`.
