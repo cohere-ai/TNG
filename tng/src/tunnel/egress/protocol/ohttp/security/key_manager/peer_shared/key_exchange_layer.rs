@@ -23,7 +23,11 @@ use super::serf::PeerSharedKeyManagerInner;
 async fn send_keyset(conn: &mut impl serf::net::Connection, keys: &[KeyInfo]) -> io::Result<()> {
     let pb_keys: Vec<key_update::pb::KeyInfo> = keys
         .iter()
-        .filter_map(|ki| key_update::pb::KeyInfo::try_from(ki.clone()).ok())
+        .filter_map(|ki| {
+            key_update::pb::KeyInfo::try_from(ki.clone())
+                .map_err(|e| tracing::warn!(?e, "failed to encode key for peer during exchange"))
+                .ok()
+        })
         .collect();
     let exchange = key_update::pb::KeySetExchange { keys: pb_keys };
     let buf = exchange.encode_to_vec();
@@ -179,12 +183,12 @@ impl<S: StreamLayer> Listener for KeyExchangeListener<S> {
     async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)> {
         let (mut stream, addr) = self.inner.accept().await?;
 
-        // Server side: receive peer's keyset first, then send ours
+        // Server side: receive and merge peer's keyset first, then send ours.
         let exchange_result: io::Result<()> = async {
             let peer_keys = recv_keyset(&mut stream).await?;
             let all_keys = get_all_keys_for_exchange(&self.key_manager_inner).await;
-            send_keyset(&mut stream, &all_keys).await?;
             merge_received_keys(&self.key_manager_inner, peer_keys, &addr).await;
+            send_keyset(&mut stream, &all_keys).await?;
             Ok(())
         }
         .await;
@@ -280,6 +284,7 @@ mod tests {
             key_config,
             status: KeyStatus::Active,
             created_at: now,
+            active_at: now,
             stale_at: now + Duration::from_secs(3600),
             expire_at: now + Duration::from_secs(7200),
         }
