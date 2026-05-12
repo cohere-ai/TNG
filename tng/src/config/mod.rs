@@ -91,6 +91,7 @@ pub mod tests {
                             match_regex: "^/foo/bar/([^/]+)([/]?.*)$".to_owned(),
                             substitution: "/foo/bar/\\1".to_owned(),
                         }],
+                        key_refresh_before_expiry_seconds: None,
                         forward_headers: vec!["x-routing-key".to_owned()],
                         ..Default::default()
                     }),

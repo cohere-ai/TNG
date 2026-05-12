@@ -1034,6 +1034,8 @@ The OHTTP capability can be enabled by specifying the `ohttp` field in the `add_
 
     - **`substitution`** (string): When the original path of an HTTP request matches `match_regex`, the path of the OHTTP traffic will be replaced entirely with the value of `substitution`.
 
+- **`key_refresh_before_expiry_seconds`** (integer, optional, default `0`): If an OHTTP public key stored in the ingress cache is about to expire, this field allows us to trigger a background refresh earlier than the actual expiration time. A non-zero value mitigates a race condition where the ingress sends a request encrypted with a public key whose private key may have already been evicted on the egress by the time the request reaches it. When set to `0` (the default), the refresh asynchronously occurs once the key expires.
+
 > [!NOTE]
 > For syntax information about regular expressions, please refer to the <a href="#regex">Regular Expressions</a> section.
 

@@ -149,6 +149,12 @@ pub struct OHttpArgs {
     #[serde(default)]
     pub path_rewrites: Vec<PathRewrite>,
 
+    /// Seconds before key expiry to trigger a background refresh. Prevents the
+    /// race where the ingress uses a key that the egress has already evicted.
+    /// Defaults to 0 (disabled) when not specified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_refresh_before_expiry_seconds: Option<u64>,
+
     #[serde(default)]
     pub forward_headers: Vec<String>,
 

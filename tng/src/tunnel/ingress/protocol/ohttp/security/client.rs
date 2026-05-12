@@ -35,7 +35,12 @@ use tokio_util::{
 };
 use url::Url;
 
-use std::{pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc, time::Duration};
+
+#[cfg(unix)]
+use std::time::SystemTime;
+#[cfg(wasm)]
+use web_time::SystemTime;
 
 #[cfg(unix)]
 use crate::tunnel::ohttp::protocol::metadata::AttestedPublicKey;
@@ -74,6 +79,7 @@ use crate::{
 };
 
 const DEFAULT_KEY_CONFIG_REFRESH_SECOND: u64 = 5 * 60; // 5 minutes
+const DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS: u64 = 0;
 
 pub struct OHttpClient {
     inner: Arc<OHttpClientInner>,
@@ -89,6 +95,9 @@ pub struct OHttpClientInner {
     base_url: Url,
     #[allow(unused)]
     runtime: TokioRuntime,
+    /// How many seconds before the reported expiry to treat the cached key as
+    /// expired, triggering an early background refresh.
+    refresh_before_expiry: Duration,
 }
 
 struct KeyStoreValue {
@@ -112,9 +121,14 @@ impl OHttpClient {
         ra_context: Arc<RaContext>,
         http_client: Arc<reqwest::Client>,
         base_url: Url,
+        key_refresh_before_expiry_seconds: Option<u64>,
         forward_headers: reqwest::header::HeaderMap,
         runtime: TokioRuntime,
     ) -> Result<Self> {
+        let refresh_before_expiry = Duration::from_secs(
+            key_refresh_before_expiry_seconds.unwrap_or(DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS),
+        );
+
         let refresh_strategy = {
             #[cfg(unix)]
             if let Some(attest_ctx) = ra_context.attest_context() {
@@ -140,6 +154,7 @@ impl OHttpClient {
             forward_headers,
             base_url,
             runtime: runtime.clone(),
+            refresh_before_expiry,
         });
 
         let key_store_value = MaybeCached::new(runtime.clone(), refresh_strategy, {
@@ -311,6 +326,28 @@ impl OHttpClientInner {
                 Some(AttestationResult::from_token(token))
             }
             None => None,
+        };
+
+        // Shift the expiry earlier by the configured buffer so the background
+        // refresh fires before the egress actually evicts the key.
+        // If the buffer exceeds the key's remaining TTL the adjusted time would
+        // land in the past, causing MaybeCached to spin in a tight refetch loop.
+        // In that case we keep the original expiry and log a warning.
+        let expire = match expire {
+            Expire::ExpireAt(t) => match t.checked_sub(self.refresh_before_expiry) {
+                Some(adjusted) if adjusted > SystemTime::now() => Expire::ExpireAt(adjusted),
+                _ => {
+                    if !self.refresh_before_expiry.is_zero() {
+                        tracing::warn!(
+                            refresh_before_expiry = ?self.refresh_before_expiry,
+                            "key_refresh_before_expiry_seconds exceeds key's remaining TTL; \
+                             skipping early refresh",
+                        );
+                    }
+                    Expire::ExpireAt(t)
+                }
+            },
+            other => other,
         };
 
         let server_key_config_list = KeyConfig::decode_list(
