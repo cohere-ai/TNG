@@ -229,7 +229,7 @@ impl RandomKeyManagerInner {
             let stale_at = created_at + Duration::from_secs(self.rotation_interval);
             let expire_at = created_at + Duration::from_secs(self.rotation_interval * 2);
 
-            let status = if is_cold_start {
+            let status = if is_cold_start || self.activation_delay == 0 {
                 KeyStatus::Active
             } else {
                 KeyStatus::Propagating
