@@ -1,16 +1,15 @@
-mod cert_verifier;
-mod rustls_config;
-
 use std::sync::Arc;
 
 use crate::tunnel::{
     attestation_result::AttestationResult,
     ra_context::RaContext,
     stream::CommonStreamTrait,
-    utils::{runtime::TokioRuntime, rustls_config::TlsConfigGenerator},
+    utils::{
+        runtime::TokioRuntime,
+        rustls::config::{alpn::Alpn, server::LazyOnetimeTlsServerConfig, TlsConfigGenerator},
+    },
 };
 use anyhow::{Context as _, Result};
-use rustls_config::OnetimeTlsServerConfig;
 use tokio_rustls::TlsAcceptor;
 use tracing::Instrument;
 
@@ -36,9 +35,9 @@ impl RatsTlsSecurityLayer {
     )> {
         async {
             // Prepare TLS config
-            let OnetimeTlsServerConfig(tls_server_config, verifier) = self
+            let LazyOnetimeTlsServerConfig(tls_server_config, verifier) = self
                 .tls_config_generator
-                .get_one_time_rustls_server_config()
+                .get_lazy_one_time_rustls_server_config(Alpn::Http2)
                 .await?;
 
             let tls_acceptor = TlsAcceptor::from(Arc::new(tls_server_config));

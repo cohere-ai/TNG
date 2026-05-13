@@ -1,6 +1,4 @@
-mod cert_verifier;
 pub mod pool;
-mod rustls_config;
 
 use std::{
     collections::HashMap,
@@ -20,7 +18,6 @@ use hyper_util::client::legacy::Client;
 use pin_project::pin_project;
 use pool::{ClientPool, HyperClientType, PoolKey};
 use rustls::pki_types::ServerName;
-use rustls_config::OnetimeTlsClientConfig;
 use tokio::sync::RwLock;
 use tokio_rustls::TlsConnector;
 use tracing::{Instrument, Span};
@@ -31,7 +28,11 @@ use crate::{
         endpoint::TngEndpoint,
         ingress::protocol::rats_tls::wrapping::RatsTlsWrappingLayer,
         ra_context::RaContext,
-        utils::{runtime::TokioRuntime, rustls_config::TlsConfigGenerator, tokio::TokioIo},
+        utils::{
+            runtime::TokioRuntime,
+            rustls::config::{alpn::Alpn, client::LazyOnetimeTlsClientConfig, TlsConfigGenerator},
+            tokio::TokioIo,
+        },
     },
     CommonStreamTrait,
 };
@@ -200,8 +201,8 @@ impl tower::Service<Uri> for SecurityConnector {
         let mut transport_layer_connector = self.transport_layer_connector.clone();
         Box::pin(
             async move {
-                let OnetimeTlsClientConfig(tls_client_config, verifier) = tls_config_generator
-                    .get_one_time_rustls_client_config()
+                let LazyOnetimeTlsClientConfig(tls_client_config, verifier) = tls_config_generator
+                    .get_lazy_one_time_rustls_client_config(Alpn::Http2)
                     .await?;
 
                 let transport_layer_stream = transport_layer_connector.call(uri.clone()).await?;
