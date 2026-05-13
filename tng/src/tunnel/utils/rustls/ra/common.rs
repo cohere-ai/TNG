@@ -115,10 +115,9 @@ impl BlockingCertVerifier {
             result_tx.send(result).ok();
         });
 
-        // Note: will panic when used in asynchronous context.
-        result_rx
-            .blocking_recv()
-            .context("Failed to receive cert verify result")
+        // Note: other code running concurrently **in the same task** will be suspended
+        tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(result_rx))
+            .context("Failed to get cert verify result")
             .and_then(|e| e)
     }
 }
