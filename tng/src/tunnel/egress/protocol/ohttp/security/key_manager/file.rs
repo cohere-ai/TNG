@@ -198,6 +198,7 @@ impl FileBasedKeyManager {
             key_config,
             status: KeyStatus::Active,
             created_at,
+            active_at: created_at,
             stale_at,
             expire_at,
         })
@@ -239,6 +240,14 @@ impl KeyManager for FileBasedKeyManager {
         } else {
             Ok(Default::default())
         }
+    }
+
+    async fn get_all_keys(&self) -> Result<Vec<KeyInfo>, TngError> {
+        let key = self.inner.key.read().await;
+        Ok(key
+            .as_ref()
+            .map(|(_, info)| vec![info.clone()])
+            .unwrap_or_default())
     }
 
     async fn register_callback(&self, callback: KeyChangeCallback) {

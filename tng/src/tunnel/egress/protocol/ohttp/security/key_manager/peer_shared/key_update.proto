@@ -66,4 +66,9 @@ enum Aead {
 enum KeyStatus {
   ACTIVE = 0;
   STALE = 1;
+  PROPAGATING = 2;
+}
+
+message KeySetExchange {
+  repeated KeyInfo keys = 1;
 }

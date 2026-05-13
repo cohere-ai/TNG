@@ -183,6 +183,8 @@ pub enum KeyArgs {
 ///     "tng-service.default.svc.cluster.local:8301"
 ///   ],
 ///   "rotation_interval": 300,
+///   "push_pull_interval": 5,
+///   "activation_delay": 15,
 ///   "attest": {
 ///     "model": "background_check",
 ///     "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
@@ -203,6 +205,17 @@ pub struct PeerSharedArgs {
     /// Old keys are retained for up to 2 * rotation_interval to ensure availability.
     pub rotation_interval: u64,
 
+    /// Delay (in seconds) before a newly generated key becomes active for clients.
+    ///
+    /// After generating a new key, the node broadcasts it to peers via Serf
+    /// but waits this long before advertising it in key-config responses.
+    /// This gives the gossip protocol time to propagate the key to all peers,
+    /// preventing clients from encrypting with a key that peers don't have yet.
+    ///
+    /// Must be strictly less than `rotation_interval`. Defaults to 0 (disabled).
+    #[serde(default = "default_activation_delay")]
+    pub activation_delay: u64,
+
     /// Listen address used for inter-node secure communication (default: 0.0.0.0)
     #[serde(default = "default_peer_host")]
     pub host: String,
@@ -221,6 +234,12 @@ pub struct PeerSharedArgs {
     /// This allows dynamic updates to the peer list without restarting the service.
     #[serde(default = "Default::default")]
     pub peers_file: Option<String>,
+
+    /// Interval (in seconds) between Serf push-pull synchronizations.
+    /// Controls how often nodes perform full state exchanges with peers.
+    /// Lower values mean faster key propagation but more network traffic.
+    #[serde(default = "default_push_pull_interval")]
+    pub push_pull_interval: u64,
 
     /// Base interval (in seconds) for retrying cluster join when the initial attempt fails.
     /// Uses exponential backoff (doubling each time) starting from this value, capped at 30 seconds.
@@ -245,6 +264,14 @@ fn default_peer_host() -> String {
 
 fn default_peer_port() -> u16 {
     8301
+}
+
+fn default_push_pull_interval() -> u64 {
+    5
+}
+
+fn default_activation_delay() -> u64 {
+    0
 }
 
 // Default: rotate self-generated OHTTP keys every 5 minutes.
