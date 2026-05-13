@@ -24,6 +24,10 @@ pub enum KeyStatus {
     Active,
     /// Stale key that is kept for existing connections but not given to new clients
     Stale,
+    /// Key exists and can decrypt, but its activation delay has not elapsed.
+    /// Not yet advertised to clients; gives Serf gossip time to propagate
+    /// the key to peers before clients start encrypting with it.
+    Propagating,
 }
 
 /// Information about a key including the key config and its status

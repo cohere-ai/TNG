@@ -95,9 +95,14 @@ impl RandomKeyManagerInner {
         let keys = self.keys.read().await;
 
         for key_info in keys.values() {
-            if !matches!(key_info.status, KeyStatus::Stale) {
-                // Compare with the stale time (when key should be marked stale)
-                earliest_time = std::cmp::min(earliest_time, key_info.stale_at);
+            match key_info.status {
+                KeyStatus::Propagating => {
+                    earliest_time = std::cmp::min(earliest_time, key_info.active_at);
+                }
+                KeyStatus::Active => {
+                    earliest_time = std::cmp::min(earliest_time, key_info.stale_at);
+                }
+                KeyStatus::Stale => {}
             }
 
             // Compare with the expiration time (when key should be removed)
@@ -163,13 +168,27 @@ impl RandomKeyManagerInner {
         }
         keys.retain(|_, key_info| key_info.expire_at > now);
 
+        // Activate propagating keys whose activation delay has elapsed
+        for (_, key_info) in keys.iter_mut() {
+            if matches!(key_info.status, KeyStatus::Propagating) && now >= key_info.active_at {
+                self.callback_manager
+                    .trigger(&KeyChangeEvent::StatusChanged {
+                        key_info: Cow::Borrowed(key_info),
+                        old_status: KeyStatus::Propagating,
+                        new_status: KeyStatus::Active,
+                    })
+                    .await;
+                key_info.status = KeyStatus::Active;
+            }
+        }
+
         // Mark stale keys
         for (_, key_info) in keys.iter_mut() {
             if key_info.stale_at <= now && matches!(key_info.status, KeyStatus::Active) {
                 self.callback_manager
                     .trigger(&KeyChangeEvent::StatusChanged {
                         key_info: Cow::Borrowed(key_info),
-                        old_status: key_info.status,
+                        old_status: KeyStatus::Active,
                         new_status: KeyStatus::Stale,
                     })
                     .await;
@@ -177,12 +196,12 @@ impl RandomKeyManagerInner {
             }
         }
 
-        // Add new active key if needed
-        let have_active_key = keys
+        // Add new key if needed (no Active or Propagating key exists)
+        let need_new_key = !keys
             .values()
-            .any(|key_info| matches!(key_info.status, KeyStatus::Active));
+            .any(|key_info| matches!(key_info.status, KeyStatus::Active | KeyStatus::Propagating));
 
-        if !have_active_key {
+        if need_new_key {
             tracing::debug!("Generating new OHTTP key");
             let new_key_id = (0..u8::MAX)
                 .find(|id| {
@@ -210,9 +229,15 @@ impl RandomKeyManagerInner {
             let stale_at = created_at + Duration::from_secs(self.rotation_interval);
             let expire_at = created_at + Duration::from_secs(self.rotation_interval * 2);
 
+            let status = if is_cold_start {
+                KeyStatus::Active
+            } else {
+                KeyStatus::Propagating
+            };
+
             let key_info = KeyInfo {
                 key_config,
-                status: KeyStatus::Active,
+                status,
                 created_at,
                 active_at,
                 stale_at,
@@ -257,13 +282,10 @@ impl KeyManager for SelfGeneratedKeyManager {
 
     async fn get_client_visible_keys(&self) -> Result<Vec<KeyInfo>, TngError> {
         let keys = self.inner.keys.read().await;
-        let now = SystemTime::now();
 
         let active: Vec<KeyInfo> = keys
             .values()
-            .filter(|key_info| {
-                matches!(key_info.status, KeyStatus::Active) && now >= key_info.active_at
-            })
+            .filter(|key_info| matches!(key_info.status, KeyStatus::Active))
             .cloned()
             .collect();
 
