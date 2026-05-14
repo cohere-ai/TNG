@@ -1297,6 +1297,7 @@ If you wish to enable this mode, simply specify `key.source = "peer_shared"` in 
         "source": "peer_shared",
         "rotation_interval": 300,
         "activation_delay": 15,
+        "push_pull_interval": 5,
         "host": "0.0.0.0",
         "port": 8301,
         "peers": [
@@ -1314,6 +1315,7 @@ If you wish to enable this mode, simply specify `key.source = "peer_shared"` in 
     - **`source`** (`string`): The source type of the key. Set to `"peer_shared"` to enable the decentralized key sharing mode.
     - **`rotation_interval`** (`integer`, optional, default `300`): Key rotation interval in seconds. Each node independently rotates its own key.
     - **`activation_delay`** (`integer`, optional, default `0`): Delay in seconds before a newly generated key becomes active for client advertisement. After generating a new key, the node broadcasts it to peers via Serf but waits this long before advertising it in key-config responses. This gives the gossip protocol time to propagate the key to all peers, preventing clients from encrypting with a key that peers don't have yet. Must be strictly less than `rotation_interval`. A value of `0` disables the delay. Not applicable to the first key generated (i.e. initial key activates instantly).
+    - **`push_pull_interval`** (`integer`, optional, default `5`): Interval in seconds between Serf TCP push-pull synchronizations. During each push-pull cycle, nodes perform a full state exchange over TCP (including OHTTP key exchange). Lower values mean faster key propagation to peers but more network traffic. Key propagation is expected to take log2(number_of_members_in_cluster) * push_pull_interval seconds.
     - **`host`** (`string`, optional, default `0.0.0.0`): Local listening address for inter-node secure communication.
     - **`port`** (`integer`, optional, default `8301`): Local listening port for inter-node secure communication.
     - **`peers`** (`array of strings`): List of initial node addresses (IP or DNS name:port) to connect to. At least one node must be accessible to join the cluster. When a node address is specified as a domain name, TNG will attempt to resolve that domain name and try all returned IP addresses as peer nodes in sequence (rather than just trying the first IP), which improves connection success rate in complex network environments.
@@ -1338,6 +1340,7 @@ Example configuration:
                     "source": "peer_shared",
                     "rotation_interval": 300,
                     "activation_delay": 15,
+                    "push_pull_interval": 5,
                     "host": "0.0.0.0",
                     "port": 8301,
                     "peers": [

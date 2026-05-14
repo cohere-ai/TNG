@@ -68,3 +68,7 @@ enum KeyStatus {
   STALE = 1;
   PROPAGATING = 2;
 }
+
+message KeySetExchange {
+  repeated KeyInfo keys = 1;
+}

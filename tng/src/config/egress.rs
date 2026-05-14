@@ -183,6 +183,7 @@ pub enum KeyArgs {
 ///     "tng-service.default.svc.cluster.local:8301"
 ///   ],
 ///   "rotation_interval": 300,
+///   "push_pull_interval": 5,
 ///   "activation_delay": 15,
 ///   "attest": {
 ///     "model": "background_check",
@@ -234,6 +235,12 @@ pub struct PeerSharedArgs {
     #[serde(default = "Default::default")]
     pub peers_file: Option<String>,
 
+    /// Interval (in seconds) between Serf push-pull synchronizations.
+    /// Controls how often nodes perform full state exchanges with peers.
+    /// Lower values mean faster key propagation but more network traffic.
+    #[serde(default = "default_push_pull_interval")]
+    pub push_pull_interval: u64,
+
     /// Define how this node proves its identity when connecting to others, and how to verify
     /// the identity of remote peers.
     #[serde(flatten)]
@@ -246,6 +253,10 @@ fn default_peer_host() -> String {
 
 fn default_peer_port() -> u16 {
     8301
+}
+
+fn default_push_pull_interval() -> u64 {
+    5
 }
 
 fn default_activation_delay() -> u64 {
