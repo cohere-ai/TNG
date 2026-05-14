@@ -328,4 +328,20 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_ohttp_args_deserialize_with_refresh_seconds() -> Result<()> {
+        let args: super::OHttpArgs = serde_json::from_value(json!({
+            "key_refresh_before_expiry_seconds": 30
+        }))?;
+        assert_eq!(args.key_refresh_before_expiry_seconds, Some(30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_ohttp_args_deserialize_without_refresh_seconds() -> Result<()> {
+        let args: super::OHttpArgs = serde_json::from_value(json!({}))?;
+        assert_eq!(args.key_refresh_before_expiry_seconds, None);
+        Ok(())
+    }
 }
