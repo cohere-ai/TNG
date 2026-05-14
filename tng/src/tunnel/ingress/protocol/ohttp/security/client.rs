@@ -35,7 +35,12 @@ use tokio_util::{
 };
 use url::Url;
 
-use std::{pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc, time::Duration};
+
+#[cfg(unix)]
+use std::time::SystemTime;
+#[cfg(wasm)]
+use web_time::SystemTime;
 
 #[cfg(unix)]
 use crate::tunnel::ohttp::protocol::metadata::AttestedPublicKey;
@@ -74,6 +79,7 @@ use crate::{
 };
 
 const DEFAULT_KEY_CONFIG_REFRESH_SECOND: u64 = 5 * 60; // 5 minutes
+const DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS: u64 = 0;
 
 pub struct OHttpClient {
     inner: Arc<OHttpClientInner>,
@@ -88,6 +94,9 @@ pub struct OHttpClientInner {
     base_url: Url,
     #[allow(unused)]
     runtime: TokioRuntime,
+    /// How many seconds before the reported expiry to treat the cached key as
+    /// expired, triggering an early background refresh.
+    refresh_before_expiry: Duration,
 }
 
 struct KeyStoreValue {
@@ -111,8 +120,13 @@ impl OHttpClient {
         ra_context: Arc<RaContext>,
         http_client: Arc<reqwest::Client>,
         base_url: Url,
+        key_refresh_before_expiry_seconds: Option<u64>,
         runtime: TokioRuntime,
     ) -> Result<Self> {
+        let refresh_before_expiry = Duration::from_secs(
+            key_refresh_before_expiry_seconds.unwrap_or(DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS),
+        );
+
         let refresh_strategy = {
             #[cfg(unix)]
             if let Some(attest_ctx) = ra_context.attest_context() {
@@ -137,6 +151,7 @@ impl OHttpClient {
             http_client,
             base_url,
             runtime: runtime.clone(),
+            refresh_before_expiry,
         });
 
         let key_store_value = MaybeCached::new(runtime.clone(), refresh_strategy, {
@@ -309,6 +324,8 @@ impl OHttpClientInner {
             }
             None => None,
         };
+
+        let expire = adjust_expire_for_early_refresh(expire, self.refresh_before_expiry);
 
         let server_key_config_list = KeyConfig::decode_list(
             BASE64_STANDARD
@@ -715,5 +732,81 @@ impl OHttpClientInner {
             .map_err(|e| TngError::ClientGetBackgroundCheckResultFaild(e.into()))?;
 
         Ok(result)
+    }
+}
+
+/// Shift the expiry earlier by `refresh_before_expiry` so a background refresh
+/// fires before the egress actually evicts the key. If the buffer exceeds the
+/// key's remaining TTL (adjusted time would land in the past), the original
+/// expiry is kept and a warning is logged to avoid a tight refetch loop.
+fn adjust_expire_for_early_refresh(expire: Expire, refresh_before_expiry: Duration) -> Expire {
+    match expire {
+        Expire::ExpireAt(t) => match t.checked_sub(refresh_before_expiry) {
+            Some(adjusted) if adjusted > SystemTime::now() => Expire::ExpireAt(adjusted),
+            _ => {
+                if !refresh_before_expiry.is_zero() {
+                    tracing::warn!(
+                        refresh_before_expiry = ?refresh_before_expiry,
+                        "key_refresh_before_expiry_seconds exceeds key's remaining TTL; \
+                         skipping early refresh",
+                    );
+                }
+                Expire::ExpireAt(t)
+            }
+        },
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_adjust_expire_no_expire_unchanged() {
+        let result = adjust_expire_for_early_refresh(Expire::NoExpire, Duration::from_secs(30));
+        assert!(matches!(result, Expire::NoExpire));
+    }
+
+    #[test]
+    fn test_adjust_expire_zero_buffer_unchanged() {
+        let original = SystemTime::now() + Duration::from_secs(300);
+        let result =
+            adjust_expire_for_early_refresh(Expire::ExpireAt(original), Duration::from_secs(0));
+        assert_eq!(result, Expire::ExpireAt(original));
+    }
+
+    #[test]
+    fn test_adjust_expire_shifts_earlier() {
+        let buffer = Duration::from_secs(30);
+        let original = SystemTime::now() + Duration::from_secs(300);
+        let result = adjust_expire_for_early_refresh(Expire::ExpireAt(original), buffer);
+
+        match result {
+            Expire::ExpireAt(adjusted) => {
+                let shift = original.duration_since(adjusted).unwrap();
+                assert_eq!(shift, buffer);
+            }
+            _ => panic!("expected ExpireAt"),
+        }
+    }
+
+    #[test]
+    fn test_adjust_expire_buffer_exceeds_ttl_keeps_original() {
+        let original = SystemTime::now() + Duration::from_secs(10);
+        let buffer = Duration::from_secs(600);
+        let result = adjust_expire_for_early_refresh(Expire::ExpireAt(original), buffer);
+        assert_eq!(result, Expire::ExpireAt(original));
+    }
+
+    #[test]
+    fn test_adjust_expire_buffer_equals_ttl_keeps_original() {
+        // When the buffer exactly equals (or nearly equals) the remaining TTL,
+        // the adjusted time would be ~now which is not strictly in the future,
+        // so the original expiry should be preserved.
+        let original = SystemTime::now() + Duration::from_secs(1);
+        let buffer = Duration::from_secs(2);
+        let result = adjust_expire_for_early_refresh(Expire::ExpireAt(original), buffer);
+        assert_eq!(result, Expire::ExpireAt(original));
     }
 }

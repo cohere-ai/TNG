@@ -148,6 +148,12 @@ pub struct Socks5AuthArgs {
 pub struct OHttpArgs {
     #[serde(default)]
     pub path_rewrites: Vec<PathRewrite>,
+
+    /// Seconds before key expiry to trigger a background refresh. Prevents the
+    /// race where the ingress uses a key that the egress has already evicted.
+    /// Defaults to 0 (disabled) when not specified.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_refresh_before_expiry_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -313,6 +319,22 @@ mod tests {
 
         assert!(test_deserialize_netfilter_capture_dst_common(serde_json::json!({})).is_err());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_ohttp_args_deserialize_with_refresh_seconds() -> Result<()> {
+        let args: super::OHttpArgs = serde_json::from_value(json!({
+            "key_refresh_before_expiry_seconds": 30
+        }))?;
+        assert_eq!(args.key_refresh_before_expiry_seconds, Some(30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_ohttp_args_deserialize_without_refresh_seconds() -> Result<()> {
+        let args: super::OHttpArgs = serde_json::from_value(json!({}))?;
+        assert_eq!(args.key_refresh_before_expiry_seconds, None);
         Ok(())
     }
 }

@@ -27,6 +27,7 @@ pub struct OHttpSecurityLayer {
     http_client: Arc<reqwest::Client>,
     ohttp_clients: RwLock<HashMap<Url, Arc<OnceCell<Arc<OHttpClient>>>>>,
     path_rewrite_group: PathRewriteGroup,
+    key_refresh_before_expiry_seconds: Option<u64>,
     runtime: TokioRuntime,
 }
 
@@ -74,6 +75,7 @@ impl OHttpSecurityLayer {
             http_client: Arc::new(http_client),
             ohttp_clients: Default::default(),
             path_rewrite_group: PathRewriteGroup::new(&ohttp_args.path_rewrites)?,
+            key_refresh_before_expiry_seconds: ohttp_args.key_refresh_before_expiry_seconds,
             runtime,
         })
     }
@@ -158,6 +160,7 @@ impl OHttpSecurityLayer {
                     self.ra_context.clone(),
                     self.http_client.clone(),
                     base_url,
+                    self.key_refresh_before_expiry_seconds,
                     self.runtime.clone(),
                 )
                 .await
