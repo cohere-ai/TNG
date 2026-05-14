@@ -24,6 +24,10 @@ pub enum KeyStatus {
     Active,
     /// Stale key that is kept for existing connections but not given to new clients
     Stale,
+    /// Key exists and can decrypt, but its activation delay has not elapsed.
+    /// Not yet advertised to clients; gives Serf gossip time to propagate
+    /// the key to peers before clients start encrypting with it.
+    Propagating,
 }
 
 /// Information about a key including the key config and its status
@@ -35,6 +39,11 @@ pub struct KeyInfo {
     pub status: KeyStatus,
     /// Time when the key was created
     pub created_at: SystemTime,
+    /// Time at which this key becomes active for client advertisement.
+    /// Before this time, the key exists (and can decrypt) but is not returned
+    /// by `get_client_visible_keys`. This gives Serf gossip time to propagate
+    /// the key to peers before clients start encrypting with it.
+    pub active_at: SystemTime,
     /// Time when the key will stale
     pub stale_at: SystemTime,
     /// Time when the key will expire
@@ -54,6 +63,7 @@ impl std::fmt::Debug for KeyInfo {
         }
         st.field("status", &self.status)
             .field("created_at", &DateTime::<Utc>::from(self.created_at))
+            .field("active_at", &DateTime::<Utc>::from(self.active_at))
             .field("stale_at", &DateTime::<Utc>::from(self.stale_at))
             .field("expire_at", &DateTime::<Utc>::from(self.expire_at))
             .finish()
@@ -83,6 +93,11 @@ pub trait KeyManager: Send + Sync {
     ///
     /// Returns only keys that are active, valid, and safe to expose.
     async fn get_client_visible_keys(&self) -> Result<Vec<KeyInfo>, TngError>;
+
+    /// Get a list of all keys regardless of their status
+    ///
+    /// Returns all keys, including those that are stale.
+    async fn get_all_keys(&self) -> Result<Vec<KeyInfo>, TngError>;
 
     /// Register a callback that will be called whenever a key is created or modified.
     ///

@@ -144,6 +144,7 @@ impl TryFrom<pb::KeyInfo> for key_manager::KeyInfo {
             key_config,
             status,
             created_at,
+            active_at: created_at,
             stale_at,
             expire_at,
         })
@@ -199,6 +200,7 @@ impl TryFrom<i32> for key_manager::KeyStatus {
         match v {
             0 => Ok(key_manager::KeyStatus::Active),
             1 => Ok(key_manager::KeyStatus::Stale),
+            2 => Ok(key_manager::KeyStatus::Propagating),
             _ => Err(anyhow!("unknown KeyStatus value: {}", v)),
         }
     }

@@ -52,7 +52,7 @@ impl OhttpServerApi {
         // Create key manager based on configuration
         let key_manager: Arc<dyn KeyManager> = match key {
             KeyArgs::SelfGenerated { rotation_interval } => Arc::new(
-                SelfGeneratedKeyManager::new_with_auto_refresh(runtime, rotation_interval)?,
+                SelfGeneratedKeyManager::new_with_auto_refresh(runtime, rotation_interval, 0)?,
             ),
             KeyArgs::File { path } => {
                 Arc::new(FileBasedKeyManager::new(runtime, path.into()).await?)
