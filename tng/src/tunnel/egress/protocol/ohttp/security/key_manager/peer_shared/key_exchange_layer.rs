@@ -20,6 +20,11 @@ use super::serf::PeerSharedKeyManagerInner;
 
 // ── Key exchange helpers (use Connection trait) ─────────────────────────────
 
+/// Upper bound on the serialized keyset size we accept from a peer (100 MiB).
+/// Each key is a few KB; this limit is generous while preventing a malicious
+/// or buggy peer from triggering a multi-GB allocation.
+const MAX_KEYSET_SIZE: u32 = 100 * 1024 * 1024;
+
 async fn send_keyset(conn: &mut impl serf::net::Connection, keys: &[KeyInfo]) -> io::Result<()> {
     let pb_keys: Vec<key_update::pb::KeyInfo> = keys
         .iter()
@@ -42,6 +47,12 @@ async fn recv_keyset(conn: &mut impl serf::net::Connection) -> io::Result<Vec<Ke
     let mut len_buf = [0u8; 4];
     conn.read_exact(&mut len_buf).await?;
     let len = u32::from_be_bytes(len_buf);
+    if len > MAX_KEYSET_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("peer keyset size ({len} bytes) exceeds maximum ({MAX_KEYSET_SIZE} bytes)"),
+        ));
+    }
     let mut buf = vec![0u8; len as usize];
     conn.read_exact(&mut buf).await?;
     let exchange = key_update::pb::KeySetExchange::decode(buf.as_slice())
@@ -385,5 +396,21 @@ mod tests {
         assert_eq!(added, 0);
         assert_eq!(store.len(), 1);
         assert!(store.contains_key(&key_pkd));
+    }
+
+    #[tokio::test]
+    async fn test_recv_keyset_rejects_oversized_length() {
+        let (mut sender, mut receiver) = MockConn::pair();
+
+        let fake_len: u32 = MAX_KEYSET_SIZE + 1;
+        serf::net::Connection::write_all(&mut sender, &fake_len.to_be_bytes())
+            .await
+            .unwrap();
+
+        let recv_result = recv_keyset(&mut receiver).await;
+        assert!(recv_result.is_err());
+        let err = recv_result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("exceeds maximum"));
     }
 }
