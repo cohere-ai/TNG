@@ -469,6 +469,22 @@ mod tests {
         )
     }
 
+    /// Verify that an unreachable AS address does not cause initialization to
+    /// fail (soft fetch: warn and continue instead of propagating the error).
+    #[tokio::test]
+    async fn test_constructor_succeeds_when_as_cert_fetch_fails() {
+        let config = super::super::AttestationTokenVerifierConfig {
+            as_addr: Some("https://localhost:1".to_owned()), // assuming nothing is listening on this addr
+            ..Default::default()
+        };
+        let result = super::JwkAttestationTokenVerifier::new(&config).await;
+        assert!(
+            result.is_ok(),
+            "expected to succeed because of soft fetch, got error: {:?}",
+            result.err()
+        );
+    }
+
     #[rstest]
     #[case(
         "{\"keys\":[{\"kty\":\"oct\",\"alg\":\"HS256\",\"kid\":\"coco123\",\"k\":\"foobar\"}]}",
