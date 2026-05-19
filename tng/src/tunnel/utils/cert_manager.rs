@@ -228,4 +228,53 @@ mod tests {
         })
         .await
     }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+    async fn test_passport_cert_embeds_challenge_token_nonce() -> Result<()> {
+        use crate::config::ra::{CocoConverterArgs, ConverterArgs};
+        use rats_cert::cert::verify::CertVerifier;
+        use rats_cert::tee::GenericEvidence;
+        use std::collections::HashMap;
+
+        run_test_with_tokio_runtime(|runtime| async move {
+            let attest_ctx = AttestContext::from_attest_args(&AttestArgs::Passport {
+                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds {
+                    aa_addr:
+                        "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
+                            .to_owned(),
+                }),
+                converter: ConverterArgs::Coco(CocoConverterArgs::Restful {
+                    as_addr: "http://127.0.0.1:8080".to_owned(),
+                    policy_ids: vec!["default".to_string()],
+                    as_headers: HashMap::new(),
+                }),
+                refresh_interval: Some(0),
+            })?;
+            let cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
+
+            let certified_key = cert_manager.get_latest_cert().await?;
+            let cert_der = certified_key.cert.first().expect("cert chain is empty");
+            let pending = CertVerifier::new()
+                .verify_der(cert_der.as_ref())
+                .await
+                .context("Failed to parse DICE cert")?;
+
+            let token = crate::tunnel::provider::TngToken::create_evidence_from_dice(
+                pending.cbor_tag,
+                &pending.raw_evidence,
+            );
+            let token: crate::tunnel::provider::TngToken = rats_cert::errors::Result::from(token)
+                .context("Failed to parse AS token from DICE extension")?;
+
+            let claims = token.get_claims().context("Failed to get token claims")?;
+            assert!(
+                claims.keys().any(|k| k.contains("challenge_token")),
+                "AS token should contain challenge_token, got keys: {:?}",
+                claims.keys().collect::<Vec<_>>()
+            );
+
+            Ok(())
+        })
+        .await
+    }
 }
