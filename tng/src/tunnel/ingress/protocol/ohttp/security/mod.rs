@@ -129,7 +129,7 @@ impl OHttpSecurityLayer {
 
             let url = format!(
                 "{}://{}:{}{rewrited_path}",
-                endpoint.scheme().unwrap_or("http"),
+                endpoint.scheme(),
                 endpoint.host(),
                 endpoint.port()
             );

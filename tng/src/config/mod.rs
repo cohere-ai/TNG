@@ -158,4 +158,20 @@ pub mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_endpoint_scheme_round_trip() -> Result<()> {
+        let json = serde_json::json!({"host": "127.0.0.1", "port": 443, "scheme": "https"});
+        let ep: Endpoint = serde_json::from_value(json)?;
+        assert_eq!(ep.scheme.as_deref(), Some("https"));
+        let rt = serde_json::to_value(&ep)?;
+        assert_eq!(rt["scheme"], "https");
+
+        let json2 = serde_json::json!({"host": "127.0.0.1", "port": 443});
+        let ep2: Endpoint = serde_json::from_value(json2)?;
+        assert!(ep2.scheme.is_none());
+        let rt2 = serde_json::to_value(&ep2)?;
+        assert!(rt2.get("scheme").is_none());
+        Ok(())
+    }
 }
