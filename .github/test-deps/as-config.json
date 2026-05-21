@@ -1,0 +1,20 @@
+{
+    "storage_backend": {
+        "storage_type": "LocalFs",
+        "backends": {
+            "local_fs": {
+                "dir_path": "/opt/confidential-containers/attestation-service/storage"
+            }
+        }
+    },
+    "rvps_config": {
+        "type": "BuiltIn"
+    },
+    "attestation_token_broker": {
+        "duration_min": 5,
+        "signer": {
+            "key_path": "/opt/confidential-containers/keys/token.key",
+            "cert_path": "/opt/confidential-containers/keys/token-cert-chain.pem"
+        }
+    }
+}

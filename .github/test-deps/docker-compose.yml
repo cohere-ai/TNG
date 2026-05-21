@@ -1,0 +1,64 @@
+services:
+  keygen:
+    image: alpine/openssl
+    entrypoint: /bin/ash
+    volumes:
+      - ${KEYS_DIR:-./.keys}:/opt/keys:rw
+    command: >
+      -c "
+        if [ ! -s /opt/keys/private.key ]; then
+          /usr/bin/openssl genpkey -algorithm ed25519 > /opt/keys/private.key &&
+          /usr/bin/openssl pkey -in /opt/keys/private.key -pubout -out /opt/keys/public.pub;
+        fi
+        cd /opt/keys
+        if [ ! -s token.key ]; then
+          openssl genrsa -traditional -out ca.key 2048
+          openssl req -new -key ca.key -out ca-req.csr -subj '/O=CNCF/OU=CoCo/CN=KBS-compose-root'
+          openssl req -x509 -days 3650 -key ca.key -in ca-req.csr -out ca-cert.pem
+          openssl ecparam -name prime256v1 -genkey -noout -out token.key
+          openssl req -new -key token.key -out token-req.csr -subj '/O=CNCF/OU=CoCo/CN=CoCo-AS'
+          openssl x509 -req -in token-req.csr -CA ca-cert.pem -CAkey ca.key -CAcreateserial -out token-cert.pem -extensions req_ext
+          cat token-cert.pem ca-cert.pem > token-cert-chain.pem;
+        fi"
+
+  as:
+    image: ghcr.io/confidential-containers/staged-images/coco-as-restful:latest
+    restart: "no"
+    volumes:
+      - ./attestation-service/storage:/opt/confidential-containers/attestation-service/storage:rw
+      - ./as-config.json:/etc/as/config.json:ro
+      - ${KEYS_DIR:-./.keys}:/opt/confidential-containers/keys:ro
+    command:
+      [
+        "restful-as",
+        "--socket",
+        "0.0.0.0:80",
+        "--config-file",
+        "/etc/as/config.json",
+      ]
+    depends_on:
+      keygen:
+        condition: service_completed_successfully
+    ports:
+      - "8081:80"
+
+  aa:
+    build:
+      context: .
+      dockerfile: Dockerfile.aa
+    init: true
+    volumes:
+      - ${AA_SOCK_DIR:-/run/confidential-containers/attestation-agent}:/run/confidential-containers/attestation-agent
+    restart: "no"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "test",
+          "-S",
+          "/run/confidential-containers/attestation-agent/attestation-agent.sock",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 2s

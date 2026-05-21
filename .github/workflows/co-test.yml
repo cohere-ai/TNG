@@ -1,0 +1,151 @@
+name: Cohere Run Tests on Source Code
+
+on:
+  push:
+    branches:
+      - master
+      - cohere
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches:
+
+env:
+  KEYS_DIR: ${{ github.workspace }}/.github/test-deps/.keys
+  AA_SOCK_DIR: /run/confidential-containers/attestation-agent
+  TEST_IMAGE: tng-test-runner
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.89.0
+
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-
+
+      - name: Build test runner image
+        run: docker build -t "$TEST_IMAGE" -f .github/test-deps/Dockerfile.test .github/test-deps
+
+      - name: Prepare AA socket directory
+        run: sudo mkdir -p "$AA_SOCK_DIR"
+
+      - name: Start test dependencies (AA, AS, keygen)
+        working-directory: .github/test-deps
+        run: |
+          docker compose up -d --build --wait --wait-timeout 120
+          docker compose ps
+
+      - name: Copy AS certificates
+        run: |
+          chmod +x .github/test-deps/setup_test_certs.sh
+          .github/test-deps/setup_test_certs.sh "$KEYS_DIR"
+
+      - name: Start cert proxy
+        run: |
+          python3 .github/test-deps/cert_proxy.py \
+            --cert /tmp/as-full.pem \
+            --listen 8080 \
+            --backend http://127.0.0.1:8081 &
+          CERT_PROXY_PID=$!
+          echo "CERT_PROXY_PID=$CERT_PROXY_PID" >> "$GITHUB_ENV"
+          sleep 1
+          echo "Cert proxy started (PID $CERT_PROXY_PID)"
+
+      - name: Verify test infrastructure
+        run: |
+          echo "--- Checking AA socket ---"
+          ls -la "$AA_SOCK_DIR/"
+
+          echo "--- Waiting for AS to be ready ---"
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8081/ > /dev/null 2>&1; then
+              echo "AS is ready (attempt $i)"
+              break
+            fi
+            echo "Waiting for AS... (attempt $i/30)"
+            sleep 2
+          done
+
+          echo "--- Checking cert proxy ---"
+          curl -sf http://127.0.0.1:8080/certificate | head -c 200
+          echo ""
+          echo "--- Checking cert file ---"
+          head -1 /tmp/as-full.pem
+
+      - name: Run unit tests
+        run: |
+          docker run --rm --privileged --network host \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "$HOME/.cargo/registry:/root/.cargo/registry" \
+            -v "$HOME/.cargo/git:/root/.cargo/git" \
+            -v "$HOME/.rustup:/root/.rustup" \
+            -v "$AA_SOCK_DIR:$AA_SOCK_DIR" \
+            -v "/tmp/as-full.pem:/tmp/as-full.pem:ro" \
+            -e "RUSTUP_HOME=/root/.rustup" \
+            -e "CARGO_HOME=/root/.cargo" \
+            -e "PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            -e "RUST_BACKTRACE=1" \
+            -w /workspace \
+            "$TEST_IMAGE" \
+            cargo test \
+              --workspace \
+              --bins \
+              --lib \
+              --exclude tng-wasm \
+              -- --nocapture
+
+      - name: Run integration tests
+        run: |
+          set +e
+          failed=0
+          for test_file in tng-testsuite/tests/*.rs; do
+            case_name=$(basename "$test_file" .rs)
+            echo "============= Integration test: $case_name ============="
+            docker run --rm --privileged --network host \
+              -v "${{ github.workspace }}:/workspace" \
+              -v "$HOME/.cargo/registry:/root/.cargo/registry" \
+              -v "$HOME/.cargo/git:/root/.cargo/git" \
+              -v "$HOME/.rustup:/root/.rustup" \
+              -v "$AA_SOCK_DIR:$AA_SOCK_DIR" \
+              -v "/tmp/as-full.pem:/tmp/as-full.pem:ro" \
+              -e "RUSTUP_HOME=/root/.rustup" \
+              -e "CARGO_HOME=/root/.cargo" \
+              -e "PATH=/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+              -e "RUST_BACKTRACE=1" \
+              -w /workspace \
+              "$TEST_IMAGE" \
+              cargo test \
+                --no-default-features \
+                --features on-source-code \
+                --package tng-testsuite \
+                --test "$case_name" \
+                -- --nocapture
+            if [ $? -ne 0 ]; then
+              echo "FAILED: $case_name"
+              failed=1
+            fi
+          done
+          exit $failed
+
+      - name: Fix target directory ownership
+        if: always()
+        run: sudo chown -R $(id -u):$(id -g) target/ || true
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kill "$CERT_PROXY_PID" 2>/dev/null || true
+          cd .github/test-deps && docker compose down -v 2>/dev/null || true

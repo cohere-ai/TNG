@@ -1,0 +1,8 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    protobuf-compiler libssl-dev pkg-config clang \
+    iptables iproute2 curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
