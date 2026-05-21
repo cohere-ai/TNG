@@ -1,4 +1,4 @@
-name: Rust Format Check
+name: Cohere Rust Format Check
 
 on:
   push:
