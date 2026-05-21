@@ -1,0 +1,28 @@
+name: Rust Format Check
+
+on:
+  push:
+    branches:
+      - master
+      - cohere
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches:
+      - master
+      - cohere
+
+jobs:
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: rustfmt
+
+      - name: Check code formatting
+        run: cargo fmt --check

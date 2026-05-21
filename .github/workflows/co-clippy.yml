@@ -1,0 +1,27 @@
+name: Cargo Clippy
+
+on:
+  push:
+    branches:
+      - cohere
+  pull_request:
+
+jobs:
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libssl-dev pkg-config clang
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: clippy
+
+      - name: Cargo Clippy
+        run: make clippy
