@@ -1,0 +1,52 @@
+name: Cohere Build Docker
+
+on:
+  push:
+    branches:
+      - cohere
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Docker Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: us-central1-docker.pkg.dev/cohere-artifacts/cohere/tng
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/cohere' }}
+            type=semver,pattern={{version}}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/751739702614/locations/global/workloadIdentityPools/cohere-ci/providers/github
+          service_account: gh-actions@cohere-artifacts.iam.gserviceaccount.com
+
+      - name: Login to Artifact Registry
+        uses: docker/login-action@v3
+        with:
+          registry: us-central1-docker.pkg.dev
+
+      - name: Build and push
+        uses: docker/build-push-action@v6.9.0
+        with:
+          context: .
+          file: cohere/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
