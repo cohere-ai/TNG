@@ -71,9 +71,11 @@ impl OHttpSecurityLayer {
             for path in &ohttp_args.tls_ca_certs {
                 let pem = std::fs::read(path)
                     .with_context(|| format!("Failed to read TLS CA cert: {path}"))?;
-                let cert = reqwest::Certificate::from_pem(&pem)
-                    .with_context(|| format!("Failed to parse TLS CA cert: {path}"))?;
-                builder = builder.add_root_certificate(cert);
+                let certs = reqwest::Certificate::from_pem_bundle(&pem)
+                    .with_context(|| format!("Failed to parse TLS CA certs: {path}"))?;
+                for cert in certs {
+                    builder = builder.add_root_certificate(cert);
+                }
             }
 
             builder.build()?
