@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - cohere
+      - workflows # todo remove after testing
     tags:
       - 'v*'
   workflow_dispatch:
