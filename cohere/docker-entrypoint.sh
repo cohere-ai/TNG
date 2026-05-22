@@ -1,21 +1,30 @@
 #!/bin/sh
 set -e
 
-TEMPLATE=/etc/tng/config.template.json
-CONFIG=/etc/tng/config.json
+CONFIG=/etc/tng/conf.json
+DEFAULT=/etc/tng/conf.default.json
 
-if [ -n "$POLICY_ID" ]; then
-    jq --arg pid "$POLICY_ID" '
-        (.add_egress[].ohttp.key.attest.policy_ids) = [$pid] |
-        (.add_egress[].ohttp.key.verify.policy_ids) = [$pid] |
-        (.add_egress[].attest.policy_ids) = [$pid]
-    ' "$TEMPLATE" > "$CONFIG"
+if [ -f "$CONFIG" ]; then
+    echo "Using mounted config at $CONFIG"
 else
-    jq '
-        (.add_egress[].ohttp.key.attest.policy_ids) = [] |
-        (.add_egress[].ohttp.key.verify.policy_ids) = [] |
-        (.add_egress[].attest.policy_ids) = []
-    ' "$TEMPLATE" > "$CONFIG"
+    echo "No mounted config found, using default"
+    cp "$DEFAULT" "$CONFIG"
+fi
+
+if [ -n "$POLICY_IDS" ]; then
+    tmp=$(mktemp)
+    jq --arg pid "$POLICY_IDS" '($pid | split(",")) as $ids |
+        (.add_egress[].ohttp.key.attest.policy_ids) = $ids |
+        (.add_egress[].ohttp.key.verify.policy_ids) = $ids |
+        (.add_egress[].attest.policy_ids) = $ids
+    ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+fi
+
+if [ -n "$PEERS" ]; then
+    tmp=$(mktemp)
+    jq --arg peers "$PEERS" '
+        (.add_egress[].ohttp.key.peers) = ($peers | split(","))
+    ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
 fi
 
 exec tng launch --config-file "$CONFIG" "$@"

@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/bin/tng /usr/local/bin/tng
-COPY cohere/tng-egress-conf.json /etc/tng/config.template.json
+COPY cohere/tng-egress-conf.json /etc/tng/conf.default.json
 COPY cohere/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
