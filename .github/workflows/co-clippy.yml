@@ -3,13 +3,11 @@ name: Cohere Cargo Clippy
 on:
   push:
     branches:
-      - master
       - cohere
     tags:
       - "v*.*.*"
   pull_request:
     branches:
-      - master
       - cohere
 
 jobs:
