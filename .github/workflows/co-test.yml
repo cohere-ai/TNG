@@ -29,8 +29,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            ~/.cargo
+            ~/.rustup
             target
           key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
@@ -71,7 +71,7 @@ jobs:
 
           echo "--- Waiting for AS to be ready ---"
           for i in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:8081/ > /dev/null 2>&1; then
+            if (echo > /dev/tcp/127.0.0.1/8081) 2>/dev/null; then
               echo "AS is ready (attempt $i)"
               break
             fi
@@ -89,8 +89,7 @@ jobs:
         run: |
           docker run --rm --privileged --network host \
             -v "${{ github.workspace }}:/workspace" \
-            -v "$HOME/.cargo/registry:/root/.cargo/registry" \
-            -v "$HOME/.cargo/git:/root/.cargo/git" \
+            -v "$HOME/.cargo:/root/.cargo" \
             -v "$HOME/.rustup:/root/.rustup" \
             -v "$AA_SOCK_DIR:$AA_SOCK_DIR" \
             -v "/tmp/as-full.pem:/tmp/as-full.pem:ro" \
@@ -116,8 +115,7 @@ jobs:
             echo "============= Integration test: $case_name ============="
             docker run --rm --privileged --network host \
               -v "${{ github.workspace }}:/workspace" \
-              -v "$HOME/.cargo/registry:/root/.cargo/registry" \
-              -v "$HOME/.cargo/git:/root/.cargo/git" \
+              -v "$HOME/.cargo:/root/.cargo" \
               -v "$HOME/.rustup:/root/.rustup" \
               -v "$AA_SOCK_DIR:$AA_SOCK_DIR" \
               -v "/tmp/as-full.pem:/tmp/as-full.pem:ro" \
