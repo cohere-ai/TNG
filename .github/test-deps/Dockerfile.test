@@ -1,7 +1,7 @@
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    protobuf-compiler libssl-dev pkg-config clang \
+    protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang \
     iptables iproute2 curl ca-certificates \
     perl make \
     && rm -rf /var/lib/apt/lists/*
