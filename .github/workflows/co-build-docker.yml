@@ -6,6 +6,7 @@ on:
       - cohere
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -28,6 +29,7 @@ jobs:
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/cohere' }}
             type=semver,pattern={{version}}
+            type=ref,event=branch
 
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
