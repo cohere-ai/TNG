@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -26,22 +26,18 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: us-central1-docker.pkg.dev/cohere-artifacts/cohere/tng
+          images: ghcr.io/${{ github.repository }}/tng
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/cohere' }}
             type=semver,pattern={{version}}
             type=ref,event=branch
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: projects/751739702614/locations/global/workloadIdentityPools/cohere-ci/providers/github
-          service_account: gh-actions@cohere-artifacts.iam.gserviceaccount.com
-
-      - name: Login to Artifact Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: us-central1-docker.pkg.dev
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
         uses: docker/build-push-action@v6.9.0
