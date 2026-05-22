@@ -27,4 +27,4 @@ if [ -n "$PEERS" ]; then
     ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
 fi
 
-exec tng launch --config-file "$CONFIG" "$@"
+exec tng launch --config-file "$CONFIG"
