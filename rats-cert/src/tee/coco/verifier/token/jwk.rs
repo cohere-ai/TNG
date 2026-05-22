@@ -168,10 +168,12 @@ impl JwkAttestationTokenVerifier {
 
         // Fetch certificates from AS address if provided
         if let Some(as_addr) = &config.as_addr {
-            let certs = Self::fetch_certs_from_as(&client, as_addr, &config.as_headers)
-                .await
-                .context("Failed to fetch certificates from AS")?;
-            trusted_certs.extend(certs);
+            match Self::fetch_certs_from_as(&client, as_addr, &config.as_headers).await {
+                Ok(certs) => trusted_certs.extend(certs),
+                Err(error) => {
+                    tracing::warn!(?error, "Failed to fetch certificates from AS")
+                }
+            }
         }
 
         // Load certificates from file paths
@@ -465,6 +467,22 @@ mod tests {
                 .await
                 .is_err()
         )
+    }
+
+    /// Verify that an unreachable AS address does not cause initialization to
+    /// fail (soft fetch: warn and continue instead of propagating the error).
+    #[tokio::test]
+    async fn test_constructor_succeeds_when_as_cert_fetch_fails() {
+        let config = super::super::AttestationTokenVerifierConfig {
+            as_addr: Some("https://localhost:1".to_owned()), // assuming nothing is listening on this addr
+            ..Default::default()
+        };
+        let result = super::JwkAttestationTokenVerifier::new(&config).await;
+        assert!(
+            result.is_ok(),
+            "expected to succeed because of soft fetch, got error: {:?}",
+            result.err()
+        );
     }
 
     #[rstest]
