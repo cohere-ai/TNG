@@ -28,4 +28,4 @@ COPY cohere/tng-egress-conf.json /etc/tng/conf.default.json
 COPY cohere/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["docker-entrypoint.sh"]
