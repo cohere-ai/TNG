@@ -95,12 +95,21 @@ async fn main() {
                 tracing::debug!("TNG config: {config:#?}");
 
                 tracing::info!("Starting tng instance now");
-                TngRuntime::from_config_with_reload_handle(config, &reload_handle)
-                    .await?
-                    .serve()
-                    .await?;
-
-                tracing::info!("Exited gracefully");
+                match TngRuntime::from_config_with_reload_handle(config.clone(), &reload_handle)
+                    .await
+                {
+                    Ok(runtime) => {
+                        runtime.serve().await?;
+                        tracing::info!("Exited gracefully");
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            error = format!("{error:#}"),
+                            "Initialization failed, entering degraded mode"
+                        );
+                        TngRuntime::serve_degraded(config).await?;
+                    }
+                }
             }
         }
 

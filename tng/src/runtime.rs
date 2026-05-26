@@ -327,6 +327,36 @@ impl TngRuntime {
         Ok(())
     }
 
+    /// Enter degraded mode: start only the control interface (if configured) and
+    /// sleep until terminated. `/livez` returns 200, `/readyz` returns 503 because
+    /// `TngState::ready` is never set to `true`.
+    pub async fn serve_degraded(tng_config: TngConfig) -> Result<()> {
+        let state = Arc::new(TngState::new());
+
+        if let Some(args) = tng_config.control_interface {
+            let shutdown = tokio_graceful::Shutdown::default();
+            let runtime = TokioRuntime::current(shutdown.guard())?;
+            let ci = ControlInterface::new(args, state, runtime.clone())
+                .await
+                .context("Failed to init control interface in degraded mode")?;
+            let (ready_tx, _) = tokio::sync::mpsc::channel(1);
+            runtime.spawn_supervised_task(async move {
+                if let Err(e) = ci.serve(ready_tx).await {
+                    tracing::error!(error=?e, "Control interface failed in degraded mode");
+                }
+            });
+        }
+
+        tracing::error!(
+            "TNG is in degraded mode: initialization failed. \
+             /livez returns 200, /readyz returns 503. \
+             Container will remain alive until terminated."
+        );
+
+        tokio::signal::ctrl_c().await.ok();
+        Ok(())
+    }
+
     fn setup_metric_exporter(
         tng_config: &TngConfig,
     ) -> Result<Arc<dyn MeterProvider + Send + Sync>> {
