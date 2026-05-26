@@ -1,11 +1,13 @@
 #!/bin/sh
 set -e
 
-CONFIG=/etc/tng/conf.json
+MOUNTED=/etc/tng/conf.json
 DEFAULT=/etc/tng/conf.default.json
+CONFIG=/tmp/tng-conf.json
 
-if [ -f "$CONFIG" ]; then
-    echo "Using mounted config at $CONFIG"
+if [ -f "$MOUNTED" ]; then
+    echo "Using mounted config at $MOUNTED"
+    cp "$MOUNTED" "$CONFIG"
 else
     echo "No mounted config found, using default"
     cp "$DEFAULT" "$CONFIG"
@@ -27,4 +29,4 @@ if [ -n "$PEERS" ]; then
     ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
 fi
 
-exec tng launch --config-file "$CONFIG"
+exec tng launch --config-file "$CONFIG" "$@"
