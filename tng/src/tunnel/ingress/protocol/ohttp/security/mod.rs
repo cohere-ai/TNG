@@ -67,6 +67,17 @@ impl OHttpSecurityLayer {
             {
                 builder = builder.tcp_mark(transport_so_mark);
             }
+
+            for path in &ohttp_args.tls_ca_certs {
+                let pem = std::fs::read(path)
+                    .with_context(|| format!("Failed to read TLS CA cert: {path}"))?;
+                let certs = reqwest::Certificate::from_pem_bundle(&pem)
+                    .with_context(|| format!("Failed to parse TLS CA certs: {path}"))?;
+                for cert in certs {
+                    builder = builder.add_root_certificate(cert);
+                }
+            }
+
             builder.build()?
         };
 
@@ -119,7 +130,8 @@ impl OHttpSecurityLayer {
             tracing::debug!(original_path, rewrited_path, "path is rewrited");
 
             let url = format!(
-                "http://{}:{}{rewrited_path}",
+                "{}://{}:{}{rewrited_path}",
+                endpoint.scheme(),
                 endpoint.host(),
                 endpoint.port()
             );

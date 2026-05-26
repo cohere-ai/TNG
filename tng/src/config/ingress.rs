@@ -154,6 +154,10 @@ pub struct OHttpArgs {
     /// Defaults to 0 (disabled) when not specified.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_refresh_before_expiry_seconds: Option<u64>,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tls_ca_certs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -335,6 +339,18 @@ mod tests {
     fn test_ohttp_args_deserialize_without_refresh_seconds() -> Result<()> {
         let args: super::OHttpArgs = serde_json::from_value(json!({}))?;
         assert_eq!(args.key_refresh_before_expiry_seconds, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_ohttp_args_tls_ca_certs() -> Result<()> {
+        let args: super::OHttpArgs = serde_json::from_value(json!({
+            "tls_ca_certs": ["/path/to/ca.pem"]
+        }))?;
+        assert_eq!(args.tls_ca_certs, vec!["/path/to/ca.pem"]);
+
+        let args2: super::OHttpArgs = serde_json::from_value(json!({}))?;
+        assert!(args2.tls_ca_certs.is_empty());
         Ok(())
     }
 }

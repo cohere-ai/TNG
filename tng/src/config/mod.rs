@@ -37,12 +37,15 @@ pub struct TngConfig {
     pub admin_bind: Option<Endpoint>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct Endpoint {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     pub port: u16,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
 }
 
 #[cfg(test)]
@@ -72,12 +75,13 @@ pub mod tests {
             add_ingress: vec![AddIngressArgs {
                 ingress_mode: IngressMode::Mapping(ingress::IngressMappingArgs {
                     r#in: Endpoint {
-                        host: None,
                         port: 10001,
+                        ..Default::default()
                     },
                     out: Endpoint {
                         host: Some("127.0.0.1".to_owned()),
                         port: 20001,
+                        ..Default::default()
                     },
                 }),
                 common: ingress::CommonArgs{
@@ -88,6 +92,7 @@ pub mod tests {
                             substitution: "/foo/bar/\\1".to_owned(),
                         }],
                         key_refresh_before_expiry_seconds: None,
+                        ..Default::default()
                     }),
                     ra_args: RaArgsUnchecked {
                         no_ra: false,
@@ -113,10 +118,12 @@ pub mod tests {
                     r#in: Endpoint {
                         host: Some("127.0.0.1".to_owned()),
                         port: 20001,
+                        ..Default::default()
                     },
                     out: Endpoint {
                         host: Some("127.0.0.1".to_owned()),
                         port: 30001,
+                        ..Default::default()
                     },
                 }),
                 common:egress::CommonArgs{
@@ -149,6 +156,22 @@ pub mod tests {
             serde_json::to_value(config2)?
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_endpoint_scheme_round_trip() -> Result<()> {
+        let json = serde_json::json!({"host": "127.0.0.1", "port": 443, "scheme": "https"});
+        let ep: Endpoint = serde_json::from_value(json)?;
+        assert_eq!(ep.scheme.as_deref(), Some("https"));
+        let rt = serde_json::to_value(&ep)?;
+        assert_eq!(rt["scheme"], "https");
+
+        let json2 = serde_json::json!({"host": "127.0.0.1", "port": 443});
+        let ep2: Endpoint = serde_json::from_value(json2)?;
+        assert!(ep2.scheme.is_none());
+        let rt2 = serde_json::to_value(&ep2)?;
+        assert!(rt2.get("scheme").is_none());
         Ok(())
     }
 }
