@@ -1,0 +1,58 @@
+{
+    "control_interface": {
+        "restful": {
+            "host": "0.0.0.0",
+            "port": 50000
+        }
+    },
+    "add_egress": [
+        {
+            "attest": {
+                "aa_provider": "ita_asr",
+                "as_provider": "ita",
+                "asr_addr": "http://127.0.0.1:8006/",
+                "model": "passport",
+                "policy_ids": []
+            },
+            "direct_forward": [
+                {
+                    "http_path": "^/(ping|health|metrics)$"
+                }
+            ],
+            "mapping": {
+                "in": {
+                    "host": "0.0.0.0",
+                    "port": 18080
+                },
+                "out": {
+                    "host": "127.0.0.1",
+                    "port": 8080
+                }
+            },
+            "ohttp": {
+                "key": {
+                    "attest": {
+                        "aa_provider": "ita_asr",
+                        "as_provider": "ita",
+                        "asr_addr": "http://127.0.0.1:8006/",
+                        "as_addr": "https://api.trustauthority.intel.com",
+                        "model": "passport",
+                        "policy_ids": []
+                    },
+                    "peers": [],
+                    "port": 8301,
+                    "rotation_interval": 300,
+                    "source": "peer_shared",
+                    "push_pull_interval": 5,
+                    "activation_delay": 15,
+                    "verify": {
+                        "as_provider": "ita",
+                        "ita_jwks_addr": "https://portal.trustauthority.intel.com",
+                        "model": "passport",
+                        "policy_ids": []
+                    }
+                }
+            }
+        }
+    ]
+}
