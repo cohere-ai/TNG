@@ -528,6 +528,7 @@ In the Background Check model, the [Attest](#attest) configuration should includ
 - **`aa_type`** (string, optional, defaults to "uds"): Attestation Agent type. Possible values: "uds", "builtin"
 - **`aa_addr`** (string, required for "uds"): Attestation Agent unix socket address (e.g., "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock")
 - **`refresh_interval`** (int, optional, default value is 600): Specifies the cache time for obtaining evidence from the Attestation Agent (in seconds). If set to 0, it requests the latest evidence each time a secure session is established. In Background Check mode, this option only takes effect when communicating using the rats-tls protocol, affecting the frequency of updating its own X.509 certificate. This option has no effect when communicating using the OHTTP protocol.
+- **`max_retries`** (int, optional, default value is 3): Maximum number of attestation retry attempts. In Background Check mode this controls how many times evidence generation is retried on failure before giving up. Set to 0 to disable retries.
 
 Alternatively, to collect evidence via the CoCo [API Server Rest](https://github.com/confidential-containers/guest-components/tree/main/api-server-rest) (ASR) HTTP proxy instead of connecting directly to the AA (useful when TNG runs in a container), set `aa_provider` to `"coco_asr"` and provide **`asr_addr`** (the ASR HTTP address, e.g. `"http://127.0.0.1:8006"`) instead of `aa_addr`.
 
@@ -574,6 +575,7 @@ When `aa_provider` is set to `"ita"`, the Attest configuration uses the followin
 - **`aa_provider`** (string): Set to `"ita"`
 - **`aa_addr`** (string, required): Attestation Agent Unix socket address (e.g., `"unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"`)
 - **`refresh_interval`** (int, optional, default value is 600): Same behavior as described above for the CoCo provider.
+- **`max_retries`** (int, optional, default value is 3): Same behavior as described above for the CoCo provider.
 
 Alternatively, set `aa_provider` to `"ita_asr"` and provide **`asr_addr`** instead of `aa_addr` to collect ITA evidence via the ASR HTTP proxy.
 
@@ -914,6 +916,7 @@ In the Passport model, the [Attest](#attest) configuration should include the fo
 - **`aa_type`** (string, optional, defaults to "uds"): Attestation Agent type. Possible values: "uds", "builtin"
 - **`aa_addr`** (string, required for "uds"): Attestation Agent unix socket address (e.g., "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock")
 - **`refresh_interval`** (int, optional, default value is 600): Specifies the frequency of obtaining attestation credentials (Attestation Token) from the Attestation Agent and Attestation Service (in seconds). If set to 0, it requests the latest Attestation Token each time a secure session is established. In Passport mode, if communicating using the rats-tls protocol, this option affects the frequency of updating its own X.509 certificate. If communicating using the OHTTP protocol, this option affects the internal Attestation Token cache update frequency, but does not affect the OHTTP key rotation frequency.
+- **`max_retries`** (int, optional, default value is 3): Maximum number of attestation retry attempts. In Passport mode this controls how many times the full attestation flow (evidence generation and passport conversion) is retried on failure before giving up. Set to 0 to disable retries.
 - **`as_type`** (string, optional, defaults to "restful"): Attestation Service type. Possible values: "restful", "grpc"
 - **`as_addr`** (string): Address of the Attestation Service
 - **`as_headers`** (object, optional, default is {}): Custom headers to be sent with attestation service requests. This is useful when the attestation service is deployed behind an authentication mechanism that requires additional Authorization headers or other custom headers.
@@ -952,6 +955,10 @@ When `aa_provider` and `as_provider` are set to `"ita"`, the Attest configuratio
 - **`as_addr`** (string, optional, default is `"https://api.trustauthority.intel.com"`): Intel Trust Authority API base URL
 - **`api_key`** (string, optional): Intel Trust Authority API key. Can also be set via the **`ITA_API_KEY`** environment variable.
 - **`policy_ids`** (array [string], optional, default is empty): List of ITA policy IDs that must match for attestation to succeed
+- **`max_retries`** (int, optional, default value is 3): Same behavior as described above for the CoCo provider.
+- **`ita_max_retries`** (int, optional, default value is 4): Maximum number of retries for individual ITA API calls (nonce and attest endpoints). These retries only apply to transient server errors (5xx), rate limiting (429), and GPU evidence verification failures; non-retryable errors such as attestation policy denials are not retried.
+- **`ita_retry_initial_delay_ms`** (int, optional, default value is 500): Initial delay in milliseconds between ITA API retries. The delay increases exponentially on subsequent retries.
+- **`ita_retry_max_delay_ms`** (int, optional, default value is 1000): Maximum delay in milliseconds between ITA API retries.
 
 As with Background Check mode, you can use `aa_provider` = `"ita_asr"` with `asr_addr` instead of `aa_addr` to collect evidence via the ASR HTTP proxy.
 

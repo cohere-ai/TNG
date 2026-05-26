@@ -16,7 +16,7 @@ use super::token::ItaToken;
 /// (NRAS), which may transiently fail. Intel recommends client-side retry logic for
 /// GPU attestation requests.
 /// See: https://docs.trustauthority.intel.com/main/articles/articles/ita/concept-gpu-attestation.html#:~:text=recommended%20to%20include-,retry%20logic,-in%20the%20client
-const ITA_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(100);
+const ITA_RETRY_INITIAL_DELAY: Duration = Duration::from_millis(500);
 const ITA_RETRY_MAX_DELAY: Duration = Duration::from_secs(1);
 const ITA_MAX_RETRIES: usize = 4;
 
@@ -72,20 +72,45 @@ pub struct ItaConverter {
     api_key: String,
     base_url: String,
     policy_ids: Vec<String>,
+    max_retries: usize,
+    retry_initial_delay: Duration,
+    retry_max_delay: Duration,
 }
 
 impl ItaConverter {
     pub fn new(api_key: &str, base_url: &str, policy_ids: &[String]) -> Result<Self> {
+        Self::with_retry_config(
+            api_key,
+            base_url,
+            policy_ids,
+            ITA_MAX_RETRIES,
+            ITA_RETRY_INITIAL_DELAY,
+            ITA_RETRY_MAX_DELAY,
+        )
+    }
+
+    pub fn with_retry_config(
+        api_key: &str,
+        base_url: &str,
+        policy_ids: &[String],
+        max_retries: usize,
+        retry_initial_delay: Duration,
+        retry_max_delay: Duration,
+    ) -> Result<Self> {
         Ok(Self {
             http: Client::new(),
             api_key: api_key.to_string(),
             base_url: base_url.trim_end_matches('/').to_string(),
             policy_ids: policy_ids.to_vec(),
+            max_retries,
+            retry_initial_delay,
+            retry_max_delay,
         })
     }
 
     fn is_retryable_error(status: reqwest::StatusCode, body: &str) -> bool {
         status.is_server_error()
+            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
             || (status == reqwest::StatusCode::BAD_REQUEST
                 && body.contains("Failed to verify GPU evidence"))
     }
@@ -94,11 +119,14 @@ impl ItaConverter {
     /// on success.
     async fn ita_request(&self, request: reqwest::RequestBuilder, label: &str) -> Result<String> {
         let label = label.to_string();
+        let max_retries = self.max_retries;
+        let retry_initial_delay = self.retry_initial_delay;
+        let retry_max_delay = self.retry_max_delay;
 
         let fut = async move {
-            let policy = RetryPolicy::exponential(ITA_RETRY_INITIAL_DELAY)
-                .with_max_delay(ITA_RETRY_MAX_DELAY)
-                .with_max_retries(ITA_MAX_RETRIES);
+            let policy = RetryPolicy::exponential(retry_initial_delay)
+                .with_max_delay(retry_max_delay)
+                .with_max_retries(max_retries);
 
             let (status, body) = policy
                 .retry(|| async {
@@ -256,6 +284,14 @@ mod tests {
     }
 
     #[test]
+    fn retryable_on_too_many_requests() {
+        assert!(ItaConverter::is_retryable_error(
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+            ""
+        ));
+    }
+
+    #[test]
     fn retryable_on_gpu_verification_failure() {
         assert!(ItaConverter::is_retryable_error(
             reqwest::StatusCode::BAD_REQUEST,
@@ -374,6 +410,38 @@ mod tests {
             err,
             Error::ItaHttpResponseError {
                 status_code: 400,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn with_retry_config_respects_custom_max_retries() {
+        let server = MockServer::start().await;
+        let custom_retries: usize = 2;
+
+        Mock::given(method("POST"))
+            .and(path(ITA_ATTEST_PATH))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+            .expect((custom_retries + 1) as u64)
+            .mount(&server)
+            .await;
+
+        let converter = ItaConverter::with_retry_config(
+            "key",
+            &server.uri(),
+            &[],
+            custom_retries,
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+        )
+        .unwrap();
+        let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
+        let err = converter.convert(&evidence).await.unwrap_err();
+        assert!(matches!(
+            err,
+            Error::ItaHttpResponseError {
+                status_code: 500,
                 ..
             }
         ));

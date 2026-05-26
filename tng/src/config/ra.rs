@@ -429,6 +429,12 @@ pub struct ItaConverterArgs {
     pub api_key: Option<String>,
     #[serde(default)]
     pub policy_ids: Vec<String>,
+    /// Max number of retries for ITA API calls (nonce + attest). Defaults to 4.
+    pub ita_max_retries: Option<usize>,
+    /// Initial delay between ITA API retries in milliseconds. Defaults to 100.
+    pub ita_retry_initial_delay_ms: Option<u64>,
+    /// Maximum delay between ITA API retries in milliseconds. Defaults to 1000.
+    pub ita_retry_max_delay_ms: Option<u64>,
 }
 
 /// Manual impl to redact `api_key` from debug/log output.
@@ -438,6 +444,12 @@ impl std::fmt::Debug for ItaConverterArgs {
             .field("as_addr", &self.as_addr)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .field("policy_ids", &self.policy_ids)
+            .field("ita_max_retries", &self.ita_max_retries)
+            .field(
+                "ita_retry_initial_delay_ms",
+                &self.ita_retry_initial_delay_ms,
+            )
+            .field("ita_retry_max_delay_ms", &self.ita_retry_max_delay_ms)
             .finish()
     }
 }
@@ -448,8 +460,22 @@ impl ItaConverterArgs {
             .api_key
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("ITA api_key is required but not set"))?;
-        rats_cert::tee::ita::ItaConverter::new(api_key, &self.as_addr, &self.policy_ids)
-            .map_err(Into::into)
+
+        let max_retries = self.ita_max_retries.unwrap_or(4);
+        let initial_delay =
+            std::time::Duration::from_millis(self.ita_retry_initial_delay_ms.unwrap_or(500));
+        let max_delay =
+            std::time::Duration::from_millis(self.ita_retry_max_delay_ms.unwrap_or(1000));
+
+        rats_cert::tee::ita::ItaConverter::with_retry_config(
+            api_key,
+            &self.as_addr,
+            &self.policy_ids,
+            max_retries,
+            initial_delay,
+            max_delay,
+        )
+        .map_err(Into::into)
     }
 }
 
@@ -576,6 +602,9 @@ pub enum AttestArgs {
         converter: ConverterArgs,
         /// Evidence refresh interval (seconds), optional
         refresh_interval: Option<u64>,
+        /// Max attestation attempts (evidence generation + optional passport conversion).
+        /// Defaults to 3.
+        max_retries: Option<usize>,
     },
     /// Background check mode attestation parameters
     BackgroundCheck {
@@ -583,6 +612,8 @@ pub enum AttestArgs {
         attester: AttesterArgs,
         /// Evidence refresh interval (seconds), optional
         refresh_interval: Option<u64>,
+        /// Max attestation attempts (evidence generation). Defaults to 3.
+        max_retries: Option<usize>,
     },
 }
 
@@ -601,6 +632,14 @@ impl AttestArgs {
             RefreshStrategy::Always
         } else {
             RefreshStrategy::Periodically { interval }
+        }
+    }
+
+    pub fn max_retries(&self) -> usize {
+        match self {
+            Self::Passport { max_retries, .. } | Self::BackgroundCheck { max_retries, .. } => {
+                max_retries.unwrap_or(3)
+            }
         }
     }
 }
@@ -700,6 +739,7 @@ mod tests {
             Some(AttestArgs::BackgroundCheck {
                 attester,
                 refresh_interval,
+                ..
             }) => {
                 match attester {
                     AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }) => {
@@ -740,6 +780,7 @@ mod tests {
             Some(AttestArgs::BackgroundCheck {
                 attester,
                 refresh_interval,
+                ..
             }) => {
                 match attester {
                     AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }) => {
@@ -777,6 +818,7 @@ mod tests {
                 attester,
                 converter,
                 refresh_interval,
+                ..
             }) => {
                 match attester {
                     AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }) => {
@@ -1294,6 +1336,7 @@ mod tests {
                 attester,
                 converter,
                 refresh_interval,
+                ..
             }) => {
                 assert!(matches!(
                     attester,
@@ -1335,6 +1378,7 @@ mod tests {
             Some(AttestArgs::BackgroundCheck {
                 attester,
                 refresh_interval,
+                ..
             }) => {
                 assert!(matches!(
                     attester,
@@ -1370,6 +1414,7 @@ mod tests {
             Some(AttestArgs::BackgroundCheck {
                 attester,
                 refresh_interval,
+                ..
             }) => {
                 match attester {
                     AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }) => {
@@ -1509,7 +1554,11 @@ mod tests {
                 "aa_addr": aa_addr,
                 "as_provider": "ita",
                 "as_addr": as_addr,
-                "api_key": api_key
+                "api_key": api_key,
+                "max_retries": 5,
+                "ita_max_retries": 2,
+                "ita_retry_initial_delay_ms": 200,
+                "ita_retry_max_delay_ms": 2000
             }
         });
 
@@ -1519,8 +1568,10 @@ mod tests {
             Some(AttestArgs::Passport {
                 attester,
                 converter,
+                max_retries,
                 ..
             }) => {
+                assert_eq!(*max_retries, Some(5));
                 match attester {
                     AttesterArgs::Ita(ita) => {
                         assert_eq!(ita.aa_addr, aa_addr);
@@ -1531,6 +1582,9 @@ mod tests {
                     ConverterArgs::Ita(ita) => {
                         assert_eq!(ita.as_addr, as_addr);
                         assert_eq!(ita.api_key, Some(api_key.to_string()));
+                        assert_eq!(ita.ita_max_retries, Some(2));
+                        assert_eq!(ita.ita_retry_initial_delay_ms, Some(200));
+                        assert_eq!(ita.ita_retry_max_delay_ms, Some(2000));
                     }
                     _ => panic!("Expected Ita converter"),
                 }
@@ -1552,12 +1606,19 @@ mod tests {
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
         match &ra_args.attest {
-            Some(AttestArgs::BackgroundCheck { attester, .. }) => match attester {
-                AttesterArgs::Ita(ita) => {
-                    assert_eq!(ita.aa_addr, aa_addr);
+            Some(AttestArgs::BackgroundCheck {
+                attester,
+                max_retries,
+                ..
+            }) => {
+                assert_eq!(*max_retries, None);
+                match attester {
+                    AttesterArgs::Ita(ita) => {
+                        assert_eq!(ita.aa_addr, aa_addr);
+                    }
+                    _ => panic!("Expected Ita attester"),
                 }
-                _ => panic!("Expected Ita attester"),
-            },
+            }
             _ => panic!("Expected BackgroundCheck attest variant"),
         }
     }
@@ -1795,6 +1856,9 @@ mod tests {
             as_addr: "https://api.trustauthority.intel.com".to_string(),
             api_key: Some(secret.to_string()),
             policy_ids: vec![],
+            ita_max_retries: None,
+            ita_retry_initial_delay_ms: None,
+            ita_retry_max_delay_ms: None,
         };
         let debug_output = format!("{:?}", args);
         assert!(
