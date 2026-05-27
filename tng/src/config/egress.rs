@@ -186,8 +186,7 @@ pub enum KeyArgs {
 ///   "push_pull_interval": 5,
 ///   "activation_delay": 15,
 ///   "join_max_attempts": 0,
-///   "join_retry_initial_interval": 2,
-///   "join_retry_max_interval": 30,
+///   "join_retry_interval": 2,
 ///   "attest": {
 ///     "model": "background_check",
 ///     "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
@@ -245,22 +244,16 @@ pub struct PeerSharedArgs {
     pub push_pull_interval: u64,
 
     /// Maximum number of join attempts (including the initial attempt).
-    /// - `1` (default): try once, no retries — interval fields are ignored.
+    /// - `1` (default): try once, no retries — `join_retry_interval` is ignored.
     /// - `0`: unlimited retries (similar to serf-cli).
     /// - `N > 1`: try up to N times total (initial + N-1 retries).
     #[serde(default = "default_join_max_attempts")]
     pub join_max_attempts: u32,
 
-    /// Initial wait (in seconds) before the first retry. Doubles after each subsequent
-    /// attempt (exponential backoff), capped by `join_retry_max_interval`.
-    /// Only used when `join_max_attempts` != 1. Defaults to 1 second.
-    #[serde(default = "default_join_retry_initial_interval")]
-    pub join_retry_initial_interval: u64,
-
-    /// Maximum interval (in seconds) between retry-join attempts.
-    /// Caps the exponential backoff growth. Defaults to 30 seconds.
-    #[serde(default = "default_join_retry_max_interval")]
-    pub join_retry_max_interval: u64,
+    /// Fixed interval (in seconds) between retry-join attempts.
+    /// Only used when `join_max_attempts` != 1. Defaults to 5 seconds.
+    #[serde(default = "default_join_retry_interval")]
+    pub join_retry_interval: u64,
 
     /// Define how this node proves its identity when connecting to others, and how to verify
     /// the identity of remote peers.
@@ -284,12 +277,8 @@ fn default_join_max_attempts() -> u32 {
     1
 }
 
-fn default_join_retry_initial_interval() -> u64 {
-    1
-}
-
-fn default_join_retry_max_interval() -> u64 {
-    30
+fn default_join_retry_interval() -> u64 {
+    5
 }
 
 fn default_activation_delay() -> u64 {

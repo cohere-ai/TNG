@@ -1525,7 +1525,7 @@ async fn test_peer_shared_retry_join_on_delayed_peer_startup() -> Result<()> {
                                 ],
                                 "rotation_interval": 300,
                                 "join_max_attempts": 0,
-                                "join_retry_initial_interval": 1,
+                                "join_retry_interval": 1,
                                 "no_ra": true
                             }
                         },
