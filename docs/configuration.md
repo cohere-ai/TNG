@@ -1304,7 +1304,10 @@ If you wish to enable this mode, simply specify `key.source = "peer_shared"` in 
             "192.168.10.1:8301",
             "tng-service.default.svc.cluster.local:8301"
         ],
-        "peers_file": "/etc/tng/peers.json"
+        "peers_file": "/etc/tng/peers.json",
+        "join_max_attempts": 0,
+        "join_retry_initial_interval": 2,
+        "join_retry_max_interval": 30
     }
 }
 ```
@@ -1320,6 +1323,9 @@ If you wish to enable this mode, simply specify `key.source = "peer_shared"` in 
     - **`port`** (`integer`, optional, default `8301`): Local listening port for inter-node secure communication.
     - **`peers`** (`array of strings`): List of initial node addresses (IP or DNS name:port) to connect to. At least one node must be accessible to join the cluster. When a node address is specified as a domain name, TNG will attempt to resolve that domain name and try all returned IP addresses as peer nodes in sequence (rather than just trying the first IP), which improves connection success rate in complex network environments.
     - **`peers_file`** (`string`, optional): Path to a JSON file containing an array of peer addresses. This allows dynamic updates to the peer list without restarting the service. The file should contain a JSON array of strings representing peer addresses in IP:port or DNS name:port format. TNG will monitor this file for changes and automatically join new peers when the file is updated.
+    - **`join_max_attempts`** (`integer`, optional, default `1`): Maximum number of join attempts including the initial attempt. `1` means try once with no retries (default). `0` means unlimited retries (similar to serf-cli). Any value greater than 1 means try up to that many times total (initial + retries). When set to `1`, the `join_retry_initial_interval` and `join_retry_max_interval` fields are ignored.
+    - **`join_retry_initial_interval`** (`integer`, optional, default `1`): Initial wait period in seconds before the first retry. The interval doubles after each subsequent attempt (exponential backoff), capped by `join_retry_max_interval`. Only used when `join_max_attempts` is not `1`. Must be greater than `0` when retries are enabled.
+    - **`join_retry_max_interval`** (`integer`, optional, default `30`): Maximum interval in seconds between retry-join attempts. Caps the exponential backoff growth. Only used when `join_max_attempts` is not `1`.
     - **`attest`** (object, optional): Defines how this node proves its identity when connecting to other nodes. See [Attest Configuration](#attest) section for detailed configuration.
     - **`verify`** (object, optional): Defines how this node verifies the identity of remote peer nodes. See [Verify Configuration](#verify) section for detailed configuration.
     - **`no_ra`** (boolean, optional, default `false`): Whether to disable remote attestation functionality. When set to `true`, inter-node communication will not perform remote attestation verification.
@@ -1348,6 +1354,9 @@ Example configuration:
                         "tng-service.default.svc.cluster.local:8301"
                     ],
                     "peers_file": "/etc/tng/peers.json",
+                    "join_max_attempts": 0,
+                    "join_retry_initial_interval": 2,
+                    "join_retry_max_interval": 30,
                     "attest": {
                         "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
                     },

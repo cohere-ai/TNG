@@ -45,6 +45,9 @@
                     "source": "peer_shared",
                     "push_pull_interval": 5,
                     "activation_delay": 15,
+                    "join_max_attempts": 0,
+                    "join_retry_initial_interval": 2,
+                    "join_retry_max_interval": 30,
                     "verify": {
                         "as_provider": "ita",
                         "ita_jwks_addr": "https://portal.trustauthority.intel.com",

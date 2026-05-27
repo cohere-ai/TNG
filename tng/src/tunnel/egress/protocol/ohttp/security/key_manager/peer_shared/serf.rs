@@ -12,13 +12,13 @@ use tokio::task::JoinHandle;
 
 use anyhow::{anyhow, Context};
 use futures::StreamExt;
+use rand::Rng;
 use serf::delegate::CompositeDelegate;
 use serf::net::hostaddr::Host;
 use serf::net::resolver::socket_addr::SocketAddrResolver;
 use serf::net::{HostAddr, NetTransport, NetTransportOptions, Node, NodeId};
 use serf::types::MaybeResolvedAddress;
 use serf::{MemberlistOptions, Options};
-use rand::Rng;
 use uuid::Uuid;
 
 use std::collections::HashMap;
@@ -62,6 +62,12 @@ pub struct PeerSharedKeyManagerInner {
 
 impl PeerSharedKeyManager {
     pub async fn new(runtime: TokioRuntime, peer_shared: PeerSharedArgs) -> Result<Self, TngError> {
+        if peer_shared.join_max_attempts != 1 && peer_shared.join_retry_initial_interval == 0 {
+            return Err(TngError::InvalidParameter(anyhow!(
+                "join_retry_initial_interval must be > 0 when join_max_attempts is not 1"
+            )));
+        }
+
         // Step 1: Initialize internal key state
         let inner = Arc::new(PeerSharedKeyManagerInner {
             inner_key_manager: SelfGeneratedKeyManager::new_with_auto_refresh(
@@ -224,78 +230,78 @@ impl PeerSharedKeyManager {
             None
         };
 
-        // Spawn retry-join task if configured via retry_join_interval.
-        // Retries with exponential backoff until this node joins the cluster.
-        let retry_join_task =
-            if let Some(base_secs) = peer_shared.retry_join_interval.filter(|&v| v > 0) {
-                let serf_weak = Arc::downgrade(serf);
-                let peers = peer_shared.peers.clone();
-                let max_attempts = peer_shared.retry_join_max.unwrap_or(0); // 0 = unlimited
-                Some(runtime.spawn_supervised_task_current_span(async move {
-                    const MAX_INTERVAL: Duration = Duration::from_secs(30);
-                    let base_interval = Duration::from_secs(base_secs);
-                    let mut attempt: u32 = 0;
+        // Spawn retry-join task when join_max_attempts != 1.
+        // join_max_attempts: 1 = single attempt (default), 0 = unlimited, N>1 = N total.
+        // The initial join above counts as attempt 1; retries start from attempt 2.
+        let retry_join_task = if peer_shared.join_max_attempts != 1 {
+            let serf_weak = Arc::downgrade(serf);
+            let peers = peer_shared.peers.clone();
+            let max_attempts = peer_shared.join_max_attempts;
+            let base_interval = Duration::from_secs(peer_shared.join_retry_initial_interval);
+            let max_interval = Duration::from_secs(peer_shared.join_retry_max_interval);
+            Some(runtime.spawn_supervised_task_current_span(async move {
+                let mut attempt: u32 = 1; // initial join was attempt 1
 
-                    loop {
-                        let Some(serf_ref) = serf_weak.upgrade() else {
-                            tracing::debug!("Serf dropped, stopping retry-join task");
-                            break;
-                        };
+                loop {
+                    let Some(serf_ref) = serf_weak.upgrade() else {
+                        tracing::debug!("Serf dropped, stopping retry-join task");
+                        break;
+                    };
 
-                        if serf_ref.members().await.len() > 1 {
-                            tracing::info!("Retry-join: cluster has peers, stopping");
+                    if serf_ref.members().await.len() > 1 {
+                        tracing::info!("Retry-join: cluster has peers, stopping");
+                        break;
+                    }
+
+                    drop(serf_ref);
+
+                    attempt = attempt.saturating_add(1);
+                    if max_attempts > 1 && attempt > max_attempts {
+                        tracing::warn!(
+                            max_attempts,
+                            "Retry-join: exhausted max attempts without joining"
+                        );
+                        break;
+                    }
+
+                    let backoff = Duration::from_secs(
+                        (base_interval.as_secs() << (attempt - 2).min(5))
+                            .min(max_interval.as_secs()),
+                    );
+                    let jitter = Duration::from_millis(
+                        rand::rng().random_range(0..=backoff.as_millis() as u64 / 4),
+                    );
+
+                    tracing::info!(
+                        attempt,
+                        sleep_ms = (backoff + jitter).as_millis() as u64,
+                        "Retry-join: no peers yet, waiting before next attempt"
+                    );
+                    tokio::time::sleep(backoff + jitter).await;
+
+                    let Some(serf_ref) = serf_weak.upgrade() else {
+                        tracing::debug!("Serf dropped, stopping retry-join task");
+                        break;
+                    };
+
+                    match join_serf_cluster(&serf_ref, &peers).await {
+                        Ok(()) => {
+                            tracing::info!(attempt, "Retry-join: successfully joined cluster");
                             break;
                         }
-
-                        drop(serf_ref);
-
-                        attempt = attempt.saturating_add(1);
-                        if max_attempts > 0 && attempt > max_attempts {
+                        Err(e) => {
                             tracing::warn!(
-                                max_attempts,
-                                "Retry-join: exhausted max attempts without joining"
+                                attempt,
+                                error = ?e,
+                                "Retry-join: failed, will retry"
                             );
-                            break;
-                        }
-
-                        // Exponential backoff capped at MAX_INTERVAL, plus jitter up to 25% of backoff
-                        let backoff = Duration::from_secs(
-                            (base_interval.as_secs() << attempt.min(5)).min(MAX_INTERVAL.as_secs()),
-                        );
-                        let jitter = Duration::from_millis(
-                            rand::rng().random_range(0..=backoff.as_millis() as u64 / 4),
-                        );
-
-                        tracing::info!(
-                            attempt,
-                            sleep_ms = (backoff + jitter).as_millis() as u64,
-                            "Retry-join: no peers yet, waiting before next attempt"
-                        );
-                        tokio::time::sleep(backoff + jitter).await;
-
-                        let Some(serf_ref) = serf_weak.upgrade() else {
-                            tracing::debug!("Serf dropped, stopping retry-join task");
-                            break;
-                        };
-
-                        match join_serf_cluster(&serf_ref, &peers).await {
-                            Ok(()) => {
-                                tracing::info!(attempt, "Retry-join: successfully joined cluster");
-                                break;
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    attempt,
-                                    error = ?e,
-                                    "Retry-join: failed, will retry"
-                                );
-                            }
                         }
                     }
-                }))
-            } else {
-                None
-            };
+                }
+            }))
+        } else {
+            None
+        };
 
         Ok((peers_file_watch_task, retry_join_task))
     }

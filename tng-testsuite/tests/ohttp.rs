@@ -1506,7 +1506,7 @@ async fn test_peer_shared_retry_join_on_delayed_peer_startup() -> Result<()> {
     let node2 = NodeType::Customized { host_num: 2 };
 
     run_test(vec![
-        // Node 1: peers with node 2, has retry_join_interval so it will keep trying
+        // Node 1: peers with node 2, has join_max_attempts=0 so it will keep trying
         TngInstance::TngServer(
             r#"
             {
@@ -1524,7 +1524,8 @@ async fn test_peer_shared_retry_join_on_delayed_peer_startup() -> Result<()> {
                                     "192.168.1.2:8301"
                                 ],
                                 "rotation_interval": 300,
-                                "retry_join_interval": 1,
+                                "join_max_attempts": 0,
+                                "join_retry_initial_interval": 1,
                                 "no_ra": true
                             }
                         },
