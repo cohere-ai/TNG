@@ -264,10 +264,7 @@ impl PeerSharedKeyManager {
                         break;
                     }
 
-                    let backoff = Duration::from_secs(
-                        (base_interval.as_secs() << (attempt - 2).min(5))
-                            .min(max_interval.as_secs()),
-                    );
+                    let backoff = retry_backoff(base_interval, max_interval, attempt);
                     let jitter = Duration::from_millis(
                         rand::rng().random_range(0..=backoff.as_millis() as u64 / 4),
                     );
@@ -460,5 +457,49 @@ impl Drop for PeerSharedKeyManager {
         if let Some(task) = self.retry_join_task.take() {
             task.abort();
         }
+    }
+}
+
+/// Exponential backoff: `base * 2^(attempt - 2)`, capped at `max_interval`.
+/// `attempt` counts from 2 (first retry); the shift is clamped to 5 to avoid overflow.
+fn retry_backoff(base: Duration, max_interval: Duration, attempt: u32) -> Duration {
+    Duration::from_secs(
+        (base.as_secs() << (attempt.saturating_sub(2)).min(5)).min(max_interval.as_secs()),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_doubles_each_attempt() {
+        let base = Duration::from_secs(2);
+        let max = Duration::from_secs(120);
+
+        assert_eq!(retry_backoff(base, max, 2), Duration::from_secs(2)); // 2 * 2^0
+        assert_eq!(retry_backoff(base, max, 3), Duration::from_secs(4)); // 2 * 2^1
+        assert_eq!(retry_backoff(base, max, 4), Duration::from_secs(8)); // 2 * 2^2
+        assert_eq!(retry_backoff(base, max, 5), Duration::from_secs(16)); // 2 * 2^3
+        assert_eq!(retry_backoff(base, max, 6), Duration::from_secs(32)); // 2 * 2^4
+        assert_eq!(retry_backoff(base, max, 7), Duration::from_secs(64)); // 2 * 2^5
+    }
+
+    #[test]
+    fn backoff_capped_at_max_interval() {
+        let base = Duration::from_secs(2);
+        let max = Duration::from_secs(30);
+
+        assert_eq!(retry_backoff(base, max, 7), Duration::from_secs(30));
+        assert_eq!(retry_backoff(base, max, 8), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn backoff_shift_clamped_at_5() {
+        let base = Duration::from_secs(1);
+        let max = Duration::from_secs(1000);
+
+        assert_eq!(retry_backoff(base, max, 7), retry_backoff(base, max, 100));
+        assert_eq!(retry_backoff(base, max, 7), Duration::from_secs(32)); // 1 * 2^5
     }
 }
