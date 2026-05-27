@@ -11,7 +11,12 @@
                 "aa_provider": "ita_asr",
                 "as_provider": "ita",
                 "asr_addr": "http://127.0.0.1:8006/",
+                "as_addr": "https://api.trustauthority.intel.com",
                 "model": "passport",
+                "max_retries": 0,
+                "ita_retry_initial_delay_ms": 500,
+                "ita_retry_max_delay_ms": 5000,
+                "ita_max_retries": 4,
                 "policy_ids": []
             },
             "direct_forward": [
@@ -37,6 +42,10 @@
                         "asr_addr": "http://127.0.0.1:8006/",
                         "as_addr": "https://api.trustauthority.intel.com",
                         "model": "passport",
+                        "max_retries": 0,
+                        "ita_retry_initial_delay_ms": 500,
+                        "ita_retry_max_delay_ms": 5000,
+                        "ita_max_retries": 4,
                         "policy_ids": []
                     },
                     "peers": [],
