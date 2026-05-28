@@ -68,6 +68,7 @@ jobs:
         with:
           image: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           output-file: sbom.spdx.json
+          dependency-snapshot: ${{ startsWith(github.ref, 'refs/heads/') }}
 
       - name: Attest SBOM
         uses: actions/attest@v4
