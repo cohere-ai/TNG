@@ -79,33 +79,30 @@ pub struct ItaConverter {
 
 impl ItaConverter {
     pub fn new(api_key: &str, base_url: &str, policy_ids: &[String]) -> Result<Self> {
-        Self::with_retry_config(
-            api_key,
-            base_url,
-            policy_ids,
-            ITA_MAX_RETRIES,
-            ITA_RETRY_INITIAL_DELAY,
-            ITA_RETRY_MAX_DELAY,
-        )
-    }
-
-    pub fn with_retry_config(
-        api_key: &str,
-        base_url: &str,
-        policy_ids: &[String],
-        max_retries: usize,
-        retry_initial_delay: Duration,
-        retry_max_delay: Duration,
-    ) -> Result<Self> {
         Ok(Self {
             http: Client::new(),
             api_key: api_key.to_string(),
             base_url: base_url.trim_end_matches('/').to_string(),
             policy_ids: policy_ids.to_vec(),
-            max_retries,
-            retry_initial_delay,
-            retry_max_delay,
+            max_retries: ITA_MAX_RETRIES,
+            retry_initial_delay: ITA_RETRY_INITIAL_DELAY,
+            retry_max_delay: ITA_RETRY_MAX_DELAY,
         })
+    }
+
+    pub fn with_max_retries(mut self, max_retries: usize) -> Self {
+        self.max_retries = max_retries;
+        self
+    }
+
+    pub fn with_retry_initial_delay(mut self, delay: Duration) -> Self {
+        self.retry_initial_delay = delay;
+        self
+    }
+
+    pub fn with_retry_max_delay(mut self, delay: Duration) -> Self {
+        self.retry_max_delay = delay;
+        self
     }
 
     fn is_retryable_error(status: reqwest::StatusCode, body: &str) -> bool {
@@ -427,15 +424,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let converter = ItaConverter::with_retry_config(
-            "key",
-            &server.uri(),
-            &[],
-            custom_retries,
-            Duration::from_millis(10),
-            Duration::from_millis(50),
-        )
-        .unwrap();
+        let converter = ItaConverter::new("key", &server.uri(), &[])
+            .unwrap()
+            .with_max_retries(custom_retries)
+            .with_retry_initial_delay(Duration::from_millis(10))
+            .with_retry_max_delay(Duration::from_millis(50));
         let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
         let err = converter.convert(&evidence).await.unwrap_err();
         assert!(matches!(

@@ -402,7 +402,6 @@ pub enum CocoAttesterArgs {
 const DEFAULT_ITA_API_URL: &str = "https://api.trustauthority.intel.com";
 const DEFAULT_ITA_PORTAL_URL: &str = "https://portal.trustauthority.intel.com";
 const ITA_API_KEY_ENV: &str = "ITA_API_KEY";
-
 fn default_ita_api_url() -> String {
     DEFAULT_ITA_API_URL.to_string()
 }
@@ -429,11 +428,14 @@ pub struct ItaConverterArgs {
     pub api_key: Option<String>,
     #[serde(default)]
     pub policy_ids: Vec<String>,
-    /// Max number of retries for ITA API calls (nonce + attest). Defaults to 4.
+    /// Max number of retries for ITA API calls (nonce + attest).
+    /// When unset, uses the default from `ItaConverter`.
     pub ita_max_retries: Option<usize>,
-    /// Initial delay between ITA API retries in milliseconds. Defaults to 100.
+    /// Initial delay between ITA API retries in milliseconds.
+    /// When unset, uses the default from `ItaConverter`.
     pub ita_retry_initial_delay_ms: Option<u64>,
-    /// Maximum delay between ITA API retries in milliseconds. Defaults to 1000.
+    /// Maximum delay between ITA API retries in milliseconds.
+    /// When unset, uses the default from `ItaConverter`.
     pub ita_retry_max_delay_ms: Option<u64>,
 }
 
@@ -461,21 +463,18 @@ impl ItaConverterArgs {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("ITA api_key is required but not set"))?;
 
-        let max_retries = self.ita_max_retries.unwrap_or(4);
-        let initial_delay =
-            std::time::Duration::from_millis(self.ita_retry_initial_delay_ms.unwrap_or(500));
-        let max_delay =
-            std::time::Duration::from_millis(self.ita_retry_max_delay_ms.unwrap_or(1000));
-
-        rats_cert::tee::ita::ItaConverter::with_retry_config(
-            api_key,
-            &self.as_addr,
-            &self.policy_ids,
-            max_retries,
-            initial_delay,
-            max_delay,
-        )
-        .map_err(Into::into)
+        let mut converter =
+            rats_cert::tee::ita::ItaConverter::new(api_key, &self.as_addr, &self.policy_ids)?;
+        if let Some(n) = self.ita_max_retries {
+            converter = converter.with_max_retries(n);
+        }
+        if let Some(ms) = self.ita_retry_initial_delay_ms {
+            converter = converter.with_retry_initial_delay(std::time::Duration::from_millis(ms));
+        }
+        if let Some(ms) = self.ita_retry_max_delay_ms {
+            converter = converter.with_retry_max_delay(std::time::Duration::from_millis(ms));
+        }
+        Ok(converter)
     }
 }
 
