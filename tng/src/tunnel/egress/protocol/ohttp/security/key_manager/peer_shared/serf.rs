@@ -229,10 +229,12 @@ impl PeerSharedKeyManager {
             None
         };
 
-        // Spawn retry-join task when join_max_attempts != 1.
+        // Spawn retry-join task when join_max_attempts != 1 and there are static
+        // peers to retry against.
         // join_max_attempts: 1 = single attempt (default), 0 = unlimited, N>1 = N total.
         // The initial join above counts as attempt 1; retries start from attempt 2.
-        let retry_join_task = if peer_shared.join_max_attempts != 1 {
+        let retry_join_task = if peer_shared.join_max_attempts != 1 && !peer_shared.peers.is_empty()
+        {
             let serf_weak = Arc::downgrade(serf);
             let peers = peer_shared.peers.clone();
             let max_attempts = peer_shared.join_max_attempts;
