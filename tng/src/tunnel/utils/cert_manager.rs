@@ -35,7 +35,8 @@ impl CertManager {
     async fn fetch_new_cert(
         attest_ctx: &AttestContext,
     ) -> Result<(rustls::sign::CertifiedKey, Expire)> {
-        let retry_policy = RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(3);
+        let retry_policy =
+            RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(attest_ctx.max_retries());
         retry_policy
             .retry(|| async {
                 Self::fetch_new_cert_inner(attest_ctx)
@@ -156,6 +157,7 @@ mod tests {
                             .to_owned(),
                 }),
                 refresh_interval: Some(3),
+                max_retries: None,
             })?;
             let mut cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
 
@@ -209,6 +211,7 @@ mod tests {
                             .to_owned(),
                 }),
                 refresh_interval: Some(0),
+                max_retries: None,
             })?;
             let cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
 
@@ -249,6 +252,7 @@ mod tests {
                     as_headers: HashMap::new(),
                 }),
                 refresh_interval: Some(0),
+                max_retries: None,
             })?;
             let cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
 

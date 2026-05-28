@@ -101,12 +101,14 @@ pub enum AttestContext {
         attester: TngAttester,
         converter: TngConverter,
         refresh_strategy: RefreshStrategy,
+        max_retries: usize,
     },
 
     /// Background check mode - just attest via AA (client verifies)
     BackgroundCheck {
         attester: TngAttester,
         refresh_strategy: RefreshStrategy,
+        max_retries: usize,
     },
     // Future: PassportBuiltin, Builtin
 }
@@ -127,6 +129,7 @@ impl AttestContext {
                     attester,
                     converter,
                     refresh_strategy: attest_args.refresh_strategy(),
+                    max_retries: attest_args.max_retries(),
                 })
             }
             AttestArgs::BackgroundCheck {
@@ -144,6 +147,7 @@ impl AttestContext {
                 Ok(Self::BackgroundCheck {
                     attester,
                     refresh_strategy: attest_args.refresh_strategy(),
+                    max_retries: attest_args.max_retries(),
                 })
             }
         }
@@ -158,6 +162,14 @@ impl AttestContext {
             | Self::BackgroundCheck {
                 refresh_strategy, ..
             } => *refresh_strategy,
+        }
+    }
+
+    pub fn max_retries(&self) -> usize {
+        match self {
+            Self::Passport { max_retries, .. } | Self::BackgroundCheck { max_retries, .. } => {
+                *max_retries
+            }
         }
     }
 }
@@ -388,6 +400,7 @@ mod tests {
             AttestArgs::BackgroundCheck {
                 attester: make_attester_args(),
                 refresh_interval: None,
+                max_retries: None,
             }
         }
 
@@ -396,6 +409,7 @@ mod tests {
                 attester: make_attester_args(),
                 converter: make_converter_args(),
                 refresh_interval: None,
+                max_retries: None,
             }
         }
 
@@ -434,6 +448,7 @@ mod tests {
             let attest_args = AttestArgs::BackgroundCheck {
                 attester: make_attester_args(),
                 refresh_interval: Some(600),
+                max_retries: None,
             };
             let result = AttestContext::from_attest_args(&attest_args);
             assert!(result.is_ok(), "Failed: {:?}", result.err());
@@ -452,6 +467,7 @@ mod tests {
             let attest_args = AttestArgs::BackgroundCheck {
                 attester: make_attester_args(),
                 refresh_interval: Some(0),
+                max_retries: None,
             };
             let result = AttestContext::from_attest_args(&attest_args);
             assert!(result.is_ok(), "Failed: {:?}", result.err());
@@ -605,6 +621,7 @@ mod tests {
             AttestArgs::BackgroundCheck {
                 attester: make_attester_args(),
                 refresh_interval: None,
+                max_retries: None,
             }
         }
 
