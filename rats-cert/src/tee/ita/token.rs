@@ -30,7 +30,7 @@ impl ItaToken {
         self.data
     }
 
-    pub fn exp(&self) -> Result<u64> {
+    pub fn decode_payload(&self) -> Result<Value> {
         let split_token: Vec<&str> = self.data.split('.').collect();
         if split_token.len() != 3 {
             return Err(Error::ItaError("Illegal JWT format".to_string()));
@@ -39,10 +39,13 @@ impl ItaToken {
         let claims = URL_SAFE_NO_PAD
             .decode(split_token[1])
             .map_err(Error::Base64DecodeFailed)?;
-        let claims_value =
-            serde_json::from_slice::<Value>(&claims).map_err(Error::ParseJwtClaimsFailed)?;
+        serde_json::from_slice(&claims).map_err(Error::ParseJwtClaimsFailed)
+    }
 
-        let Some(exp) = claims_value["exp"].as_u64() else {
+    pub fn exp(&self) -> Result<u64> {
+        let claims = self.decode_payload()?;
+
+        let Some(exp) = claims["exp"].as_u64() else {
             return Err(Error::MissingTokenField {
                 detail: "token expiration unset".to_string(),
             });
@@ -62,15 +65,7 @@ impl GenericEvidence for ItaToken {
     }
 
     fn get_claims(&self) -> Result<Claims> {
-        let split_token: Vec<&str> = self.data.split('.').collect();
-        if split_token.len() != 3 {
-            return Err(Error::ItaError("Illegal ITA JWT format".to_string()));
-        }
-        let claims = URL_SAFE_NO_PAD
-            .decode(split_token[1])
-            .map_err(Error::Base64DecodeFailed)?;
-        let claims_value: Value =
-            serde_json::from_slice(&claims).map_err(Error::ParseJwtClaimsFailed)?;
+        let claims_value = self.decode_payload()?;
 
         let flattened =
             Flattener::new()

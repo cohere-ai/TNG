@@ -105,6 +105,39 @@ impl ItaConverter {
         self
     }
 
+    fn check_policy_matching(&self, token: &ItaToken) -> Result<()> {
+        if self.policy_ids.is_empty() {
+            return Ok(());
+        }
+
+        let claims = token.decode_payload()?;
+
+        let matched = claims
+            .get("policy_ids_matched")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| {
+                Error::ItaError(
+                    "ITA token missing policy_ids_matched, but policy_ids are configured"
+                        .to_string(),
+                )
+            })?;
+
+        let matched_ids: std::collections::HashSet<&str> = matched
+            .iter()
+            .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
+            .collect();
+
+        for expected_id in &self.policy_ids {
+            if !matched_ids.contains(expected_id.as_str()) {
+                return Err(Error::ItaError(format!(
+                    "Expected policy ID '{expected_id}' not found in policy_ids_matched"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     fn is_retryable_error(status: reqwest::StatusCode, body: &str) -> bool {
         status.is_server_error()
             || status == reqwest::StatusCode::TOO_MANY_REQUESTS
@@ -230,7 +263,7 @@ impl GenericConverter for ItaConverter {
         let body = ItaAttestRequest {
             policy_ids: self.policy_ids.clone(),
             token_signing_alg: "PS384".to_string(),
-            policy_must_match: !self.policy_ids.is_empty(),
+            policy_must_match: false,
             tdx,
             nvgpu,
         };
@@ -256,7 +289,9 @@ impl GenericConverter for ItaConverter {
             .map_err(|e| Error::ItaError(format!("Failed to parse ITA attest response: {e}")))?;
 
         tracing::debug!(token = %attest_resp.token, "ITA attest request succeeded");
-        ItaToken::new(attest_resp.token)
+        let token = ItaToken::new(attest_resp.token)?;
+        self.check_policy_matching(&token)?;
+        Ok(token)
     }
 }
 
@@ -438,6 +473,83 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn make_token(claims: &serde_json::Value) -> ItaToken {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"PS384"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).unwrap());
+        let sig = URL_SAFE_NO_PAD.encode(b"fake-sig");
+        ItaToken::new(format!("{header}.{payload}.{sig}")).unwrap()
+    }
+
+    fn make_jwt(claims: &serde_json::Value) -> String {
+        make_token(claims).into_str()
+    }
+
+    // -- check_policy_matching --
+
+    #[test]
+    fn policy_check_skipped_when_no_ids_configured() {
+        let converter = ItaConverter::new("key", "https://example.com", &[]).unwrap();
+        let token = ItaToken::new("not-even-a-jwt".into()).unwrap();
+        converter.check_policy_matching(&token).unwrap();
+    }
+
+    #[test]
+    fn policy_check_passes_when_all_ids_matched() {
+        let ids = vec!["p1".into(), "p2".into()];
+        let converter = ItaConverter::new("key", "https://example.com", &ids).unwrap();
+        let token = make_token(&serde_json::json!({
+            "policy_ids_matched": [{"id": "p1"}, {"id": "p2"}, {"id": "p3"}]
+        }));
+        converter.check_policy_matching(&token).unwrap();
+    }
+
+    #[test]
+    fn policy_check_fails_when_expected_id_missing() {
+        let ids = vec!["p1".into(), "p2".into()];
+        let converter = ItaConverter::new("key", "https://example.com", &ids).unwrap();
+        let token = make_token(&serde_json::json!({
+            "policy_ids_matched": [{"id": "p1"}]
+        }));
+        let err = converter.check_policy_matching(&token).unwrap_err();
+        assert!(
+            matches!(&err, Error::ItaError(msg) if msg.contains("p2")),
+            "expected error about missing p2, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn policy_check_fails_when_field_missing() {
+        let ids = vec!["p1".into()];
+        let converter = ItaConverter::new("key", "https://example.com", &ids).unwrap();
+        let token = make_token(&serde_json::json!({"sub": "test"}));
+        assert!(converter.check_policy_matching(&token).is_err());
+    }
+
+    #[tokio::test]
+    async fn token_is_checked_in_convert_with_policies() {
+        let server = MockServer::start().await;
+        let policy_ids = vec!["p1".into()];
+
+        let response_jwt = make_jwt(&serde_json::json!({
+            "policy_ids_matched": [{"id": "p1"}]
+        }));
+
+        Mock::given(method("POST"))
+            .and(path(ITA_ATTEST_PATH))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"token": response_jwt})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let converter = ItaConverter::new("test-key", &server.uri(), &policy_ids).unwrap();
+        let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
+        converter.convert(&evidence).await.unwrap();
     }
 
     #[tokio::test]
