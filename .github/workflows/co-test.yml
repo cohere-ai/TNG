@@ -98,7 +98,8 @@ jobs:
           command: |
             set -e
             echo "=== Installing Docker ==="
-            curl -fsSL https://get.docker.com | sh
+            curl -fsSL https://get.docker.com | sudo sh
+            sudo usermod -aG docker "$USER"
 
             echo "=== Installing Rust toolchain ==="
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.89.0
