@@ -42,12 +42,35 @@ services:
     ports:
       - "8081:80"
 
+  cert-proxy:
+    image: python:3.12-slim
+    restart: "no"
+    volumes:
+      - ./cert_proxy.py:/app/cert_proxy.py:ro
+      - ${KEYS_DIR:-./.keys}:/opt/keys:ro
+    command:
+      [
+        "python3", "/app/cert_proxy.py",
+        "--cert", "/opt/keys/token-cert-chain.pem",
+        "--listen", "8080",
+        "--backend", "http://as:80",
+      ]
+    depends_on:
+      as:
+        condition: service_started
+      keygen:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+
   aa:
     build:
       context: .
       dockerfile: Dockerfile.aa
     init: true
+    privileged: true
     volumes:
+      - /sys/kernel/config:/sys/kernel/config
       - ${AA_SOCK_DIR:-/run/confidential-containers/attestation-agent}:/run/confidential-containers/attestation-agent
     restart: "no"
     healthcheck:

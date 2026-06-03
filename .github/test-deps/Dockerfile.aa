@@ -1,6 +1,6 @@
-# Attestation Agent with sample attester for CI testing (no TEE hardware needed).
-# Uses TEE_PLATFORM=none build which falls back to the sample attester automatically.
-ARG AA_TAG=33055704017f7834b2708aeda664cee1373a922c-none_x86_64
+# Attestation Agent with TDX attester for CI testing on GCP Confidential VMs.
+# Uses TEE_PLATFORM=tdx build which uses real TDX hardware attestation via /dev/tdx_guest.
+ARG AA_TAG=33055704017f7834b2708aeda664cee1373a922c-tdx_x86_64
 ARG AA_IMAGE=ghcr.io/confidential-containers/guest-components/attestation-agent
 
 FROM ubuntu:24.04 AS fetcher
