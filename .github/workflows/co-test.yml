@@ -143,6 +143,9 @@ jobs:
           docker compose ps
           cd ~/workspace
 
+          echo "=== Copying AS certs for tests that read from disk ==="
+          cp ~/workspace/.github/test-deps/.keys/token-cert-chain.pem /tmp/as-full.pem
+
           echo "=== Fixing AA socket permissions ==="
           sudo chmod 777 /run/confidential-containers/attestation-agent/
           sudo chmod 666 /run/confidential-containers/attestation-agent/attestation-agent.sock

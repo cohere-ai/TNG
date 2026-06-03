@@ -1,0 +1,36 @@
+# Build api-server-rest from source (cohere-ai/guest-components fork).
+ARG REPO=https://github.com/cohere-ai/guest-components.git
+ARG COMMIT=d0d7cb18565cc6c6aabf0d5f2b6378b9c98e079c
+
+FROM rust:1.85-bookworm AS builder
+ARG REPO
+ARG COMMIT
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+RUN git clone "${REPO}" . \
+    && git checkout "${COMMIT}"
+
+RUN cargo build --release \
+    -p api-server-rest \
+    --target x86_64-unknown-linux-gnu \
+    && cp target/x86_64-unknown-linux-gnu/release/api-server-rest /usr/local/bin/api-server-rest
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /run/confidential-containers/attestation-agent
+
+COPY --from=builder /usr/local/bin/api-server-rest /usr/local/bin/api-server-rest
+
+EXPOSE 8006
+
+CMD ["api-server-rest", "--features", "all", "--bind", "0.0.0.0:8006"]

@@ -85,3 +85,23 @@ services:
       timeout: 3s
       retries: 10
       start_period: 2s
+
+  asr:
+    build:
+      context: .
+      dockerfile: Dockerfile.asr
+    init: true
+    network_mode: host
+    volumes:
+      - ${AA_SOCK_DIR:-/run/confidential-containers/attestation-agent}:/run/confidential-containers/attestation-agent
+    command: ["api-server-rest", "--features", "attestation", "--bind", "0.0.0.0:8006"]
+    restart: "no"
+    depends_on:
+      aa:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://127.0.0.1:8006/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 2s
