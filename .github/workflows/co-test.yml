@@ -59,6 +59,10 @@ jobs:
 
           echo "=== Generating ephemeral SSH key ==="
           ssh-keygen -t ecdsa -b 521 -m PEM -f /tmp/ci-ssh-key -N "" -q
+          # Mask each line so the key is redacted from logs
+          while IFS= read -r line; do
+            echo "::add-mask::$line"
+          done < /tmp/ci-ssh-key
           echo "ssh_private_key<<SSHEOF" >> "$GITHUB_OUTPUT"
           cat /tmp/ci-ssh-key >> "$GITHUB_OUTPUT"
           echo "SSHEOF" >> "$GITHUB_OUTPUT"
@@ -124,8 +128,8 @@ jobs:
             ls -la /dev/tdx_guest
 
             echo "=== Cloning repository ==="
-            git clone https://github.com/${{ github.repository }} /workspace
-            cd /workspace
+            git clone https://github.com/${{ github.repository }} ~/workspace
+            cd ~/workspace
             git fetch origin "${{ github.sha }}"
             git checkout "${{ github.sha }}"
 
@@ -133,7 +137,7 @@ jobs:
             cd .github/test-deps
             docker compose up -d --build --wait --wait-timeout 120
             docker compose ps
-            cd /workspace
+            cd ~/workspace
 
             echo "=== Checking AA socket ==="
             ls -la /run/confidential-containers/attestation-agent/
@@ -153,7 +157,7 @@ jobs:
           command: |
             set -e
             source "$HOME/.cargo/env"
-            cd /workspace
+            cd ~/workspace
 
             echo "=== Running unit tests ==="
             cargo test \
@@ -174,7 +178,7 @@ jobs:
           command: |
             set -e
             source "$HOME/.cargo/env"
-            cd /workspace
+            cd ~/workspace
 
             echo "=== Running integration tests ==="
             failed=0
