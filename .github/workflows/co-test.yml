@@ -58,7 +58,7 @@ jobs:
             --labels=purpose=tng-ci,gh-run-id=${{ github.run_id }}
 
           echo "=== Generating ephemeral SSH key ==="
-          ssh-keygen -t ed25519 -f /tmp/ci-ssh-key -N "" -q
+          ssh-keygen -t ecdsa -b 521 -m PEM -f /tmp/ci-ssh-key -N "" -q
           echo "ssh_private_key<<SSHEOF" >> "$GITHUB_OUTPUT"
           cat /tmp/ci-ssh-key >> "$GITHUB_OUTPUT"
           echo "SSHEOF" >> "$GITHUB_OUTPUT"
