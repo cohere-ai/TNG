@@ -57,6 +57,19 @@ jobs:
             --instance-termination-action=DELETE \
             --labels=purpose=tng-ci,gh-run-id=${{ github.run_id }}
 
+          echo "=== Generating ephemeral SSH key ==="
+          ssh-keygen -t ed25519 -f /tmp/ci-ssh-key -N "" -q
+          echo "ssh_private_key<<SSHEOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/ci-ssh-key >> "$GITHUB_OUTPUT"
+          echo "SSHEOF" >> "$GITHUB_OUTPUT"
+
+          echo "=== Adding SSH key to VM metadata ==="
+          SSH_USER="cirunner"
+          PUB_KEY=$(cat /tmp/ci-ssh-key.pub)
+          gcloud compute instances add-metadata "$VM_NAME" \
+            --project="$GCP_PROJECT" --zone="$GCP_ZONE" \
+            --metadata="ssh-keys=${SSH_USER}:${PUB_KEY}"
+
           echo "Waiting for VM to accept SSH..."
           for i in $(seq 1 30); do
             if gcloud compute ssh "$VM_NAME" \
@@ -76,6 +89,8 @@ jobs:
           instance_name: ${{ steps.vm.outputs.name }}
           zone: ${{ env.GCP_ZONE }}
           project_id: ${{ env.GCP_PROJECT }}
+          ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
+          user: cirunner
           script: |
             set -e
             echo "=== Installing Docker ==="
@@ -99,6 +114,8 @@ jobs:
           instance_name: ${{ steps.vm.outputs.name }}
           zone: ${{ env.GCP_ZONE }}
           project_id: ${{ env.GCP_PROJECT }}
+          ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
+          user: cirunner
           script: |
             set -e
             source "$HOME/.cargo/env"
@@ -131,6 +148,8 @@ jobs:
           instance_name: ${{ steps.vm.outputs.name }}
           zone: ${{ env.GCP_ZONE }}
           project_id: ${{ env.GCP_PROJECT }}
+          ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
+          user: cirunner
           script: |
             set -e
             source "$HOME/.cargo/env"
@@ -150,6 +169,8 @@ jobs:
           instance_name: ${{ steps.vm.outputs.name }}
           zone: ${{ env.GCP_ZONE }}
           project_id: ${{ env.GCP_PROJECT }}
+          ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
+          user: cirunner
           script: |
             set -e
             source "$HOME/.cargo/env"
