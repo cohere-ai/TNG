@@ -49,7 +49,8 @@ jobs:
             --image-project=ubuntu-os-cloud \
             --boot-disk-size=100GB \
             --boot-disk-type=pd-ssd \
-            --scopes=cloud-platform \
+            --no-scopes \
+            --no-service-account \
             --network=conf-compute \
             --subnet=conf-compute-subnet \
             --max-run-duration=1h \
