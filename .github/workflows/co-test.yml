@@ -50,6 +50,8 @@ jobs:
             --boot-disk-size=100GB \
             --boot-disk-type=pd-ssd \
             --scopes=cloud-platform \
+            --network=conf-compute \
+            --subnet=conf-compute-subnet \
             --max-run-duration=1h \
             --instance-termination-action=DELETE \
             --labels=purpose=tng-ci,gh-run-id=${{ github.run_id }}
