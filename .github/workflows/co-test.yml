@@ -95,6 +95,7 @@ jobs:
           project_id: ${{ env.GCP_PROJECT }}
           ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
           user: cirunner
+          flags: '--ssh-flag="-o ServerAliveInterval=30" --ssh-flag="-o ServerAliveCountMax=60"'
           command: |
             set -e
             echo "=== Installing Docker ==="
@@ -121,6 +122,7 @@ jobs:
           project_id: ${{ env.GCP_PROJECT }}
           ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
           user: cirunner
+          flags: '--ssh-flag="-o ServerAliveInterval=30" --ssh-flag="-o ServerAliveCountMax=60"'
           command: |
             set -e
             source "$HOME/.cargo/env"
@@ -155,6 +157,7 @@ jobs:
           project_id: ${{ env.GCP_PROJECT }}
           ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
           user: cirunner
+          flags: '--ssh-flag="-o ServerAliveInterval=30" --ssh-flag="-o ServerAliveCountMax=60"'
           command: |
             set -e
             source "$HOME/.cargo/env"
@@ -176,6 +179,7 @@ jobs:
           project_id: ${{ env.GCP_PROJECT }}
           ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
           user: cirunner
+          flags: '--ssh-flag="-o ServerAliveInterval=30" --ssh-flag="-o ServerAliveCountMax=60"'
           command: |
             set -e
             source "$HOME/.cargo/env"
