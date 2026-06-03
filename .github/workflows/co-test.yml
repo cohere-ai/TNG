@@ -143,6 +143,10 @@ jobs:
           docker compose ps
           cd ~/workspace
 
+          echo "=== Fixing AA socket permissions ==="
+          sudo chmod 777 /run/confidential-containers/attestation-agent/
+          sudo chmod 666 /run/confidential-containers/attestation-agent/attestation-agent.sock
+
           echo "=== Checking AA socket ==="
           ls -la /run/confidential-containers/attestation-agent/
 
