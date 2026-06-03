@@ -33,7 +33,7 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Create TDX VM
+      - name: Create TDX VM and configure SSH
         id: vm
         run: |
           VM_NAME="${VM_PREFIX}-${{ github.run_id }}-${{ github.run_attempt }}"
@@ -63,23 +63,24 @@ jobs:
           while IFS= read -r line; do
             echo "::add-mask::$line"
           done < /tmp/ci-ssh-key
-          echo "ssh_private_key<<SSHEOF" >> "$GITHUB_OUTPUT"
-          cat /tmp/ci-ssh-key >> "$GITHUB_OUTPUT"
-          echo "SSHEOF" >> "$GITHUB_OUTPUT"
 
           echo "=== Adding SSH key to VM metadata ==="
-          SSH_USER="cirunner"
           PUB_KEY=$(cat /tmp/ci-ssh-key.pub)
           gcloud compute instances add-metadata "$VM_NAME" \
             --project="$GCP_PROJECT" --zone="$GCP_ZONE" \
-            --metadata="ssh-keys=${SSH_USER}:${PUB_KEY}"
+            --metadata="ssh-keys=cirunner:${PUB_KEY}"
+
+          echo "=== Configuring SSH client ==="
+          install -m 0700 -d ~/.ssh
+          cp /tmp/ci-ssh-key ~/.ssh/vm_key
+          chmod 600 ~/.ssh/vm_key
 
           echo "Waiting for VM to accept SSH..."
           for i in $(seq 1 30); do
-            if gcloud compute ssh "$VM_NAME" \
-              --project="$GCP_PROJECT" --zone="$GCP_ZONE" \
-              --tunnel-through-iap --quiet \
-              --command="true" 2>/dev/null; then
+            if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=10 -i ~/.ssh/vm_key \
+              -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
+              cirunner@compute.0 'true' >/dev/null 2>&1; then
               echo "VM is ready (attempt $i)"
               break
             fi
@@ -88,119 +89,119 @@ jobs:
           done
 
       - name: Install tools on VM
-        uses: google-github-actions/ssh-compute@v2
-        with:
-          instance_name: ${{ steps.vm.outputs.name }}
-          zone: ${{ env.GCP_ZONE }}
-          project_id: ${{ env.GCP_PROJECT }}
-          ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
-          user: cirunner
-          flags: '--ssh-flag="-o ServerAliveInterval=30" --ssh-flag="-o ServerAliveCountMax=60"'
-          command: |
-            set -e
-            echo "=== Installing Docker ==="
-            curl -fsSL https://get.docker.com | sudo sh
-            sudo usermod -aG docker "$USER"
+        env:
+          VM_NAME: ${{ steps.vm.outputs.name }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=60 \
+            -i ~/.ssh/vm_key \
+            -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
+            cirunner@compute.0 'bash -s' <<'REMOTE'
+          set -e
+          echo "=== Installing Docker ==="
+          curl -fsSL https://get.docker.com | sudo sh
+          sudo usermod -aG docker "$USER"
 
-            echo "=== Installing Rust toolchain ==="
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.89.0
-            source "$HOME/.cargo/env"
-            rustc --version
-            cargo --version
+          echo "=== Installing Rust toolchain ==="
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.89.0
+          source "$HOME/.cargo/env"
+          rustc --version
+          cargo --version
 
-            echo "=== Installing system dependencies ==="
-            sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-              protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang \
-              python3 python3-pip \
-              && sudo rm -rf /var/lib/apt/lists/*
+          echo "=== Installing system dependencies ==="
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang \
+            python3 python3-pip \
+            && sudo rm -rf /var/lib/apt/lists/*
+          REMOTE
 
       - name: Clone repo and start test dependencies
-        uses: google-github-actions/ssh-compute@v2
-        with:
-          instance_name: ${{ steps.vm.outputs.name }}
-          zone: ${{ env.GCP_ZONE }}
-          project_id: ${{ env.GCP_PROJECT }}
-          ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
-          user: cirunner
-          flags: '--ssh-flag="-o ServerAliveInterval=30" --ssh-flag="-o ServerAliveCountMax=60"'
-          command: |
-            set -e
-            source "$HOME/.cargo/env"
+        env:
+          VM_NAME: ${{ steps.vm.outputs.name }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=60 \
+            -i ~/.ssh/vm_key \
+            -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
+            cirunner@compute.0 'bash -s' <<'REMOTE'
+          set -e
+          source "$HOME/.cargo/env"
 
-            echo "=== Checking TDX device ==="
-            ls -la /dev/tdx_guest
+          echo "=== Checking TDX device ==="
+          ls -la /dev/tdx_guest
 
-            echo "=== Cloning repository ==="
-            git clone https://github.com/${{ github.repository }} ~/workspace
-            cd ~/workspace
-            git fetch origin "${{ github.sha }}"
-            git checkout "${{ github.sha }}"
+          echo "=== Cloning repository ==="
+          git clone https://github.com/${{ github.repository }} ~/workspace
+          cd ~/workspace
+          git fetch origin "${{ github.sha }}"
+          git checkout "${{ github.sha }}"
 
-            echo "=== Starting AA, AS, cert-proxy, keygen ==="
-            cd .github/test-deps
-            docker compose up -d --build --wait --wait-timeout 120
-            docker compose ps
-            cd ~/workspace
+          echo "=== Starting AA, AS, cert-proxy, keygen ==="
+          cd .github/test-deps
+          docker compose up -d --build --wait --wait-timeout 120
+          docker compose ps
+          cd ~/workspace
 
-            echo "=== Checking AA socket ==="
-            ls -la /run/confidential-containers/attestation-agent/
+          echo "=== Checking AA socket ==="
+          ls -la /run/confidential-containers/attestation-agent/
 
-            echo "=== Verifying cert proxy ==="
-            curl -sf http://127.0.0.1:8080/certificate | head -c 200
-            echo ""
+          echo "=== Verifying cert proxy ==="
+          curl -sf http://127.0.0.1:8080/certificate | head -c 200
+          echo ""
+          REMOTE
 
       - name: Run unit tests
-        uses: google-github-actions/ssh-compute@v2
-        with:
-          instance_name: ${{ steps.vm.outputs.name }}
-          zone: ${{ env.GCP_ZONE }}
-          project_id: ${{ env.GCP_PROJECT }}
-          ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
-          user: cirunner
-          flags: '--ssh-flag="-o ServerAliveInterval=30" --ssh-flag="-o ServerAliveCountMax=60"'
-          command: |
-            set -e
-            source "$HOME/.cargo/env"
-            cd ~/workspace
+        env:
+          VM_NAME: ${{ steps.vm.outputs.name }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=60 \
+            -i ~/.ssh/vm_key \
+            -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
+            cirunner@compute.0 'bash -s' <<'REMOTE'
+          set -e
+          source "$HOME/.cargo/env"
+          cd ~/workspace
 
-            echo "=== Running unit tests ==="
-            cargo test \
-              --workspace \
-              --bins \
-              --lib \
-              --exclude tng-wasm \
-              -- --nocapture
+          echo "=== Running unit tests ==="
+          cargo test \
+            --workspace \
+            --bins \
+            --lib \
+            --exclude tng-wasm \
+            -- --nocapture
+          REMOTE
 
       - name: Run integration tests
-        uses: google-github-actions/ssh-compute@v2
-        with:
-          instance_name: ${{ steps.vm.outputs.name }}
-          zone: ${{ env.GCP_ZONE }}
-          project_id: ${{ env.GCP_PROJECT }}
-          ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
-          user: cirunner
-          flags: '--ssh-flag="-o ServerAliveInterval=30" --ssh-flag="-o ServerAliveCountMax=60"'
-          command: |
-            set -e
-            source "$HOME/.cargo/env"
-            cd ~/workspace
+        env:
+          VM_NAME: ${{ steps.vm.outputs.name }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=60 \
+            -i ~/.ssh/vm_key \
+            -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
+            cirunner@compute.0 'bash -s' <<'REMOTE'
+          set -e
+          source "$HOME/.cargo/env"
+          cd ~/workspace
 
-            echo "=== Running integration tests ==="
-            failed=0
-            for test_file in tng-testsuite/tests/*.rs; do
-              case_name=$(basename "$test_file" .rs)
-              echo "============= Integration test: $case_name ============="
-              if ! cargo test \
-                --no-default-features \
-                --features on-source-code \
-                --package tng-testsuite \
-                --test "$case_name" \
-                -- --nocapture; then
-                echo "FAILED: $case_name"
-                failed=1
-              fi
-            done
-            exit $failed
+          echo "=== Running integration tests ==="
+          failed=0
+          for test_file in tng-testsuite/tests/*.rs; do
+            case_name=$(basename "$test_file" .rs)
+            echo "============= Integration test: $case_name ============="
+            if ! cargo test \
+              --no-default-features \
+              --features on-source-code \
+              --package tng-testsuite \
+              --test "$case_name" \
+              -- --nocapture; then
+              echo "FAILED: $case_name"
+              failed=1
+            fi
+          done
+          exit $failed
+          REMOTE
 
       - name: Delete TDX VM
         if: always()
