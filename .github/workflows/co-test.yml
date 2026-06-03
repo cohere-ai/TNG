@@ -45,7 +45,7 @@ jobs:
             --machine-type=c3-standard-8 \
             --confidential-compute-type=TDX \
             --maintenance-policy=TERMINATE \
-            --image-family=ubuntu-2404-lts \
+            --image-family=ubuntu-2404-lts-amd64 \
             --image-project=ubuntu-os-cloud \
             --boot-disk-size=100GB \
             --boot-disk-type=pd-ssd \
