@@ -91,7 +91,7 @@ jobs:
           project_id: ${{ env.GCP_PROJECT }}
           ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
           user: cirunner
-          script: |
+          command: |
             set -e
             echo "=== Installing Docker ==="
             curl -fsSL https://get.docker.com | sh
@@ -116,7 +116,7 @@ jobs:
           project_id: ${{ env.GCP_PROJECT }}
           ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
           user: cirunner
-          script: |
+          command: |
             set -e
             source "$HOME/.cargo/env"
 
@@ -150,7 +150,7 @@ jobs:
           project_id: ${{ env.GCP_PROJECT }}
           ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
           user: cirunner
-          script: |
+          command: |
             set -e
             source "$HOME/.cargo/env"
             cd /workspace
@@ -171,7 +171,7 @@ jobs:
           project_id: ${{ env.GCP_PROJECT }}
           ssh_private_key: ${{ steps.vm.outputs.ssh_private_key }}
           user: cirunner
-          script: |
+          command: |
             set -e
             source "$HOME/.cargo/env"
             cd /workspace
