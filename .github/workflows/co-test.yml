@@ -238,21 +238,11 @@ jobs:
               done < /workspace/.github/test-skip-list.txt
               echo "Integration skip flags: $SKIP_FLAGS"
 
-              failed=0
-              for test_file in tng-testsuite/tests/*.rs; do
-                case_name=$(basename "$test_file" .rs)
-                echo "============= Integration test: $case_name ============="
-                if ! cargo test \
-                  --no-default-features \
-                  --features on-source-code \
-                  --package tng-testsuite \
-                  --test "$case_name" \
-                  -- --nocapture $SKIP_FLAGS; then
-                  echo "FAILED: $case_name"
-                  failed=1
-                fi
-              done
-              exit $failed
+              cargo test \
+                --no-default-features \
+                --features on-source-code \
+                --package tng-testsuite \
+                -- --nocapture $SKIP_FLAGS
             '
           REMOTE
 
