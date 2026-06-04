@@ -103,7 +103,7 @@ jobs:
           sudo usermod -aG docker "$USER"
           REMOTE
 
-      - name: Clone repo and start test dependencies
+      - name: Clone repository
         env:
           VM_NAME: ${{ steps.vm.outputs.name }}
         run: |
@@ -122,12 +122,22 @@ jobs:
           cd ~/workspace
           git fetch origin "${{ github.sha }}"
           git checkout "${{ github.sha }}"
+          REMOTE
 
-          echo "=== Starting AA, AS, cert-proxy, keygen, ASR ==="
-          cd .github/test-deps
+      - name: Launch attestation services
+        env:
+          VM_NAME: ${{ steps.vm.outputs.name }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=60 \
+            -i ~/.ssh/vm_key \
+            -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
+            cirunner@compute.0 'bash -s' <<'REMOTE'
+          set -e
+
+          cd ~/workspace/.github/test-deps
           docker compose up -d --build --wait --wait-timeout 120
           docker compose ps
-          cd ~/workspace
 
           echo "=== Copying AS certs for tests that read from disk ==="
           cp ~/workspace/.github/test-deps/.keys/token-cert-chain.pem /tmp/as-full.pem
@@ -136,6 +146,17 @@ jobs:
           curl -sf http://127.0.0.1:8080/certificate | head -c 200
           echo ""
           REMOTE
+
+      - name: Configure test secrets on VM
+        env:
+          VM_NAME: ${{ steps.vm.outputs.name }}
+          ITA_API_KEY: ${{ secrets.ITA_API_KEY }}
+        run: |
+          echo "ITA_API_KEY=${ITA_API_KEY}" | \
+            ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -i ~/.ssh/vm_key \
+              -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
+              cirunner@compute.0 'cat > ~/.test-env && chmod 600 ~/.test-env'
 
       - name: Build test runner image
         env:
@@ -170,6 +191,7 @@ jobs:
           echo "Skip flags: $SKIP_FLAGS"
 
           docker run --rm --privileged --network host \
+            --env-file ~/.test-env \
             -v ~/workspace:/workspace \
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
@@ -198,6 +220,7 @@ jobs:
             case_name=$(basename "$test_file" .rs)
             echo "============= Integration test: $case_name ============="
             if ! docker run --rm --privileged --network host \
+              --env-file ~/.test-env \
               -v ~/workspace:/workspace \
               -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
               -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
