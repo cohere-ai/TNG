@@ -190,9 +190,13 @@ jobs:
           done < ~/workspace/.github/test-skip-list.txt
           echo "Skip flags: $SKIP_FLAGS"
 
+          mkdir -p ~/cargo-registry ~/cargo-git
+
           docker run --rm --privileged --network host \
             --env-file ~/.test-env \
             -v ~/workspace:/workspace \
+            -v ~/cargo-registry:/root/.cargo/registry \
+            -v ~/cargo-git:/root/.cargo/git \
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
             test-runner \
@@ -215,27 +219,31 @@ jobs:
             cirunner@compute.0 'bash -s' <<'REMOTE'
           set -e
 
-          failed=0
-          for test_file in ~/workspace/tng-testsuite/tests/*.rs; do
-            case_name=$(basename "$test_file" .rs)
-            echo "============= Integration test: $case_name ============="
-            if ! docker run --rm --privileged --network host \
-              --env-file ~/.test-env \
-              -v ~/workspace:/workspace \
-              -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
-              -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
-              test-runner \
-              cargo test \
-                --no-default-features \
-                --features on-source-code \
-                --package tng-testsuite \
-                --test "$case_name" \
-                -- --nocapture; then
-              echo "FAILED: $case_name"
-              failed=1
-            fi
-          done
-          exit $failed
+          docker run --rm --privileged --network host \
+            --env-file ~/.test-env \
+            -v ~/workspace:/workspace \
+            -v ~/cargo-registry:/root/.cargo/registry \
+            -v ~/cargo-git:/root/.cargo/git \
+            -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
+            -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
+            test-runner \
+            bash -c '
+              failed=0
+              for test_file in tng-testsuite/tests/*.rs; do
+                case_name=$(basename "$test_file" .rs)
+                echo "============= Integration test: $case_name ============="
+                if ! cargo test \
+                  --no-default-features \
+                  --features on-source-code \
+                  --package tng-testsuite \
+                  --test "$case_name" \
+                  -- --nocapture; then
+                  echo "FAILED: $case_name"
+                  failed=1
+                fi
+              done
+              exit $failed
+            '
           REMOTE
 
       - name: Delete TDX VM
