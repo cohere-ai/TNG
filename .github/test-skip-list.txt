@@ -1,0 +1,8 @@
+# Tests to skip in CI (one per line, passed as --skip to cargo test)
+# These tests require capabilities or resources not available in CI.
+
+# Requires CAP_NET_ADMIN to create bridge interfaces and network namespaces
+test_single_bridge_network
+
+# Requires SLSA reference values provisioned in the Attestation Service
+test_converter_new_with_slsa_reference_and_provenance

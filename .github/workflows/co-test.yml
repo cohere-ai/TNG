@@ -115,10 +115,7 @@ jobs:
             python3 python3-pip \
             && sudo rm -rf /var/lib/apt/lists/*
 
-          echo "=== Granting CAP_NET_ADMIN to cirunner ==="
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends libpam-cap && sudo rm -rf /var/lib/apt/lists/*
-          echo "cap_net_admin cirunner" | sudo tee /etc/security/capability.conf > /dev/null
-          echo "auth optional pam_cap.so" | sudo tee -a /etc/pam.d/sshd > /dev/null          REMOTE
+          REMOTE
 
       - name: Clone repo and start test dependencies
         env:
@@ -175,13 +172,20 @@ jobs:
           source "$HOME/.cargo/env"
           cd ~/workspace
 
+          echo "=== Building skip flags from .github/test-skip-list.txt ==="
+          SKIP_FLAGS=""
+          while IFS= read -r line; do
+            line=$(echo "$line" | sed 's/#.*//' | xargs)
+            [ -n "$line" ] && SKIP_FLAGS="$SKIP_FLAGS --skip $line"
+          done < ~/workspace/.github/test-skip-list.txt
+
           echo "=== Running unit tests ==="
           cargo test \
             --workspace \
             --bins \
             --lib \
             --exclude tng-wasm \
-            -- --nocapture
+            -- --nocapture $SKIP_FLAGS
           REMOTE
 
       - name: Run integration tests

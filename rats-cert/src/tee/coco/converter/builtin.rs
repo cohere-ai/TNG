@@ -678,7 +678,6 @@ default file_system := 2"#;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[serial]
-    #[ignore = "requires SLSA reference values provisioned in AS"]
     async fn test_converter_new_with_slsa_reference_and_provenance() {
         let rv_item = ReferenceValueListItem {
             id: "test-artifact".to_string(),
