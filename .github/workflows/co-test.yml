@@ -141,6 +141,7 @@ jobs:
 
           echo "=== Copying AS certs for tests that read from disk ==="
           cp ~/workspace/.github/test-deps/.keys/token-cert-chain.pem /tmp/as-full.pem
+          cp /tmp/as-full.pem /tmp/as-ca.pem
 
           echo "=== Verifying cert proxy ==="
           curl -sf http://127.0.0.1:8080/certificate | head -c 200
@@ -199,6 +200,7 @@ jobs:
             -v ~/cargo-git:/root/.cargo/git \
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
+            -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
             test-runner \
             cargo test \
               --workspace \
@@ -226,6 +228,7 @@ jobs:
             -v ~/cargo-git:/root/.cargo/git \
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
+            -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
             test-runner \
             bash -c '
               failed=0

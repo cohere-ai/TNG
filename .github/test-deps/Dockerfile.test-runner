@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates \
     protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang \
     make perl git \
-    iptables iproute2 iputils-ping dnsutils \
+    iptables iproute2 iputils-ping dnsutils ipset jq \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.89.0
