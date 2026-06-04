@@ -193,6 +193,11 @@ jobs:
 
           mkdir -p ~/cargo-registry ~/cargo-git
 
+          LOG=/tmp/unit-tests.log
+          > $LOG
+          tail -f $LOG &
+          TAIL_PID=$!
+
           docker run --rm --privileged --network host \
             --env-file ~/.test-env \
             -v ~/workspace:/workspace \
@@ -201,13 +206,19 @@ jobs:
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
+            -v /tmp:/tmp/host-log \
             test-runner \
-            cargo test \
+            bash -c 'cargo test \
               --workspace \
               --bins \
               --lib \
               --exclude tng-wasm \
-              -- --nocapture $SKIP_FLAGS
+              -- --nocapture '"$SKIP_FLAGS"' > /tmp/host-log/unit-tests.log 2>&1' \
+            || TEST_EXIT=$?
+
+          sleep 2
+          kill $TAIL_PID 2>/dev/null || true
+          exit ${TEST_EXIT:-0}
           REMOTE
 
       - name: Run integration tests
@@ -221,6 +232,11 @@ jobs:
             cirunner@compute.0 'bash -s' <<'REMOTE'
           set -e
 
+          LOG=/tmp/integration-tests.log
+          > $LOG
+          tail -f $LOG &
+          TAIL_PID=$!
+
           docker run --rm --privileged --network host \
             --env-file ~/.test-env \
             -v ~/workspace:/workspace \
@@ -229,6 +245,7 @@ jobs:
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
+            -v /tmp:/tmp/host-log \
             test-runner \
             bash -c '
               SKIP_FLAGS=""
@@ -242,8 +259,14 @@ jobs:
                 --no-default-features \
                 --features on-source-code \
                 --package tng-testsuite \
-                -- --nocapture $SKIP_FLAGS
-            '
+                -- --nocapture $SKIP_FLAGS \
+                > /tmp/host-log/integration-tests.log 2>&1
+            ' \
+            || TEST_EXIT=$?
+
+          sleep 2
+          kill $TAIL_PID 2>/dev/null || true
+          exit ${TEST_EXIT:-0}
           REMOTE
 
       - name: Delete TDX VM
