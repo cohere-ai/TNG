@@ -1,35 +1,19 @@
-# Build api-server-rest from source (cohere-ai/guest-components fork).
-ARG REPO=https://github.com/cohere-ai/guest-components.git
-ARG COMMIT=d0d7cb18565cc6c6aabf0d5f2b6378b9c98e079c
-
-FROM rust:1.85-bookworm AS builder
-ARG REPO
-ARG COMMIT
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    protobuf-compiler \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /src
-RUN git clone "${REPO}" . \
-    && git checkout "${COMMIT}"
-
-RUN cargo build --release \
-    -p api-server-rest \
-    --target x86_64-unknown-linux-gnu \
-    && cp target/x86_64-unknown-linux-gnu/release/api-server-rest /usr/local/bin/api-server-rest
+FROM ghcr.io/oras-project/oras:v1.2.0 AS oras
 
 FROM ubuntu:24.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
+    ca-certificates curl xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /run/confidential-containers/attestation-agent
+COPY --from=oras /bin/oras /usr/local/bin/oras
 
-COPY --from=builder /usr/local/bin/api-server-rest /usr/local/bin/api-server-rest
+ARG ASR_TAG=f475b74f94978952804c2ce5205b3aad16076117-x86_64
+RUN oras pull ghcr.io/cohere-ai/guest-components/api-server-rest:${ASR_TAG} \
+    && tar xJf api-server-rest.tar.xz -C /usr/local/bin/ \
+    && rm api-server-rest.tar.xz
+
+RUN mkdir -p /run/confidential-containers/attestation-agent
 
 EXPOSE 8006
 
