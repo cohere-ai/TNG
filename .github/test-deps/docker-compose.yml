@@ -24,10 +24,13 @@ services:
   as:
     image: ghcr.io/confidential-containers/staged-images/coco-as-restful:latest
     restart: "no"
+    environment:
+      - QCNL_CONF_PATH=/etc/qcnl.conf
     volumes:
       - ./attestation-service/storage:/opt/confidential-containers/attestation-service/storage:rw
       - ./as-config.json:/etc/as/config.json:ro
       - ${KEYS_DIR:-./.keys}:/opt/confidential-containers/keys:ro
+      - ./qcnl.conf:/etc/qcnl.conf:ro
     command:
       [
         "restful-as",
