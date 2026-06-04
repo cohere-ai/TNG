@@ -111,10 +111,14 @@ jobs:
           echo "=== Installing system dependencies ==="
           sudo apt-get update && sudo apt-get install -y --no-install-recommends \
             protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang \
-            make perl \
+            make perl libcap2-bin \
             python3 python3-pip \
             && sudo rm -rf /var/lib/apt/lists/*
-          REMOTE
+
+          echo "=== Granting CAP_NET_ADMIN to cirunner ==="
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends libpam-cap && sudo rm -rf /var/lib/apt/lists/*
+          echo "cap_net_admin cirunner" | sudo tee /etc/security/capability.conf > /dev/null
+          echo "auth optional pam_cap.so" | sudo tee -a /etc/pam.d/sshd > /dev/null          REMOTE
 
       - name: Clone repo and start test dependencies
         env:
