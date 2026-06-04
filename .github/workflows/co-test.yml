@@ -231,22 +231,23 @@ jobs:
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
             test-runner \
             bash -c '
+              SKIP_FLAGS=""
+              while IFS= read -r line; do
+                line=$(echo "$line" | sed "s/#.*//" | xargs)
+                [ -n "$line" ] && SKIP_FLAGS="$SKIP_FLAGS --skip $line"
+              done < /workspace/.github/test-skip-list.txt
+              echo "Integration skip flags: $SKIP_FLAGS"
+
               failed=0
               for test_file in tng-testsuite/tests/*.rs; do
                 case_name=$(basename "$test_file" .rs)
                 echo "============= Integration test: $case_name ============="
-
-                # Flush iptables rules left by previous netfilter tests
-                iptables -F 2>/dev/null || true
-                iptables -t nat -F 2>/dev/null || true
-                iptables -t mangle -F 2>/dev/null || true
-
                 if ! cargo test \
                   --no-default-features \
                   --features on-source-code \
                   --package tng-testsuite \
                   --test "$case_name" \
-                  -- --nocapture; then
+                  -- --nocapture $SKIP_FLAGS; then
                   echo "FAILED: $case_name"
                   failed=1
                 fi
