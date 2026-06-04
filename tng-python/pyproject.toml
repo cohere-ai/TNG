@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "tng"
+version = "0.1.0a1"
+description = "Python SDK for TNG (Trusted Network Gateway) — transparent OHTTP encryption for confidential AI"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "httpx>=0.23.0",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Operating System :: OS Independent",
+    "Topic :: Security :: Cryptography",
+]
+
+[project.optional-dependencies]
+requests = ["requests>=2.0.0"]
+dev = ["pytest", "pytest-httpserver"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "tng._native"
