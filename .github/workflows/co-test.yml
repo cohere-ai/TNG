@@ -88,7 +88,7 @@ jobs:
             sleep 10
           done
 
-      - name: Install tools on VM
+      - name: Install Docker on VM
         env:
           VM_NAME: ${{ steps.vm.outputs.name }}
         run: |
@@ -101,20 +101,6 @@ jobs:
           echo "=== Installing Docker ==="
           curl -fsSL https://get.docker.com | sudo sh
           sudo usermod -aG docker "$USER"
-
-          echo "=== Installing Rust toolchain ==="
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.89.0
-          source "$HOME/.cargo/env"
-          rustc --version
-          cargo --version
-
-          echo "=== Installing system dependencies ==="
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
-            protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang \
-            make perl libcap2-bin \
-            python3 python3-pip \
-            && sudo rm -rf /var/lib/apt/lists/*
-
           REMOTE
 
       - name: Clone repo and start test dependencies
@@ -127,7 +113,6 @@ jobs:
             -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
             cirunner@compute.0 'bash -s' <<'REMOTE'
           set -e
-          source "$HOME/.cargo/env"
 
           echo "=== Checking TDX device ==="
           ls -la /dev/tdx_guest
@@ -138,7 +123,7 @@ jobs:
           git fetch origin "${{ github.sha }}"
           git checkout "${{ github.sha }}"
 
-          echo "=== Starting AA, AS, cert-proxy, keygen ==="
+          echo "=== Starting AA, AS, cert-proxy, keygen, ASR ==="
           cd .github/test-deps
           docker compose up -d --build --wait --wait-timeout 120
           docker compose ps
@@ -147,16 +132,23 @@ jobs:
           echo "=== Copying AS certs for tests that read from disk ==="
           cp ~/workspace/.github/test-deps/.keys/token-cert-chain.pem /tmp/as-full.pem
 
-          echo "=== Fixing AA socket permissions ==="
-          sudo chmod 777 /run/confidential-containers/attestation-agent/
-          sudo chmod 666 /run/confidential-containers/attestation-agent/attestation-agent.sock
-
-          echo "=== Checking AA socket ==="
-          ls -la /run/confidential-containers/attestation-agent/
-
           echo "=== Verifying cert proxy ==="
           curl -sf http://127.0.0.1:8080/certificate | head -c 200
           echo ""
+          REMOTE
+
+      - name: Build test runner image
+        env:
+          VM_NAME: ${{ steps.vm.outputs.name }}
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=60 \
+            -i ~/.ssh/vm_key \
+            -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
+            cirunner@compute.0 'bash -s' <<'REMOTE'
+          set -e
+          cd ~/workspace/.github/test-deps
+          docker build -t test-runner -f Dockerfile.test-runner .
           REMOTE
 
       - name: Run unit tests
@@ -169,23 +161,25 @@ jobs:
             -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
             cirunner@compute.0 'bash -s' <<'REMOTE'
           set -e
-          source "$HOME/.cargo/env"
-          cd ~/workspace
 
-          echo "=== Building skip flags from .github/test-skip-list.txt ==="
           SKIP_FLAGS=""
           while IFS= read -r line; do
             line=$(echo "$line" | sed 's/#.*//' | xargs)
             [ -n "$line" ] && SKIP_FLAGS="$SKIP_FLAGS --skip $line"
           done < ~/workspace/.github/test-skip-list.txt
+          echo "Skip flags: $SKIP_FLAGS"
 
-          echo "=== Running unit tests ==="
-          cargo test \
-            --workspace \
-            --bins \
-            --lib \
-            --exclude tng-wasm \
-            -- --nocapture $SKIP_FLAGS
+          docker run --rm --privileged --network host \
+            -v ~/workspace:/workspace \
+            -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
+            -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
+            test-runner \
+            cargo test \
+              --workspace \
+              --bins \
+              --lib \
+              --exclude tng-wasm \
+              -- --nocapture $SKIP_FLAGS
           REMOTE
 
       - name: Run integration tests
@@ -198,20 +192,22 @@ jobs:
             -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
             cirunner@compute.0 'bash -s' <<'REMOTE'
           set -e
-          source "$HOME/.cargo/env"
-          cd ~/workspace
 
-          echo "=== Running integration tests ==="
           failed=0
-          for test_file in tng-testsuite/tests/*.rs; do
+          for test_file in ~/workspace/tng-testsuite/tests/*.rs; do
             case_name=$(basename "$test_file" .rs)
             echo "============= Integration test: $case_name ============="
-            if ! cargo test \
-              --no-default-features \
-              --features on-source-code \
-              --package tng-testsuite \
-              --test "$case_name" \
-              -- --nocapture; then
+            if ! docker run --rm --privileged --network host \
+              -v ~/workspace:/workspace \
+              -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
+              -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
+              test-runner \
+              cargo test \
+                --no-default-features \
+                --features on-source-code \
+                --package tng-testsuite \
+                --test "$case_name" \
+                -- --nocapture; then
               echo "FAILED: $case_name"
               failed=1
             fi
