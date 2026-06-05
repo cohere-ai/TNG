@@ -41,7 +41,7 @@ EGRESS_URL = "http://127.0.0.1:18080"
 
 @pytest.fixture
 def transport():
-    t = tng.Transport(no_ra=True)
+    t = tng.Transport(verify=None)
     yield t
     t.close()
 

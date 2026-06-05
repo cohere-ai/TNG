@@ -16,36 +16,40 @@ class Transport(httpx.BaseTransport):
     The destination is determined dynamically from each request's Host header,
     so a single Transport can talk to multiple TNG-protected backends.
 
+    By default, ITA attestation verification is enabled — the remote TEE is
+    verified before any data is sent. Set $ITA_API_KEY in your environment.
+
     Usage with OpenAI:
-        transport = tng.Transport(no_ra=True)
+        transport = tng.Transport()
         client = OpenAI(
             base_url="https://model-vault.example.com/v1",
             http_client=httpx.Client(transport=transport),
         )
 
     Usage with Cohere:
-        transport = tng.Transport(no_ra=True)
+        transport = tng.Transport()
         co = cohere.ClientV2(
             base_url="https://model-vault.example.com",
             httpx_client=httpx.Client(transport=transport),
         )
 
-    With ITA attestation verification:
+    Custom verification config:
         transport = tng.Transport(verify={
             "as_provider": "ita",
             "as_addr": "https://api.trustauthority.intel.com",
             "policy_ids": ["my-policy"],
         })
 
-    Minimal ITA (api_key from $ITA_API_KEY env var):
-        transport = tng.Transport(verify={"as_provider": "ita"})
+    Skip verification (testing only):
+        transport = tng.Transport(verify=None)
     """
+
+    _DEFAULT_VERIFY: dict = {"as_provider": "ita"}
 
     def __init__(
         self,
         *,
-        verify: Optional[dict] = None,
-        no_ra: bool = False,
+        verify: Optional[dict] = _DEFAULT_VERIFY,
         dst_filters: Optional[list[str]] = None,
         attach_attestation_header: bool = False,
         _raw_config: Optional[dict] = None,
@@ -54,14 +58,14 @@ class Transport(httpx.BaseTransport):
 
         Args:
             verify: Attestation verification config dict, passed directly to TNG.
+                    Defaults to ITA verification ({"as_provider": "ita"}).
+                    Set to None to disable verification (testing only).
                     Common fields:
-                      - as_provider: "ita" or "coco" (default: "coco")
+                      - as_provider: "ita" or "coco" (default: "ita")
                       - model: "background_check" or "passport" (default: "background_check")
                       - as_addr: Attestation service URL
                       - api_key: ITA API key (or set $ITA_API_KEY env var)
                       - policy_ids: list of policy IDs to enforce
-                    If None and no_ra is False, TNG uses its defaults.
-            no_ra: Disable remote attestation entirely (for testing only)
             dst_filters: Optional allowlist of destination patterns
                          (e.g. ["*.example.com:443", "model-vault.internal:*"]).
                          If not set, all destinations are allowed.
@@ -74,7 +78,6 @@ class Transport(httpx.BaseTransport):
         else:
             ingress_config = _build_proxy_config(
                 verify=verify,
-                no_ra=no_ra,
                 dst_filters=dst_filters,
             )
 
@@ -121,11 +124,12 @@ class Transport(httpx.BaseTransport):
 class AsyncTransport(httpx.AsyncBaseTransport):
     """Async version of tng.Transport."""
 
+    _DEFAULT_VERIFY: dict = {"as_provider": "ita"}
+
     def __init__(
         self,
         *,
-        verify: Optional[dict] = None,
-        no_ra: bool = False,
+        verify: Optional[dict] = _DEFAULT_VERIFY,
         dst_filters: Optional[list[str]] = None,
         attach_attestation_header: bool = False,
         _raw_config: Optional[dict] = None,
@@ -135,7 +139,6 @@ class AsyncTransport(httpx.AsyncBaseTransport):
         else:
             ingress_config = _build_proxy_config(
                 verify=verify,
-                no_ra=no_ra,
                 dst_filters=dst_filters,
             )
 
@@ -179,7 +182,6 @@ class AsyncTransport(httpx.AsyncBaseTransport):
 def _build_proxy_config(
     *,
     verify: Optional[dict],
-    no_ra: bool,
     dst_filters: Optional[list[str]],
 ) -> dict:
     """Build an AddIngressArgs dict using http_proxy mode."""
@@ -194,9 +196,9 @@ def _build_proxy_config(
         "ohttp": {},
     }
 
-    if no_ra:
-        config["no_ra"] = True
-    elif verify is not None:
+    if verify is not None:
         config["verify"] = verify
+    else:
+        config["no_ra"] = True
 
     return config
