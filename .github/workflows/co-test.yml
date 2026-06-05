@@ -197,7 +197,7 @@ jobs:
             cirunner@compute.0 'bash -s' <<'REMOTE'
           set -e
 
-          docker run --rm --privileged \
+          docker run -d --privileged --name integ-test \
             --add-host=host.docker.internal:host-gateway \
             --env-file ~/.test-env \
             -v ~/workspace:/workspace \
@@ -208,9 +208,6 @@ jobs:
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
             test-runner \
             bash -c '
-              # Forward AS/cert-proxy ports from container to host so
-              # test nodes on the 192.168.1.0/24 bridge can reach them
-              # without sharing the host network namespace.
               socat TCP-LISTEN:8080,bind=0.0.0.0,fork,reuseaddr TCP:host.docker.internal:8080 &
               socat TCP-LISTEN:8006,bind=0.0.0.0,fork,reuseaddr TCP:host.docker.internal:8006 &
               socat TCP-LISTEN:8081,bind=0.0.0.0,fork,reuseaddr TCP:host.docker.internal:8081 &
@@ -228,6 +225,12 @@ jobs:
                 --package tng-testsuite \
                 -- --nocapture $SKIP_FLAGS
             '
+
+          rc=$(docker wait integ-test)
+          echo "=== Tests exited with code $rc ==="
+          docker logs --tail 25 integ-test
+          docker rm integ-test
+          exit $rc
           REMOTE
 
       - name: Delete TDX VM
