@@ -59,10 +59,6 @@ jobs:
 
           echo "=== Generating ephemeral SSH key ==="
           ssh-keygen -t rsa -b 3072 -f /tmp/ci-ssh-key -N "" -q
-          # Mask each line so the key is redacted from logs
-          while IFS= read -r line; do
-            echo "::add-mask::$line"
-          done < /tmp/ci-ssh-key
 
           echo "=== Adding SSH key to VM metadata ==="
           PUB_KEY=$(cat /tmp/ci-ssh-key.pub)
@@ -197,7 +193,7 @@ jobs:
             cirunner@compute.0 'bash -s' <<'REMOTE'
           set -e
 
-          docker run -d --privileged --name integ-test \
+          docker run --rm --privileged \
             --add-host=host.docker.internal:host-gateway \
             --env-file ~/.test-env \
             -v ~/workspace:/workspace \
@@ -225,14 +221,6 @@ jobs:
                 --package tng-testsuite \
                 -- --nocapture $SKIP_FLAGS
             '
-
-          rc=$(docker wait integ-test)
-          echo "=== Tests exited with code $rc ==="
-          echo "=== Streaming full docker logs ==="
-          docker logs integ-test
-          echo "=== End of logs ==="
-          docker rm integ-test
-          exit $rc
           REMOTE
 
       - name: Delete TDX VM
