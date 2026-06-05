@@ -58,7 +58,7 @@ jobs:
             --labels=purpose=tng-ci,gh-run-id=${{ github.run_id }}
 
           echo "=== Generating ephemeral SSH key ==="
-          ssh-keygen -t ecdsa -b 521 -m PEM -f /tmp/ci-ssh-key -N "" -q
+          ssh-keygen -t rsa -b 3072 -f /tmp/ci-ssh-key -N "" -q
           # Mask each line so the key is redacted from logs
           while IFS= read -r line; do
             echo "::add-mask::$line"
@@ -173,49 +173,25 @@ jobs:
           docker build -t test-runner -f Dockerfile.test-runner .
           REMOTE
 
-      - name: Run unit tests
+      # - name: Run unit tests  # Temporarily disabled to isolate integration test SSH issue
+      #   ...
+
+      - name: Prepare cargo cache
         env:
           VM_NAME: ${{ steps.vm.outputs.name }}
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             -i ~/.ssh/vm_key \
             -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
-            cirunner@compute.0 'bash -s' <<'REMOTE'
-          set -e
-
-          SKIP_FLAGS=""
-          while IFS= read -r line; do
-            line=$(echo "$line" | sed 's/#.*//' | xargs)
-            [ -n "$line" ] && SKIP_FLAGS="$SKIP_FLAGS --skip $line"
-          done < ~/workspace/.github/test-skip-list.txt
-          echo "Skip flags: $SKIP_FLAGS"
-
-          mkdir -p ~/cargo-registry ~/cargo-git
-
-          docker run --rm --privileged --network host \
-            --env-file ~/.test-env \
-            -v ~/workspace:/workspace \
-            -v ~/cargo-registry:/root/.cargo/registry \
-            -v ~/cargo-git:/root/.cargo/git \
-            -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
-            -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
-            -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
-            test-runner \
-            bash -c 'cargo test \
-              --workspace \
-              --bins \
-              --lib \
-              --exclude tng-wasm \
-              -- --nocapture '"$SKIP_FLAGS"''
-          REMOTE
+            cirunner@compute.0 'mkdir -p ~/cargo-registry ~/cargo-git'
 
       - name: Run integration tests
         env:
           VM_NAME: ${{ steps.vm.outputs.name }}
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=10 \
             -i ~/.ssh/vm_key \
             -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
             cirunner@compute.0 'bash -s' <<'REMOTE'
