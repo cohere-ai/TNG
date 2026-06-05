@@ -152,12 +152,38 @@ jobs:
           docker build -t test-runner -f Dockerfile.test-runner .
           REMOTE
 
-      # - name: Run unit tests  # Temporarily disabled to isolate integration test SSH issue
-      #   ...
-
-      - name: Prepare cargo cache
+      - name: Run unit tests
         run: |
-          ssh tdx-vm 'mkdir -p ~/cargo-registry ~/cargo-git'
+          ssh tdx-vm 'bash -s' <<'REMOTE'
+          set -e
+
+          SKIP_FLAGS=""
+          while IFS= read -r line; do
+            line=$(echo "$line" | sed 's/#.*//' | xargs)
+            [ -n "$line" ] && SKIP_FLAGS="$SKIP_FLAGS --skip $line"
+          done < ~/workspace/.github/test-skip-list.txt
+          echo "Unit test skip flags: $SKIP_FLAGS"
+
+          mkdir -p ~/cargo-registry ~/cargo-git
+
+          docker run --rm --privileged --network host \
+            -e RUST_LOG=warn \
+            --env-file ~/.test-env \
+            -v ~/workspace:/workspace \
+            -v ~/cargo-registry:/root/.cargo/registry \
+            -v ~/cargo-git:/root/.cargo/git \
+            -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
+            -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
+            -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
+            test-runner \
+            bash -c 'cargo test \
+              --release \
+              --workspace \
+              --bins \
+              --lib \
+              --exclude tng-wasm \
+              -- --nocapture '"$SKIP_FLAGS"''
+          REMOTE
 
       - name: Run integration tests
         run: |
@@ -165,6 +191,7 @@ jobs:
           set -e
 
           docker run --rm --privileged --network host \
+            -e RUST_LOG=warn \
             --env-file ~/.test-env \
             -v ~/workspace:/workspace \
             -v ~/cargo-registry:/root/.cargo/registry \
@@ -182,10 +209,11 @@ jobs:
               echo "Integration skip flags: $SKIP_FLAGS"
 
               cargo test \
+                --release \
                 --no-default-features \
                 --features on-source-code \
                 --package tng-testsuite \
-                -- $SKIP_FLAGS
+                -- --nocapture $SKIP_FLAGS
             '
           REMOTE
 
