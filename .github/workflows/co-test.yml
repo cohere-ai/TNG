@@ -177,7 +177,6 @@ jobs:
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
             test-runner \
             bash -c 'cargo test \
-              --release \
               --workspace \
               --bins \
               --lib \
@@ -209,7 +208,6 @@ jobs:
               echo "Integration skip flags: $SKIP_FLAGS"
 
               cargo test \
-                --release \
                 --no-default-features \
                 --features on-source-code \
                 --package tng-testsuite \
