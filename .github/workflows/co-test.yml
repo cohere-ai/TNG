@@ -178,7 +178,7 @@ jobs:
           VM_NAME: ${{ steps.vm.outputs.name }}
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ServerAliveInterval=30 -o ServerAliveCountMax=60 \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
             -i ~/.ssh/vm_key \
             -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
             cirunner@compute.0 'bash -s' <<'REMOTE'
@@ -191,19 +191,13 @@ jobs:
           done < ~/workspace/.github/test-skip-list.txt
           echo "Skip flags: $SKIP_FLAGS"
 
-          mkdir -p ~/cargo-registry ~/cargo-git ~/test-logs
-
-          LOG=~/test-logs/unit-tests.log
-          > $LOG
-          tail -f $LOG &
-          TAIL_PID=$!
+          mkdir -p ~/cargo-registry ~/cargo-git
 
           docker run --rm --privileged --network host \
             --env-file ~/.test-env \
             -v ~/workspace:/workspace \
             -v ~/cargo-registry:/root/.cargo/registry \
             -v ~/cargo-git:/root/.cargo/git \
-            -v ~/test-logs:/test-logs \
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
@@ -213,12 +207,7 @@ jobs:
               --bins \
               --lib \
               --exclude tng-wasm \
-              -- --nocapture '"$SKIP_FLAGS"' > /test-logs/unit-tests.log 2>&1' \
-            || TEST_EXIT=$?
-
-          sleep 2
-          kill $TAIL_PID 2>/dev/null || true
-          exit ${TEST_EXIT:-0}
+              -- --nocapture '"$SKIP_FLAGS"''
           REMOTE
 
       - name: Run integration tests
@@ -226,28 +215,30 @@ jobs:
           VM_NAME: ${{ steps.vm.outputs.name }}
         run: |
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ServerAliveInterval=30 -o ServerAliveCountMax=60 \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
             -i ~/.ssh/vm_key \
             -o ProxyCommand="gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}" \
             cirunner@compute.0 'bash -s' <<'REMOTE'
           set -e
 
-          LOG=~/test-logs/integration-tests.log
-          > $LOG
-          tail -f $LOG &
-          TAIL_PID=$!
-
-          docker run --rm --privileged --network host \
+          docker run --rm --privileged \
+            --add-host=host.docker.internal:host-gateway \
             --env-file ~/.test-env \
             -v ~/workspace:/workspace \
             -v ~/cargo-registry:/root/.cargo/registry \
             -v ~/cargo-git:/root/.cargo/git \
-            -v ~/test-logs:/test-logs \
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
             test-runner \
             bash -c '
+              # Forward AS/cert-proxy ports from container to host so
+              # test nodes on the 192.168.1.0/24 bridge can reach them
+              # without sharing the host network namespace.
+              socat TCP-LISTEN:8080,bind=0.0.0.0,fork,reuseaddr TCP:host.docker.internal:8080 &
+              socat TCP-LISTEN:8006,bind=0.0.0.0,fork,reuseaddr TCP:host.docker.internal:8006 &
+              socat TCP-LISTEN:8081,bind=0.0.0.0,fork,reuseaddr TCP:host.docker.internal:8081 &
+
               SKIP_FLAGS=""
               while IFS= read -r line; do
                 line=$(echo "$line" | sed "s/#.*//" | xargs)
@@ -259,14 +250,8 @@ jobs:
                 --no-default-features \
                 --features on-source-code \
                 --package tng-testsuite \
-                -- --nocapture $SKIP_FLAGS \
-                > /test-logs/integration-tests.log 2>&1
-            ' \
-            || TEST_EXIT=$?
-
-          sleep 2
-          kill $TAIL_PID 2>/dev/null || true
-          exit ${TEST_EXIT:-0}
+                -- --nocapture $SKIP_FLAGS
+            '
           REMOTE
 
       - name: Delete TDX VM

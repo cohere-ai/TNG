@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates \
     protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang \
     make perl git \
-    iptables iproute2 iputils-ping dnsutils ipset jq \
+    iptables iproute2 iputils-ping dnsutils ipset jq socat \
     mold \
     && rm -rf /var/lib/apt/lists/*
 
