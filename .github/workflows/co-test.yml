@@ -228,7 +228,9 @@ jobs:
 
           rc=$(docker wait integ-test)
           echo "=== Tests exited with code $rc ==="
-          docker logs --tail 25 integ-test
+          echo "=== Streaming full docker logs ==="
+          docker logs integ-test
+          echo "=== End of logs ==="
           docker rm integ-test
           exit $rc
           REMOTE
