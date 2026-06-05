@@ -164,8 +164,7 @@ jobs:
           ssh tdx-vm 'bash -s' <<'REMOTE'
           set -e
 
-          docker run --rm --privileged \
-            --add-host=host.docker.internal:host-gateway \
+          docker run --rm --privileged --network host \
             --env-file ~/.test-env \
             -v ~/workspace:/workspace \
             -v ~/cargo-registry:/root/.cargo/registry \
@@ -175,10 +174,6 @@ jobs:
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
             test-runner \
             bash -c '
-              socat TCP-LISTEN:8080,bind=0.0.0.0,fork,reuseaddr TCP:host.docker.internal:8080 &
-              socat TCP-LISTEN:8006,bind=0.0.0.0,fork,reuseaddr TCP:host.docker.internal:8006 &
-              socat TCP-LISTEN:8081,bind=0.0.0.0,fork,reuseaddr TCP:host.docker.internal:8081 &
-
               SKIP_FLAGS=""
               while IFS= read -r line; do
                 line=$(echo "$line" | sed "s/#.*//" | xargs)
@@ -190,7 +185,7 @@ jobs:
                 --no-default-features \
                 --features on-source-code \
                 --package tng-testsuite \
-                -- --nocapture $SKIP_FLAGS
+                -- $SKIP_FLAGS
             '
           REMOTE
 
