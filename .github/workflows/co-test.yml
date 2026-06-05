@@ -191,9 +191,9 @@ jobs:
           done < ~/workspace/.github/test-skip-list.txt
           echo "Skip flags: $SKIP_FLAGS"
 
-          mkdir -p ~/cargo-registry ~/cargo-git
+          mkdir -p ~/cargo-registry ~/cargo-git ~/test-logs
 
-          LOG=/tmp/unit-tests.log
+          LOG=~/test-logs/unit-tests.log
           > $LOG
           tail -f $LOG &
           TAIL_PID=$!
@@ -203,17 +203,17 @@ jobs:
             -v ~/workspace:/workspace \
             -v ~/cargo-registry:/root/.cargo/registry \
             -v ~/cargo-git:/root/.cargo/git \
+            -v ~/test-logs:/test-logs \
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
-            -v /tmp:/tmp/host-log \
             test-runner \
             bash -c 'cargo test \
               --workspace \
               --bins \
               --lib \
               --exclude tng-wasm \
-              -- --nocapture '"$SKIP_FLAGS"' > /tmp/host-log/unit-tests.log 2>&1' \
+              -- --nocapture '"$SKIP_FLAGS"' > /test-logs/unit-tests.log 2>&1' \
             || TEST_EXIT=$?
 
           sleep 2
@@ -232,7 +232,7 @@ jobs:
             cirunner@compute.0 'bash -s' <<'REMOTE'
           set -e
 
-          LOG=/tmp/integration-tests.log
+          LOG=~/test-logs/integration-tests.log
           > $LOG
           tail -f $LOG &
           TAIL_PID=$!
@@ -242,10 +242,10 @@ jobs:
             -v ~/workspace:/workspace \
             -v ~/cargo-registry:/root/.cargo/registry \
             -v ~/cargo-git:/root/.cargo/git \
+            -v ~/test-logs:/test-logs \
             -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
             -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
             -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
-            -v /tmp:/tmp/host-log \
             test-runner \
             bash -c '
               SKIP_FLAGS=""
@@ -260,7 +260,7 @@ jobs:
                 --features on-source-code \
                 --package tng-testsuite \
                 -- --nocapture $SKIP_FLAGS \
-                > /tmp/host-log/integration-tests.log 2>&1
+                > /test-logs/integration-tests.log 2>&1
             ' \
             || TEST_EXIT=$?
 
