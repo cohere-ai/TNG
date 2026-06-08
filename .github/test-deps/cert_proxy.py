@@ -48,7 +48,7 @@ def make_handler(cert_path: str, backend: str):
                 return
             resp_body = resp.read()
             self.send_response(resp.status)
-            for k, v in resp.getheaders():
+            for k, v in resp.headers.items():
                 if k.lower() not in ("transfer-encoding",):
                     self.send_header(k, v)
             self.end_headers()

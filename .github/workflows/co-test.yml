@@ -9,6 +9,8 @@ on:
       - "v*.*.*"
   pull_request:
     branches:
+      - master
+      - cohere
 
 permissions:
   id-token: write
@@ -86,14 +88,20 @@ jobs:
           EOF
 
           echo "Waiting for VM to accept SSH..."
+          SSH_OK=false
           for i in $(seq 1 30); do
             if ssh tdx-vm 'true' >/dev/null 2>&1; then
               echo "VM is ready (attempt $i)"
+              SSH_OK=true
               break
             fi
             echo "Waiting... ($i/30)"
             sleep 10
           done
+          if [ "$SSH_OK" != "true" ]; then
+            echo "::error::SSH connection to VM failed after 30 attempts"
+            exit 1
+          fi
 
       - name: Install Docker on VM
         run: |
@@ -105,8 +113,11 @@ jobs:
           REMOTE
 
       - name: Clone repository
+        env:
+          GIT_REF: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
+          GIT_SHA: ${{ github.sha }}
         run: |
-          ssh tdx-vm 'bash -s' <<'REMOTE'
+          ssh tdx-vm "bash -s" <<REMOTE
           set -e
 
           echo "=== Checking TDX device ==="
@@ -115,8 +126,8 @@ jobs:
           echo "=== Cloning repository ==="
           git clone https://github.com/${{ github.repository }} ~/workspace
           cd ~/workspace
-          git fetch origin "${{ github.sha }}"
-          git checkout "${{ github.sha }}"
+          git fetch origin "${GIT_REF}"
+          git checkout "${GIT_SHA}"
           REMOTE
 
       - name: Launch attestation services
@@ -130,7 +141,7 @@ jobs:
 
           echo "=== Copying AS certs for tests that read from disk ==="
           cp ~/workspace/.github/test-deps/.keys/token-cert-chain.pem /tmp/as-full.pem
-          cp /tmp/as-full.pem /tmp/as-ca.pem
+          cp ~/workspace/.github/test-deps/.keys/ca-cert.pem /tmp/as-ca.pem
 
           echo "=== Verifying cert proxy ==="
           curl -sf http://127.0.0.1:8080/certificate | head -c 200
