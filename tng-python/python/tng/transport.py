@@ -85,11 +85,21 @@ class Transport(httpx.BaseTransport):
         self._attach_attestation_header = attach_attestation_header
         self._inner_transport = httpx.HTTPTransport()
         self._port = self._instance.port()
+        self._last_attestation_token: Optional[str] = None
 
     @property
     def port(self) -> int:
         """The localhost port the TNG ingress is listening on."""
         return self._port
+
+    @property
+    def attestation_token(self) -> Optional[str]:
+        """The last attestation token (ITA JWT) received from the TNG egress.
+
+        This is populated after the first successful request when `verify` is configured.
+        Returns None if attestation is disabled or no request has been made yet.
+        """
+        return self._last_attestation_token
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         """Route the request through the in-process TNG ingress."""
@@ -107,6 +117,13 @@ class Transport(httpx.BaseTransport):
         )
 
         response = self._inner_transport.handle_request(proxied_request)
+
+        token = response.headers.get("x-tng-attestation-token")
+        if token:
+            self._last_attestation_token = token
+            if not self._attach_attestation_header:
+                del response.headers["x-tng-attestation-token"]
+
         return response
 
     def close(self) -> None:
@@ -146,10 +163,16 @@ class AsyncTransport(httpx.AsyncBaseTransport):
         self._attach_attestation_header = attach_attestation_header
         self._inner_transport = httpx.AsyncHTTPTransport()
         self._port = self._instance.port()
+        self._last_attestation_token: Optional[str] = None
 
     @property
     def port(self) -> int:
         return self._port
+
+    @property
+    def attestation_token(self) -> Optional[str]:
+        """The last attestation token (ITA JWT) received from the TNG egress."""
+        return self._last_attestation_token
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         local_url = request.url.copy_with(
@@ -166,6 +189,13 @@ class AsyncTransport(httpx.AsyncBaseTransport):
         )
 
         response = await self._inner_transport.handle_async_request(proxied_request)
+
+        token = response.headers.get("x-tng-attestation-token")
+        if token:
+            self._last_attestation_token = token
+            if not self._attach_attestation_header:
+                del response.headers["x-tng-attestation-token"]
+
         return response
 
     async def aclose(self) -> None:

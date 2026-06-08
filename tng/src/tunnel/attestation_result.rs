@@ -37,4 +37,9 @@ impl AttestationResult {
             token: Arc::new(token),
         }
     }
+
+    /// Return the raw token string (e.g. the ITA JWT).
+    pub fn as_str(&self) -> &str {
+        self.token.as_str()
+    }
 }

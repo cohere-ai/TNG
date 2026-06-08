@@ -82,7 +82,19 @@ mod unix_specific_module {
                                     )
                                     .await
                                 {
-                                    Ok((response, _attestation_result)) => response,
+                                    Ok((mut response, attestation_result)) => {
+                                        if let Some(att) = &attestation_result {
+                                            if let Ok(val) =
+                                                http::HeaderValue::from_str(att.as_str())
+                                            {
+                                                response.headers_mut().insert(
+                                                    "x-tng-attestation-token",
+                                                    val,
+                                                );
+                                            }
+                                        }
+                                        response
+                                    }
                                     Err(error) => error.into_response(),
                                 },
                             )
