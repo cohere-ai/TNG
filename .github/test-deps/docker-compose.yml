@@ -46,6 +46,12 @@ services:
         condition: service_completed_successfully
     ports:
       - "8081:80"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/80'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   cert-proxy:
     image: python:3.12.13-slim
@@ -62,11 +68,17 @@ services:
       ]
     depends_on:
       as:
-        condition: service_started
+        condition: service_healthy
       keygen:
         condition: service_completed_successfully
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/certificate')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
 
   aa:
     build:
