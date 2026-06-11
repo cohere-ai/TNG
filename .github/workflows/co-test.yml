@@ -3,13 +3,11 @@ name: Cohere Run Tests on Source Code
 on:
   push:
     branches:
-      - master
       - cohere
     tags:
       - "v*.*.*"
   pull_request:
     branches:
-      - master
       - cohere
 
 permissions:
