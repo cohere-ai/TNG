@@ -1,0 +1,20 @@
+FROM ghcr.io/oras-project/oras:v1.2.0 AS oras
+
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=oras /bin/oras /usr/local/bin/oras
+
+ARG ASR_TAG=f475b74f94978952804c2ce5205b3aad16076117-x86_64
+RUN oras pull ghcr.io/cohere-ai/guest-components/api-server-rest:${ASR_TAG} \
+    && tar xJf api-server-rest.tar.xz -C /usr/local/bin/ \
+    && rm api-server-rest.tar.xz
+
+RUN mkdir -p /run/confidential-containers/attestation-agent
+
+EXPOSE 8006
+
+CMD ["api-server-rest", "--features", "all", "--bind", "0.0.0.0:8006"]

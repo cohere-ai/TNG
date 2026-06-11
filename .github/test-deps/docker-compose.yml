@@ -1,0 +1,124 @@
+services:
+  keygen:
+    image: alpine/openssl:3.5.6
+    entrypoint: /bin/ash
+    volumes:
+      - ${KEYS_DIR:-./.keys}:/opt/keys:rw
+    command: >
+      -c "
+        set -e
+        if [ ! -s /opt/keys/private.key ]; then
+          /usr/bin/openssl genpkey -algorithm ed25519 > /opt/keys/private.key &&
+          /usr/bin/openssl pkey -in /opt/keys/private.key -pubout -out /opt/keys/public.pub;
+        fi
+        cd /opt/keys
+        if [ ! -s token-cert-chain.pem ]; then
+          openssl genrsa -traditional -out ca.key 2048
+          openssl req -new -key ca.key -out ca-req.csr -subj '/O=CNCF/OU=CoCo/CN=KBS-compose-root'
+          openssl req -x509 -days 3650 -key ca.key -in ca-req.csr -out ca-cert.pem
+          openssl ecparam -name prime256v1 -genkey -noout -out token.key
+          openssl req -new -key token.key -out token-req.csr -subj '/O=CNCF/OU=CoCo/CN=CoCo-AS'
+          printf '[v3_req]\nsubjectKeyIdentifier = hash\n' > ext.cnf
+          openssl x509 -req -in token-req.csr -CA ca-cert.pem -CAkey ca.key -CAcreateserial -out token-cert.pem -days 3650 -extensions v3_req -extfile ext.cnf -sha256
+          cat token-cert.pem ca-cert.pem > token-cert-chain.pem;
+        fi"
+
+  as:
+    image: ghcr.io/confidential-containers/staged-images/coco-as-restful@sha256:d847e64173ce286cf230f5598d6787359ca6f6787cf2096277cd8cef0451521a
+    restart: "no"
+    environment:
+      - QCNL_CONF_PATH=/etc/qcnl.conf
+    volumes:
+      - ./attestation-service/storage:/opt/confidential-containers/attestation-service/storage:rw
+      - ./as-config.json:/etc/as/config.json:ro
+      - ${KEYS_DIR:-./.keys}:/opt/confidential-containers/keys:ro
+      - ./qcnl.conf:/etc/qcnl.conf:ro
+    command:
+      [
+        "restful-as",
+        "--socket",
+        "0.0.0.0:80",
+        "--config-file",
+        "/etc/as/config.json",
+      ]
+    depends_on:
+      keygen:
+        condition: service_completed_successfully
+    ports:
+      - "8081:80"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/80'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  cert-proxy:
+    image: python:3.12.13-slim
+    restart: "no"
+    volumes:
+      - ./cert_proxy.py:/app/cert_proxy.py:ro
+      - ${KEYS_DIR:-./.keys}:/opt/keys:ro
+    command:
+      [
+        "python3", "/app/cert_proxy.py",
+        "--cert", "/opt/keys/token-cert-chain.pem",
+        "--listen", "8080",
+        "--backend", "http://as:80",
+      ]
+    depends_on:
+      as:
+        condition: service_healthy
+      keygen:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/certificate')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+
+  aa:
+    build:
+      context: .
+      dockerfile: Dockerfile.aa
+    init: true
+    privileged: true
+    volumes:
+      - /sys/kernel/config:/sys/kernel/config
+      - ${AA_SOCK_DIR:-/run/confidential-containers/attestation-agent}:/run/confidential-containers/attestation-agent
+    restart: "no"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "test",
+          "-S",
+          "/run/confidential-containers/attestation-agent/attestation-agent.sock",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 2s
+
+  asr:
+    build:
+      context: .
+      dockerfile: Dockerfile.asr
+    init: true
+    network_mode: host
+    volumes:
+      - ${AA_SOCK_DIR:-/run/confidential-containers/attestation-agent}:/run/confidential-containers/attestation-agent
+    command: ["api-server-rest", "--features", "attestation", "--bind", "0.0.0.0:8006"]
+    restart: "no"
+    depends_on:
+      aa:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://127.0.0.1:8006/"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 2s

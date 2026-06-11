@@ -1,0 +1,237 @@
+name: Cohere Run Tests on Source Code
+
+on:
+  push:
+    branches:
+      - cohere
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches:
+      - cohere
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  GCP_PROJECT: cohere-confidential-computing
+  GCP_ZONE: us-central1-a
+  VM_PREFIX: tng-test
+
+jobs:
+  test:
+    name: Test on TDX VM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Install NumPy for IAP tunnel performance
+        run: |
+          $(gcloud info --format="value(basic.python_location)") -m pip install numpy
+
+      - name: Create TDX VM and configure SSH
+        id: vm
+        run: |
+          VM_NAME="${VM_PREFIX}-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "name=$VM_NAME" >> "$GITHUB_OUTPUT"
+
+          gcloud compute instances create "$VM_NAME" \
+            --project="$GCP_PROJECT" \
+            --zone="$GCP_ZONE" \
+            --machine-type=c3-standard-8 \
+            --confidential-compute-type=TDX \
+            --maintenance-policy=TERMINATE \
+            --image-family=ubuntu-2404-lts-amd64 \
+            --image-project=ubuntu-os-cloud \
+            --boot-disk-size=100GB \
+            --boot-disk-type=pd-ssd \
+            --no-scopes \
+            --no-service-account \
+            --network=conf-compute \
+            --subnet=conf-compute-subnet \
+            --max-run-duration=1h \
+            --instance-termination-action=DELETE \
+            --labels=purpose=tng-ci,gh-run-id=${{ github.run_id }}
+
+          echo "=== Generating ephemeral SSH key ==="
+          ssh-keygen -t ecdsa -b 521 -m PEM -f /tmp/ci-ssh-key -N "" -q
+
+          echo "=== Adding SSH key to VM metadata ==="
+          PUB_KEY=$(cat /tmp/ci-ssh-key.pub)
+          gcloud compute instances add-metadata "$VM_NAME" \
+            --project="$GCP_PROJECT" --zone="$GCP_ZONE" \
+            --metadata="ssh-keys=cirunner:${PUB_KEY}"
+
+          echo "=== Configuring SSH client ==="
+          install -m 0700 -d ~/.ssh
+          cp /tmp/ci-ssh-key ~/.ssh/vm_key
+          chmod 600 ~/.ssh/vm_key
+
+          cat >> ~/.ssh/config <<EOF
+          Host tdx-vm
+            ProxyCommand gcloud compute start-iap-tunnel ${VM_NAME} 22 --listen-on-stdin --zone=${GCP_ZONE} --project=${GCP_PROJECT}
+            User cirunner
+            IdentityFile ~/.ssh/vm_key
+            StrictHostKeyChecking no
+            ServerAliveInterval 30
+            ServerAliveCountMax 10
+          EOF
+
+          echo "Waiting for VM to accept SSH..."
+          SSH_OK=false
+          for i in $(seq 1 30); do
+            if ssh tdx-vm 'true' >/dev/null 2>&1; then
+              echo "VM is ready (attempt $i)"
+              SSH_OK=true
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 10
+          done
+          if [ "$SSH_OK" != "true" ]; then
+            echo "::error::SSH connection to VM failed after 30 attempts"
+            exit 1
+          fi
+
+      - name: Install Docker on VM
+        run: |
+          ssh tdx-vm 'bash -s' <<'REMOTE'
+          set -e
+          echo "=== Installing Docker ==="
+          curl -fsSL https://get.docker.com | sudo sh
+          sudo usermod -aG docker "$USER"
+          REMOTE
+
+      - name: Clone repository
+        env:
+          GIT_REF: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          ssh tdx-vm "bash -s" <<REMOTE
+          set -e
+
+          echo "=== Checking TDX device ==="
+          ls -la /dev/tdx_guest
+
+          echo "=== Cloning repository ==="
+          git clone https://github.com/${{ github.repository }} ~/workspace
+          cd ~/workspace
+          git fetch origin "${GIT_REF}"
+          git checkout "${GIT_SHA}"
+          REMOTE
+
+      - name: Launch attestation services
+        run: |
+          ssh tdx-vm 'bash -s' <<'REMOTE'
+          set -e
+
+          cd ~/workspace/.github/test-deps
+          docker compose up -d --build --wait --wait-timeout 120
+          docker compose ps
+
+          echo "=== Copying AS certs for tests that read from disk ==="
+          cp ~/workspace/.github/test-deps/.keys/token-cert-chain.pem /tmp/as-full.pem
+          cp ~/workspace/.github/test-deps/.keys/ca-cert.pem /tmp/as-ca.pem
+
+          echo "=== Verifying cert proxy ==="
+          curl -sf http://127.0.0.1:8080/certificate | head -c 200
+          echo ""
+          REMOTE
+
+      - name: Configure test secrets on VM
+        env:
+          ITA_API_KEY: ${{ secrets.ITA_API_KEY }}
+        run: |
+          echo "ITA_API_KEY=${ITA_API_KEY}" | \
+            ssh tdx-vm 'cat > ~/.test-env && chmod 600 ~/.test-env'
+
+      - name: Build test runner image
+        run: |
+          ssh tdx-vm 'bash -s' <<'REMOTE'
+          set -e
+          cd ~/workspace/.github/test-deps
+          docker build -t test-runner -f Dockerfile.test-runner .
+          REMOTE
+
+      - name: Run unit tests
+        run: |
+          ssh tdx-vm 'bash -s' <<'REMOTE'
+          set -e
+
+          SKIP_FLAGS=""
+          while IFS= read -r line; do
+            line=$(echo "$line" | sed 's/#.*//' | xargs)
+            [ -n "$line" ] && SKIP_FLAGS="$SKIP_FLAGS --skip $line"
+          done < ~/workspace/.github/test-skip-list.txt
+          echo "Unit test skip flags: $SKIP_FLAGS"
+
+          mkdir -p ~/cargo-registry ~/cargo-git
+
+          docker run --rm --privileged --network host \
+            -e RUST_LOG=warn \
+            --env-file ~/.test-env \
+            -v ~/workspace:/workspace \
+            -v ~/cargo-registry:/root/.cargo/registry \
+            -v ~/cargo-git:/root/.cargo/git \
+            -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
+            -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
+            -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
+            test-runner \
+            bash -c 'cargo test \
+              --workspace \
+              --bins \
+              --lib \
+              --exclude tng-wasm \
+              -- --nocapture '"$SKIP_FLAGS"''
+          REMOTE
+
+      - name: Run integration tests
+        run: |
+          ssh tdx-vm 'bash -s' <<'REMOTE'
+          set -e
+
+          docker run --rm --privileged --network host \
+            -e RUST_LOG=warn \
+            --env-file ~/.test-env \
+            -v ~/workspace:/workspace \
+            -v ~/cargo-registry:/root/.cargo/registry \
+            -v ~/cargo-git:/root/.cargo/git \
+            -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
+            -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
+            -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
+            test-runner \
+            bash -c '
+              SKIP_FLAGS=""
+              while IFS= read -r line; do
+                line=$(echo "$line" | sed "s/#.*//" | xargs)
+                [ -n "$line" ] && SKIP_FLAGS="$SKIP_FLAGS --skip $line"
+              done < /workspace/.github/test-skip-list.txt
+              echo "Integration skip flags: $SKIP_FLAGS"
+
+              cargo test \
+                --no-default-features \
+                --features on-source-code \
+                --package tng-testsuite \
+                -- --nocapture $SKIP_FLAGS
+            '
+          REMOTE
+
+      - name: Delete TDX VM
+        if: always()
+        run: |
+          VM_NAME="${{ steps.vm.outputs.name }}"
+          if [ -n "$VM_NAME" ]; then
+            echo "Deleting VM: $VM_NAME"
+            gcloud compute instances delete "$VM_NAME" \
+              --project="$GCP_PROJECT" \
+              --zone="$GCP_ZONE" \
+              --quiet 2>/dev/null || echo "VM already deleted or not found"
+          fi

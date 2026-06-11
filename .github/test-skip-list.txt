@@ -1,0 +1,9 @@
+# Tests to skip in CI (one per line, passed as --skip to cargo test)
+# These tests require capabilities or resources not available in CI.
+
+# Requires SLSA reference values provisioned in the Attestation Service
+test_converter_new_with_slsa_reference_and_provenance
+
+# Pre-existing failures: peer-shared key distribution tests fail on TDX hardware
+test_egress_key_from_peer_shared
+test_egress_key_from_peer_shared_with_peers_file
