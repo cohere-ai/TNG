@@ -67,18 +67,36 @@ import tng
 import httpx
 import sys
 
+url = "http://192.168.1.1:20001/test?q=1"
 transport = tng.Transport(verify=None)
 with httpx.Client(transport=transport) as client:
-    for i in range(3):
-        try:
-            resp = client.get("http://192.168.1.1:20001/test?q=1")
-            body = resp.read()
-            resp.close()
-            print(f"Request {i}: status={resp.status_code} body={body}", flush=True)
-            assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        except Exception as e:
-            print(f"Request {i}: FAILED with {e}", file=sys.stderr, flush=True)
-            raise
+    resp = client.get(url)
+    assert resp.status_code == 200
+    assert resp.read() == b"Hello World HTTP!"
+    resp.close()
+    print("PASS: buffered GET")
+
+    with client.stream("GET", url) as resp:
+        assert resp.status_code == 200
+        body = b"".join(resp.iter_bytes())
+        assert body == b"Hello World HTTP!"
+    print("PASS: response streaming GET")
+
+    resp = client.post(url, content=b"hello from python")
+    assert resp.read() == b"hello from python"
+    resp.close()
+    print("PASS: POST with body echo")
+
+    resp = client.post(url, content=(c for c in [b"chunk1", b"chunk2", b"chunk3"]))
+    assert resp.read() == b"chunk1chunk2chunk3"
+    resp.close()
+    print("PASS: request streaming POST echo")
+
+    big = b"x" * 200_000
+    resp = client.post(url, content=(big[i:i+1000] for i in range(0, len(big), 1000)))
+    assert resp.read() == big
+    resp.close()
+    print("PASS: large streaming POST echo (200KB)")
 
 print("SUCCESS: all sync Python SDK tests passed")
 '
@@ -140,22 +158,38 @@ import tng
 import httpx
 
 async def main():
+    url = "http://192.168.1.1:20001/test?q=1"
     transport = tng.AsyncTransport(verify=None)
     async with httpx.AsyncClient(transport=transport) as client:
-        resp = await client.get("http://192.168.1.1:20001/test?q=1")
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        assert resp.text == "Hello World HTTP!", f"Unexpected body: {resp.text}"
-        print("PASS: async GET")
+        resp = await client.get(url)
+        assert resp.status_code == 200
+        assert resp.text == "Hello World HTTP!"
+        print("PASS: async buffered GET")
 
-        async with client.stream("GET", "http://192.168.1.1:20001/test?q=1") as resp:
-            assert resp.status_code == 200, f"Stream expected 200, got {resp.status_code}"
-            chunks = []
-            async for chunk in resp.aiter_bytes():
-                chunks.append(chunk)
-            assert len(chunks) > 0, "No chunks received"
-            full_body = b"".join(chunks).decode()
-            assert full_body == "Hello World HTTP!", f"Unexpected stream body: {full_body}"
-            print("PASS: async streaming GET")
+        async with client.stream("GET", url) as resp:
+            assert resp.status_code == 200
+            body = b"".join([c async for c in resp.aiter_bytes()])
+            assert body == b"Hello World HTTP!"
+        print("PASS: async response streaming GET")
+
+        resp = await client.post(url, content=b"hello from python")
+        assert resp.read() == b"hello from python"
+        print("PASS: async POST with body echo")
+
+        async def chunks():
+            for c in [b"chunk1", b"chunk2", b"chunk3"]:
+                yield c
+        resp = await client.post(url, content=chunks())
+        assert resp.read() == b"chunk1chunk2chunk3"
+        print("PASS: async request streaming POST echo")
+
+        big = b"x" * 200_000
+        async def big_chunks():
+            for i in range(0, len(big), 1000):
+                yield big[i:i+1000]
+        resp = await client.post(url, content=big_chunks())
+        assert resp.read() == big
+        print("PASS: async large streaming POST echo (200KB)")
 
     print("SUCCESS: all async Python SDK tests passed")
 

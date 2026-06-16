@@ -3,7 +3,7 @@
 import pytest
 
 import tng
-from tng._native import TngClient, TngResponse
+from tng._native import TngClient, TngResponse, RequestSender
 from tng.transport import Transport, AsyncTransport, _build_config
 
 
@@ -15,6 +15,7 @@ class TestImports:
     def test_native_classes_available(self):
         assert TngClient is not None
         assert TngResponse is not None
+        assert RequestSender is not None
 
 
 class TestBuildConfig:

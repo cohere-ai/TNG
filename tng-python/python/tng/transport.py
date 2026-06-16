@@ -99,14 +99,14 @@ class Transport(httpx.BaseTransport):
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         headers_str = request.headers.multi_items()
 
-        body = bytes(request.content) if request.content else None
-
-        tng_response = self._client.send(
+        sender = self._client.start_request(
             str(request.method),
             str(request.url),
             headers_str,
-            body,
         )
+        for chunk in request.stream:
+            sender.write(chunk)
+        tng_response = sender.finish()
 
         if tng_response.attestation_token is not None:
             self._last_attestation_token = tng_response.attestation_token
@@ -170,14 +170,14 @@ class AsyncTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         headers_str = request.headers.multi_items()
 
-        body = bytes(request.content) if request.content else None
-
-        tng_response = await self._client.send_async(
+        sender = self._client.start_request(
             str(request.method),
             str(request.url),
             headers_str,
-            body,
         )
+        async for chunk in request.stream:
+            await sender.write_async(chunk)
+        tng_response = await sender.finish_async()
 
         if tng_response.attestation_token is not None:
             self._last_attestation_token = tng_response.attestation_token

@@ -3,7 +3,8 @@ use std::net::SocketAddr;
 use anyhow::{bail, Result};
 use axum::{body::Body, extract::Request, routing::any, Router};
 use axum_extra::extract::Host;
-use http::StatusCode;
+use http::{Method, StatusCode};
+use http_body_util::BodyExt as _;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
@@ -26,7 +27,7 @@ pub async fn launch_http_server(
         let app = Router::new().route(
             "/{*path}",
             any(|Host(hostname): Host, request: Request<Body>| async move {
-                (|| -> Result<_> {
+                (async {
                     if hostname != expected_host_header {
                         bail!("Got hostname `{hostname}`, but `{expected_host_header}` is expected");
                     }
@@ -37,12 +38,20 @@ pub async fn launch_http_server(
                     }
 
                     tracing::info!("Got request from client, now sending response to client");
-                    Ok((StatusCode::OK, HTTP_RESPONSE_BODY.to_owned()))
-                })()
-                .unwrap_or_else(|e| {
+
+                    let method = request.method().clone();
+                    if method == Method::POST || method == Method::PUT {
+                        let body_bytes = request.into_body().collect().await?.to_bytes();
+                        Ok((StatusCode::OK, body_bytes.to_vec()))
+                    } else {
+                        Ok((StatusCode::OK, HTTP_RESPONSE_BODY.as_bytes().to_vec()))
+                    }
+                })
+                .await
+                .unwrap_or_else(|e: anyhow::Error| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Something went wrong: {e}"),
+                        format!("Something went wrong: {e}").into_bytes(),
                     )
                 })
             }),

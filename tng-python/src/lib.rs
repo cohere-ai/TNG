@@ -18,6 +18,7 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     m.add_class::<client::TngClient>()?;
+    m.add_class::<client::RequestSender>()?;
     m.add_class::<response::TngResponse>()?;
     Ok(())
 }

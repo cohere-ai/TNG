@@ -3,20 +3,17 @@ use std::sync::Arc;
 use anyhow::Context;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use tokio::task::JoinHandle;
+use tokio_util::io::ReaderStream;
 use tng::{
     config::ingress::CommonArgs,
     tunnel::{endpoint::TngEndpoint, ingress::protocol::ohttp::security::OHttpSecurityLayer},
-    RaContext, TokioRuntime,
+    AttestationResult, RaContext, TokioRuntime,
 };
 use url::Url;
 
 use crate::response::TngResponse;
 
-/// The Rust-side OHTTP client that `Transport` and `AsyncTransport` delegate to.
-///
-/// Holds the OHTTP security layer, tokio runtime, and shutdown guard.
-/// Not typically instantiated directly by Python users; the transport
-/// classes in `tng.transport` are the public API.
 #[pyclass]
 pub struct TngClient {
     security_layer: Arc<OHttpSecurityLayer>,
@@ -84,77 +81,128 @@ impl TngClient {
         })
     }
 
-    /// Send a request synchronously. Returns a `TngResponse`.
-    ///
-    /// The body is consumed by a background task on the tokio runtime,
-    /// call `read_all()` on the response to get the full body bytes.
-    #[pyo3(signature = (method, url, headers, body=None))]
-    fn send(
+    /// Begin a streaming request. Returns a `RequestSender` that accepts
+    /// body chunks via `write()`, then call `finish()` to complete the
+    /// request and get the response.
+    fn start_request(
         &self,
-        py: Python<'_>,
         method: &str,
         url: &str,
         headers: Vec<(String, String)>,
-        body: Option<Vec<u8>>,
-    ) -> PyResult<TngResponse> {
-        let (request, endpoint) = build_request(method, url, &headers, body)?;
+    ) -> PyResult<RequestSender> {
+        let (request, endpoint, body_writer) =
+            build_streaming_request(method, url, &headers)?;
 
         let security_layer = self.security_layer.clone();
         let rt = self.rt.clone();
 
-        let (response, attestation_result) = py.allow_threads(|| {
-            rt.block_on(async move {
-                security_layer
-                    .forward_http_request(&endpoint, request)
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(format!("{e:?}")))
-            })
-        })?;
-
-        Ok(TngResponse::from_http_response(
-            response,
-            attestation_result,
-            self.rt.clone(),
-        ))
-    }
-
-    /// Send a request asynchronously. Returns a Python awaitable that
-    /// resolves to a `TngResponse`.
-    #[pyo3(signature = (method, url, headers, body=None))]
-    fn send_async<'py>(
-        &self,
-        py: Python<'py>,
-        method: &str,
-        url: &str,
-        headers: Vec<(String, String)>,
-        body: Option<Vec<u8>>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let (request, endpoint) = build_request(method, url, &headers, body)?;
-
-        let security_layer = self.security_layer.clone();
-        let rt = self.rt.clone();
-
-        pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let (response, attestation_result) = security_layer
+        let handle = rt.spawn(async move {
+            security_layer
                 .forward_http_request(&endpoint, request)
                 .await
-                .map_err(|e| PyRuntimeError::new_err(format!("{e:?}")))?;
+                .map_err(|e| PyRuntimeError::new_err(format!("{e:?}")))
+        });
 
-            Ok(TngResponse::from_http_response(
-                response,
-                attestation_result,
-                rt,
-            ))
+        Ok(RequestSender {
+            body_writer: Arc::new(tokio::sync::Mutex::new(Some(body_writer))),
+            handle: Some(handle),
+            rt,
         })
     }
 }
 
-fn build_request(
+type ResponseResult = PyResult<(axum::response::Response, Option<AttestationResult>)>;
+
+/// Handle for writing streaming request body chunks and completing the request.
+///
+/// Returned by `TngClient.start_request()`. Call `write()` for each body
+/// chunk, then `finish()` to close the body stream and await the response.
+#[pyclass]
+pub struct RequestSender {
+    body_writer: Arc<tokio::sync::Mutex<Option<tokio::io::DuplexStream>>>,
+    handle: Option<JoinHandle<ResponseResult>>,
+    rt: Arc<tokio::runtime::Runtime>,
+}
+
+#[pymethods]
+impl RequestSender {
+    /// Write a chunk of request body data. Blocks until the chunk is accepted.
+    fn write(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+        let writer = self.body_writer.clone();
+        let rt = self.rt.clone();
+
+        py.allow_threads(move || {
+            rt.block_on(async move {
+                use tokio::io::AsyncWriteExt;
+                let mut guard = writer.lock().await;
+                let w = guard
+                    .as_mut()
+                    .ok_or_else(|| PyRuntimeError::new_err("request body already closed"))?;
+                w.write_all(&data)
+                    .await
+                    .map_err(|e| PyRuntimeError::new_err(format!("write failed: {e}")))
+            })
+        })
+    }
+
+    /// Write a chunk of request body data (async version).
+    fn write_async<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+        let writer = self.body_writer.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            use tokio::io::AsyncWriteExt;
+            let mut guard = writer.lock().await;
+            let w = guard
+                .as_mut()
+                .ok_or_else(|| PyRuntimeError::new_err("request body already closed"))?;
+            w.write_all(&data)
+                .await
+                .map_err(|e| PyRuntimeError::new_err(format!("write failed: {e}")))?;
+            Ok(())
+        })
+    }
+
+    /// Close the body stream and await the response. Returns a `TngResponse`.
+    fn finish(&mut self, py: Python<'_>) -> PyResult<TngResponse> {
+        let writer = self.body_writer.clone();
+        let handle = self
+            .handle
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("request already finished"))?;
+        let rt = self.rt.clone();
+
+        let (response, attestation_result) = py.allow_threads(|| {
+            rt.block_on(async {
+                drop(writer.lock().await.take());
+                handle.await.unwrap()
+            })
+        })?;
+
+        Ok(TngResponse::from_http_response(response, attestation_result, rt))
+    }
+
+    /// Close the body stream and await the response (async version).
+    fn finish_async<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let writer = self.body_writer.clone();
+        let handle = self
+            .handle
+            .take()
+            .ok_or_else(|| PyRuntimeError::new_err("request already finished"))?;
+        let rt = self.rt.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            drop(writer.lock().await.take());
+            let (response, attestation_result) = handle.await.unwrap()?;
+            Ok(TngResponse::from_http_response(response, attestation_result, rt))
+        })
+    }
+}
+
+fn build_streaming_request(
     method: &str,
     url: &str,
     headers: &[(String, String)],
-    body: Option<Vec<u8>>,
-) -> PyResult<(axum::extract::Request, TngEndpoint)> {
+) -> PyResult<(axum::extract::Request, TngEndpoint, tokio::io::DuplexStream)> {
     let parsed_url =
         Url::parse(url).map_err(|e| PyRuntimeError::new_err(format!("Invalid URL: {e}")))?;
 
@@ -172,12 +220,8 @@ fn build_request(
 
     let endpoint = TngEndpoint::new(host, port).with_scheme(scheme);
 
-    let body_data = body.unwrap_or_default();
-    let axum_body = if body_data.is_empty() {
-        axum::body::Body::empty()
-    } else {
-        axum::body::Body::from(body_data)
-    };
+    let (read_half, write_half) = tokio::io::duplex(65536);
+    let body = axum::body::Body::from_stream(ReaderStream::new(read_half));
 
     let mut builder = http::Request::builder()
         .method(method)
@@ -189,8 +233,8 @@ fn build_request(
     }
 
     let request = builder
-        .body(axum_body)
+        .body(body)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to build request: {e}")))?;
 
-    Ok((request, endpoint))
+    Ok((request, endpoint, write_half))
 }
