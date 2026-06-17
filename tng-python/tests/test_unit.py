@@ -46,11 +46,11 @@ class TestBuildConfig:
 
 
 class TestTransportInit:
-    def test_default_verify_requires_api_key(self):
-        with pytest.raises(RuntimeError, match="api_key"):
+    def test_requires_verify(self):
+        with pytest.raises(TypeError):
             Transport()
 
-    def test_verify_none(self):
+    def test_verify_none_disables_ra(self):
         t = Transport(verify=None)
         assert t._client is not None
 
@@ -68,11 +68,11 @@ class TestTransportInit:
 
 
 class TestAsyncTransportInit:
-    def test_default_verify_requires_api_key(self):
-        with pytest.raises(RuntimeError, match="api_key"):
+    def test_requires_verify(self):
+        with pytest.raises(TypeError):
             AsyncTransport()
 
-    def test_verify_none(self):
+    def test_verify_none_disables_ra(self):
         t = AsyncTransport(verify=None)
         assert t._client is not None
 

@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "conceil"
+dynamic = ["version"]
+description = "Drop-in encrypted transport for AI SDKs"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+dependencies = ["tng", "httpx>=0.23.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

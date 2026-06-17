@@ -8,7 +8,6 @@ import httpx
 
 from tng._native import TngClient, TngResponse
 
-_DEFAULT_VERIFY: dict = {"as_provider": "ita"}
 _ATTESTATION_HEADER = "x-tng-attestation-token"
 
 
@@ -44,42 +43,35 @@ class Transport(httpx.BaseTransport):
     verification token (JWT).
 
     Usage:
-        with httpx.Client(transport=tng.Transport()) as client:
-            resp = client.get("https://model-vault.example.com/v1/models")
-            token = resp.headers.get("x-tng-attestation-token")
-
-    Streaming:
-        with httpx.Client(transport=tng.Transport()) as client:
-            with client.stream("POST", url, json=payload) as resp:
-                for chunk in resp.iter_bytes():
-                    process(chunk)
-
-    Custom verification:
-        tng.Transport(verify={
+        transport = tng.Transport(verify={
             "as_provider": "ita",
             "as_addr": "https://api.trustauthority.intel.com",
             "policy_ids": ["my-policy"],
         })
+        with httpx.Client(transport=transport) as client:
+            resp = client.get("https://model-vault.example.com/v1/models")
+            token = resp.headers.get("x-tng-attestation-token")
 
-    Skip verification (testing only):
-        tng.Transport(verify=None)
+    Streaming:
+        with httpx.Client(transport=transport) as client:
+            with client.stream("POST", url, json=payload) as resp:
+                for chunk in resp.iter_bytes():
+                    process(chunk)
+
+    Args:
+        verify: Attestation verification config (required). Pass a dict
+                to configure verification. To disable verification, pass
+                ``None`` explicitly — this is NOT recommended for
+                production use.
+        ohttp: OHTTP config dict (forward_headers, tls_ca_certs, etc.).
     """
 
     def __init__(
         self,
         *,
-        verify: Optional[dict] = _DEFAULT_VERIFY,
+        verify: Optional[dict],
         ohttp: Optional[dict] = None,
     ):
-        """Create a TNG Transport.
-
-        Args:
-            verify: Attestation verification config dict.
-                    Defaults to ITA verification ({"as_provider": "ita"}).
-                    Set to None to disable verification (testing only).
-            ohttp: Raw OHTTP config dict (path_rewrites, tls_ca_certs,
-                   forward_headers, etc.).
-        """
         self._client = TngClient(_build_config(verify=verify, ohttp=ohttp))
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
@@ -121,7 +113,7 @@ class AsyncTransport(httpx.AsyncBaseTransport):
     def __init__(
         self,
         *,
-        verify: Optional[dict] = _DEFAULT_VERIFY,
+        verify: Optional[dict],
         ohttp: Optional[dict] = None,
     ):
         self._client = TngClient(_build_config(verify=verify, ohttp=ohttp))
