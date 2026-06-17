@@ -20,44 +20,28 @@ class TestImports:
 
 class TestBuildConfig:
     def test_verify_none_sets_no_ra(self):
-        cfg = _build_config(verify=None, ohttp=None, forward_headers=None)
+        cfg = _build_config(verify=None, ohttp=None)
         assert cfg["no_ra"] is True
         assert "verify" not in cfg
 
     def test_verify_dict_passed_through(self):
         v = {"as_provider": "ita", "as_addr": "https://example.com"}
-        cfg = _build_config(verify=v, ohttp=None, forward_headers=None)
+        cfg = _build_config(verify=v, ohttp=None)
         assert cfg["verify"] == v
         assert "no_ra" not in cfg
 
     def test_ohttp_forwarded(self):
         ohttp = {"tls_ca_certs": "/path/to/cert"}
-        cfg = _build_config(verify=None, ohttp=ohttp, forward_headers=None)
+        cfg = _build_config(verify=None, ohttp=ohttp)
         assert cfg["ohttp"]["tls_ca_certs"] == "/path/to/cert"
 
     def test_ohttp_not_mutated(self):
         ohttp = {"key": "val"}
-        _build_config(verify=None, ohttp=ohttp, forward_headers=["x-foo"])
-        assert "forward_headers" not in ohttp
+        _build_config(verify=None, ohttp=ohttp)
+        assert ohttp == {"key": "val"}
 
-    def test_forward_headers_added_to_ohttp(self):
-        cfg = _build_config(verify=None, ohttp=None, forward_headers=["authorization"])
-        assert cfg["ohttp"]["forward_headers"] == ["authorization"]
-
-    def test_forward_headers_merged_with_ohttp(self):
-        ohttp = {"tls_ca_certs": "/cert"}
-        cfg = _build_config(
-            verify=None, ohttp=ohttp, forward_headers=["x-key"]
-        )
-        assert cfg["ohttp"]["tls_ca_certs"] == "/cert"
-        assert cfg["ohttp"]["forward_headers"] == ["x-key"]
-
-    def test_empty_forward_headers_not_set(self):
-        cfg = _build_config(verify=None, ohttp=None, forward_headers=[])
-        assert "forward_headers" not in cfg.get("ohttp", {})
-
-    def test_no_ohttp_no_headers(self):
-        cfg = _build_config(verify=None, ohttp=None, forward_headers=None)
+    def test_no_ohttp(self):
+        cfg = _build_config(verify=None, ohttp=None)
         assert cfg["ohttp"] == {}
 
 
@@ -74,17 +58,9 @@ class TestTransportInit:
         with pytest.raises(RuntimeError, match="api_key"):
             Transport(verify={"as_provider": "ita"})
 
-    def test_forward_headers(self):
-        t = Transport(verify=None, forward_headers=["authorization", "x-key"])
+    def test_ohttp_with_forward_headers(self):
+        t = Transport(verify=None, ohttp={"forward_headers": ["authorization"]})
         assert t._client is not None
-
-    def test_attach_attestation_header(self):
-        t = Transport(verify=None, attach_attestation_header=True)
-        assert t._attach_attestation_header is True
-
-    def test_attestation_token_none_initially(self):
-        t = Transport(verify=None)
-        assert t.attestation_token is None
 
     def test_context_manager(self):
         with Transport(verify=None) as t:
@@ -104,17 +80,9 @@ class TestAsyncTransportInit:
         with pytest.raises(RuntimeError, match="api_key"):
             AsyncTransport(verify={"as_provider": "ita"})
 
-    def test_forward_headers(self):
-        t = AsyncTransport(verify=None, forward_headers=["authorization"])
+    def test_ohttp_with_forward_headers(self):
+        t = AsyncTransport(verify=None, ohttp={"forward_headers": ["authorization"]})
         assert t._client is not None
-
-    def test_attach_attestation_header(self):
-        t = AsyncTransport(verify=None, attach_attestation_header=True)
-        assert t._attach_attestation_header is True
-
-    def test_attestation_token_none_initially(self):
-        t = AsyncTransport(verify=None)
-        assert t.attestation_token is None
 
 
 class TestTngClientDirect:

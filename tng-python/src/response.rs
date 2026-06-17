@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 
 type BodyReceiver = Arc<tokio::sync::Mutex<mpsc::Receiver<Result<Vec<u8>, String>>>>;
 
-/// An HTTP response returned by `TngClient.send()` / `send_async()`.
+/// An HTTP response returned by `RequestSender.finish()` / `finish_async()`.
 ///
 /// The response body is streamed via a background tokio task that drains
 /// the axum body into an mpsc channel. Consumers can either iterate

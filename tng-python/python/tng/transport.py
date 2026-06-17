@@ -8,19 +8,17 @@ import httpx
 
 from tng._native import TngClient, TngResponse
 
+_DEFAULT_VERIFY: dict = {"as_provider": "ita"}
+_ATTESTATION_HEADER = "x-tng-attestation-token"
+
 
 def _build_config(
     verify: Optional[dict],
     ohttp: Optional[dict],
-    forward_headers: Optional[list[str]],
 ) -> dict:
     """Build a CommonArgs-shaped config dict for the Rust layer."""
-    ohttp_config = dict(ohttp) if ohttp else {}
-    if forward_headers:
-        ohttp_config["forward_headers"] = forward_headers
-
     config: dict[str, Any] = {
-        "ohttp": ohttp_config,
+        "ohttp": dict(ohttp) if ohttp else {},
     }
     if verify is not None:
         config["verify"] = verify
@@ -29,44 +27,49 @@ def _build_config(
     return config
 
 
+def _build_response_headers(tng_response: TngResponse) -> dict[str, str]:
+    headers = dict(tng_response.headers)
+    if tng_response.attestation_token is not None:
+        headers[_ATTESTATION_HEADER] = tng_response.attestation_token
+    return headers
+
+
 class Transport(httpx.BaseTransport):
     """An httpx Transport that encrypts requests via TNG's OHTTP layer.
 
     Traffic goes directly through the in-process OHTTP security layer
     (no localhost proxy). The remote TEE is verified via attestation
-    before any data is sent.
+    before any data is sent. When attestation is configured, each
+    response includes an ``x-tng-attestation-token`` header with the
+    verification token (JWT).
 
-    Usage with httpx:
-        transport = tng.Transport()
-        with httpx.Client(transport=transport) as client:
+    Usage:
+        with httpx.Client(transport=tng.Transport()) as client:
             resp = client.get("https://model-vault.example.com/v1/models")
+            token = resp.headers.get("x-tng-attestation-token")
 
     Streaming:
-        with httpx.Client(transport=transport) as client:
+        with httpx.Client(transport=tng.Transport()) as client:
             with client.stream("POST", url, json=payload) as resp:
                 for chunk in resp.iter_bytes():
                     process(chunk)
 
     Custom verification:
-        transport = tng.Transport(verify={
+        tng.Transport(verify={
             "as_provider": "ita",
             "as_addr": "https://api.trustauthority.intel.com",
             "policy_ids": ["my-policy"],
         })
 
     Skip verification (testing only):
-        transport = tng.Transport(verify=None)
+        tng.Transport(verify=None)
     """
-
-    _DEFAULT_VERIFY: dict = {"as_provider": "ita"}
 
     def __init__(
         self,
         *,
         verify: Optional[dict] = _DEFAULT_VERIFY,
         ohttp: Optional[dict] = None,
-        forward_headers: Optional[list[str]] = None,
-        attach_attestation_header: bool = False,
     ):
         """Create a TNG Transport.
 
@@ -74,53 +77,24 @@ class Transport(httpx.BaseTransport):
             verify: Attestation verification config dict.
                     Defaults to ITA verification ({"as_provider": "ita"}).
                     Set to None to disable verification (testing only).
-            ohttp: Raw OHTTP config dict (path_rewrites, tls_ca_certs, etc.).
-            forward_headers: Header names to forward to the TNG egress
-                             (e.g. ["authorization", "x-routing-key"]).
-            attach_attestation_header: Inject X-TNG-Attestation-Token on responses.
+            ohttp: Raw OHTTP config dict (path_rewrites, tls_ca_certs,
+                   forward_headers, etc.).
         """
-        config = _build_config(
-            verify=verify, ohttp=ohttp, forward_headers=forward_headers
-        )
-        self._client = TngClient(config)
-        self._attach_attestation_header = attach_attestation_header
-        self._last_attestation_token: Optional[str] = None
-
-    @property
-    def attestation_token(self) -> Optional[str]:
-        """The last attestation token (JWT) received from the TNG egress.
-
-        Populated after the first successful request when verification is
-        configured. Returns None if attestation is disabled or no request
-        has been made yet.
-        """
-        return self._last_attestation_token
+        self._client = TngClient(_build_config(verify=verify, ohttp=ohttp))
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        headers_str = request.headers.multi_items()
-
         sender = self._client.start_request(
             str(request.method),
             str(request.url),
-            headers_str,
+            request.headers.multi_items(),
         )
         for chunk in request.stream:
             sender.write(chunk)
         tng_response = sender.finish()
 
-        if tng_response.attestation_token is not None:
-            self._last_attestation_token = tng_response.attestation_token
-
-        resp_headers = dict(tng_response.headers)
-        if (
-            self._attach_attestation_header
-            and self._last_attestation_token is not None
-        ):
-            resp_headers["x-tng-attestation-token"] = self._last_attestation_token
-
         return httpx.Response(
             status_code=tng_response.status,
-            headers=resp_headers,
+            headers=_build_response_headers(tng_response),
             stream=_ResponseStream(tng_response),
         )
 
@@ -138,60 +112,33 @@ class AsyncTransport(httpx.AsyncBaseTransport):
     """Async version of tng.Transport.
 
     Usage:
-        transport = tng.AsyncTransport()
-        async with httpx.AsyncClient(transport=transport) as client:
+        async with httpx.AsyncClient(transport=tng.AsyncTransport()) as client:
             async with client.stream("POST", url, json=payload) as resp:
                 async for chunk in resp.aiter_bytes():
                     process(chunk)
     """
-
-    _DEFAULT_VERIFY: dict = {"as_provider": "ita"}
 
     def __init__(
         self,
         *,
         verify: Optional[dict] = _DEFAULT_VERIFY,
         ohttp: Optional[dict] = None,
-        forward_headers: Optional[list[str]] = None,
-        attach_attestation_header: bool = False,
     ):
-        config = _build_config(
-            verify=verify, ohttp=ohttp, forward_headers=forward_headers
-        )
-        self._client = TngClient(config)
-        self._attach_attestation_header = attach_attestation_header
-        self._last_attestation_token: Optional[str] = None
-
-    @property
-    def attestation_token(self) -> Optional[str]:
-        """The last attestation token (JWT) received from the TNG egress."""
-        return self._last_attestation_token
+        self._client = TngClient(_build_config(verify=verify, ohttp=ohttp))
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        headers_str = request.headers.multi_items()
-
         sender = self._client.start_request(
             str(request.method),
             str(request.url),
-            headers_str,
+            request.headers.multi_items(),
         )
         async for chunk in request.stream:
             await sender.write_async(chunk)
         tng_response = await sender.finish_async()
 
-        if tng_response.attestation_token is not None:
-            self._last_attestation_token = tng_response.attestation_token
-
-        resp_headers = dict(tng_response.headers)
-        if (
-            self._attach_attestation_header
-            and self._last_attestation_token is not None
-        ):
-            resp_headers["x-tng-attestation-token"] = self._last_attestation_token
-
         return httpx.Response(
             status_code=tng_response.status,
-            headers=resp_headers,
+            headers=_build_response_headers(tng_response),
             stream=_AsyncResponseStream(tng_response),
         )
 
