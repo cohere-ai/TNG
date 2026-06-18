@@ -19,6 +19,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
+      - if: runner.os == 'macOS'
+        run: brew install protobuf
       - uses: PyO3/maturin-action@v1
         with:
           working-directory: tng-python
