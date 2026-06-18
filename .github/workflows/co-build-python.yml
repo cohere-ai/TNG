@@ -11,8 +11,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64 }
-          - { os: ubuntu-latest, target: aarch64 }
+          - { os: ubuntu-latest, target: x86_64,  manylinux: auto }
+          - { os: ubuntu-latest, target: aarch64, manylinux: manylinux_2_28 }
           # - { os: macos-13,      target: x86_64 }
           - { os: macos-14,      target: aarch64 }
           # - { os: windows-latest, target: x86_64 }
@@ -24,7 +24,7 @@ jobs:
           working-directory: tng-python
           target: ${{ matrix.target }}
           args: --release --out dist
-          manylinux: auto
+          manylinux: ${{ matrix.manylinux || 'auto' }}
           before-script-linux: |
             ARCH=$(uname -m)
             if [ "$ARCH" = "aarch64" ]; then PROTOC_ARCH="linux-aarch_64"; else PROTOC_ARCH="linux-x86_64"; fi
