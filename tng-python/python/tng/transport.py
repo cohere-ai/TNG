@@ -44,8 +44,9 @@ class Transport(httpx.BaseTransport):
 
     Usage:
         transport = tng.Transport(verify={
+            "model": "passport",
             "as_provider": "ita",
-            "as_addr": "https://api.trustauthority.intel.com",
+            "ita_jwks_addr": "https://portal.trustauthority.intel.com",
             "policy_ids": ["my-policy"],
         })
         with httpx.Client(transport=transport) as client:

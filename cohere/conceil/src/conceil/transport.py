@@ -31,10 +31,13 @@ import tng
 
 _MODEL_HEADER = "x-gateway-model-name"
 
+_DEFAULT_FORWARD_HEADERS: list = ["authorization", _MODEL_HEADER]
+
 _DEFAULT_VERIFY: dict = {
+    "model": "passport",
     "as_provider": "ita",
-    "as_addr": "https://api.trustauthority.intel.com",
-    "policy_ids": ["ecdf9171-2f85-47b4-9941-703118f731a8"],
+    "ita_jwks_addr": "https://portal.trustauthority.intel.com",
+    "policy_ids": ["cbeedffa-e224-4664-b6b4-573fcd4133d3"],
 }
 
 
@@ -57,13 +60,11 @@ class Transport(httpx.BaseTransport):
     def __init__(
         self,
         *,
-        verify: Optional[dict] = None,
+        verify: Optional[dict] = _DEFAULT_VERIFY,
         ohttp: Optional[dict] = None,
     ):
-        if verify is None:
-            verify = _DEFAULT_VERIFY
         ohttp = dict(ohttp) if ohttp else {}
-        ohttp.setdefault("forward_headers", [_MODEL_HEADER])
+        ohttp.setdefault("forward_headers", _DEFAULT_FORWARD_HEADERS)
         self._inner = tng.Transport(verify=verify, ohttp=ohttp)
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
@@ -84,13 +85,11 @@ class AsyncTransport(httpx.AsyncBaseTransport):
     def __init__(
         self,
         *,
-        verify: Optional[dict] = None,
+        verify: Optional[dict] = _DEFAULT_VERIFY,
         ohttp: Optional[dict] = None,
     ):
-        if verify is None:
-            verify = _DEFAULT_VERIFY
         ohttp = dict(ohttp) if ohttp else {}
-        ohttp.setdefault("forward_headers", [_MODEL_HEADER])
+        ohttp.setdefault("forward_headers", _DEFAULT_FORWARD_HEADERS)
         self._inner = tng.AsyncTransport(verify=verify, ohttp=ohttp)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
