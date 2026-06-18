@@ -26,7 +26,9 @@ jobs:
           args: --release --out dist
           manylinux: auto
           before-script-linux: |
-            yum install -y protobuf-compiler protobuf-devel
+            curl -Lo /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v28.3/protoc-28.3-linux-x86_64.zip
+            unzip -o /tmp/protoc.zip -d /usr/local bin/protoc 'include/*'
+            protoc --version
       - uses: actions/upload-artifact@v4
         with:
           name: tng-${{ matrix.os }}-${{ matrix.target }}
