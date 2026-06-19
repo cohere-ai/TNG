@@ -36,34 +36,14 @@ def _build_response_headers(tng_response: TngResponse) -> dict[str, str]:
 class Transport(httpx.BaseTransport):
     """An httpx Transport that encrypts requests via TNG's OHTTP layer.
 
-    Traffic goes directly through the in-process OHTTP security layer
-    (no localhost proxy). The remote TEE is verified via attestation
-    before any data is sent. When attestation is configured, each
-    response includes an ``x-tng-attestation-token`` header with the
-    verification token (JWT).
-
-    Usage:
-        transport = tng.Transport(verify={
-            "model": "passport",
-            "as_provider": "ita",
-            "ita_jwks_addr": "https://portal.trustauthority.intel.com",
-            "policy_ids": ["my-policy"],
-        })
-        with httpx.Client(transport=transport) as client:
-            resp = client.get("https://model-vault.example.com/v1/models")
-            token = resp.headers.get("x-tng-attestation-token")
-
-    Streaming:
-        with httpx.Client(transport=transport) as client:
-            with client.stream("POST", url, json=payload) as resp:
-                for chunk in resp.iter_bytes():
-                    process(chunk)
+    The remote TEE is verified via attestation before any data is sent.
+    When attestation is configured, each response includes an
+    ``x-tng-attestation-token`` header with the verification token (JWT).
 
     Args:
         verify: Attestation verification config (required). Pass a dict
                 to configure verification. To disable verification, pass
-                ``None`` explicitly — this is NOT recommended for
-                production use.
+                ``None`` explicitly — not recommended for production.
         ohttp: OHTTP config dict (forward_headers, tls_ca_certs, etc.).
     """
 
@@ -102,14 +82,7 @@ class Transport(httpx.BaseTransport):
 
 
 class AsyncTransport(httpx.AsyncBaseTransport):
-    """Async version of tng.Transport.
-
-    Usage:
-        async with httpx.AsyncClient(transport=tng.AsyncTransport()) as client:
-            async with client.stream("POST", url, json=payload) as resp:
-                async for chunk in resp.aiter_bytes():
-                    process(chunk)
-    """
+    """Async version of :class:`Transport`."""
 
     def __init__(
         self,

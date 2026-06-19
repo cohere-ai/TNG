@@ -1,29 +1,14 @@
 """Encrypted httpx transports for AI APIs.
 
-Usage with Cohere:
-    import cohere, httpx
-    from conceil import Transport
-
-    co = cohere.ClientV2(
-        api_key="...",
-        httpx_client=httpx.Client(transport=Transport()),
-    )
-    co.chat(model="command-a-plus-05-2026", messages=[...])
-
-Usage with OpenAI:
-    from openai import OpenAI
-    from conceil import Transport
-
-    client = OpenAI(
-        http_client=httpx.Client(transport=Transport()),
-    )
-    client.chat.completions.create(model="gpt-4", messages=[...])
+Extends tng.Transport with Cohere-specific defaults (ITA attestation,
+header forwarding) and automatic model-name header promotion from JSON
+request bodies.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Optional
 
 import httpx
 
@@ -56,7 +41,7 @@ def _inject_model_header(request: httpx.Request) -> None:
         pass
 
 
-class Transport(httpx.BaseTransport):
+class Transport(tng.Transport):
     def __init__(
         self,
         *,
@@ -65,23 +50,14 @@ class Transport(httpx.BaseTransport):
     ):
         ohttp = dict(ohttp) if ohttp else {}
         ohttp.setdefault("forward_headers", _DEFAULT_FORWARD_HEADERS)
-        self._inner = tng.Transport(verify=verify, ohttp=ohttp)
+        super().__init__(verify=verify, ohttp=ohttp)
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         _inject_model_header(request)
-        return self._inner.handle_request(request)
-
-    def close(self) -> None:
-        self._inner.close()
-
-    def __enter__(self) -> "Transport":
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self.close()
+        return super().handle_request(request)
 
 
-class AsyncTransport(httpx.AsyncBaseTransport):
+class AsyncTransport(tng.AsyncTransport):
     def __init__(
         self,
         *,
@@ -90,17 +66,8 @@ class AsyncTransport(httpx.AsyncBaseTransport):
     ):
         ohttp = dict(ohttp) if ohttp else {}
         ohttp.setdefault("forward_headers", _DEFAULT_FORWARD_HEADERS)
-        self._inner = tng.AsyncTransport(verify=verify, ohttp=ohttp)
+        super().__init__(verify=verify, ohttp=ohttp)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         _inject_model_header(request)
-        return await self._inner.handle_async_request(request)
-
-    async def aclose(self) -> None:
-        await self._inner.aclose()
-
-    async def __aenter__(self) -> "AsyncTransport":
-        return self
-
-    async def __aexit__(self, *args: Any) -> None:
-        await self.aclose()
+        return await super().handle_async_request(request)
