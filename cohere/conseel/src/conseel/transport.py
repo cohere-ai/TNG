@@ -27,6 +27,9 @@ _DEFAULT_VERIFY: dict = {
 
 
 def _inject_model_header(request: httpx.Request) -> None:
+    # Skip JSON parsing if the caller already set the header explicitly.
+    if _MODEL_HEADER in request.headers:
+        return
     content_type = request.headers.get("content-type", "")
     if "json" not in content_type:
         return
