@@ -36,7 +36,7 @@ jobs:
             python3 -c "import zipfile; zipfile.ZipFile('/tmp/protoc.zip').extractall('/usr/local')"
             chmod +x /usr/local/bin/protoc
             protoc --version
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: tng-${{ matrix.os }}-${{ matrix.target }}
           path: tng-python/dist/*.whl
@@ -46,12 +46,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with: { python-version: '3.11' }
       - run: pip install build setuptools-scm
       - run: python -m build --wheel
         working-directory: cohere/conceil
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: conceil
           path: cohere/conceil/dist/*.whl
@@ -60,7 +60,7 @@ jobs:
     needs: [build-tng, build-conceil]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/upload-artifact/merge@v4
+      - uses: actions/upload-artifact/merge@v6
         with:
           name: all-wheels
           pattern: '*'
@@ -73,7 +73,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with: { name: all-wheels, path: dist }
       - uses: softprops/action-gh-release@v2
         with:
