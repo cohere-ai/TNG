@@ -237,6 +237,7 @@ jobs:
             test-runner \
             bash -c '
               # Build the tng Python package
+              apt-get update && apt-get install -y --no-install-recommends python3-venv
               python3 -m venv /workspace/.venv
               /workspace/.venv/bin/pip install maturin httpx pytest
               cd /workspace/tng-python && /workspace/.venv/bin/maturin develop
@@ -247,7 +248,7 @@ jobs:
               # Integration tests (spins up TNG egress + backend in network namespaces)
               cargo test \
                 --no-default-features \
-                --features python-sdk \
+                --features on-source-code,python-sdk \
                 --package tng-testsuite \
                 --test python_sdk \
                 -- --nocapture
