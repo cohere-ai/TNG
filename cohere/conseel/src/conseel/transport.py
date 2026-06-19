@@ -26,14 +26,13 @@ _DEFAULT_VERIFY: dict = {
 }
 
 
-def _inject_model_header(request: httpx.Request) -> None:
-    # Skip JSON parsing if the caller already set the header explicitly.
+def _should_extract_model(request: httpx.Request) -> bool:
     if _MODEL_HEADER in request.headers:
-        return
-    content_type = request.headers.get("content-type", "")
-    if "json" not in content_type:
-        return
-    body = request.read()
+        return False
+    return "json" in request.headers.get("content-type", "")
+
+
+def _promote_model_from_body(request: httpx.Request, body: bytes) -> None:
     if not body:
         return
     try:
@@ -56,7 +55,8 @@ class Transport(tng.Transport):
         super().__init__(verify=verify, ohttp=ohttp)
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        _inject_model_header(request)
+        if _should_extract_model(request):
+            _promote_model_from_body(request, request.read())
         return super().handle_request(request)
 
 
@@ -72,5 +72,6 @@ class AsyncTransport(tng.AsyncTransport):
         super().__init__(verify=verify, ohttp=ohttp)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        _inject_model_header(request)
+        if _should_extract_model(request):
+            _promote_model_from_body(request, await request.aread())
         return await super().handle_async_request(request)
