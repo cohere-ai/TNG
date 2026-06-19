@@ -1,8 +1,13 @@
 """Unit tests for the tng Python SDK (no network required)."""
 
+import socketserver
+import threading
+import time
+
+import httpx
 import pytest
 
-from tng.transport import Transport, AsyncTransport, _build_config
+from tng.transport import Transport, AsyncTransport, _build_config, _extract_timeouts
 
 
 class TestBuildConfig:
@@ -25,6 +30,45 @@ class TestBuildConfig:
         ohttp = {"tls_ca_certs": "/path/to/cert"}
         cfg = _build_config(verify=None, ohttp=ohttp)
         assert cfg["ohttp"] == ohttp
+
+
+class TestExtractTimeouts:
+    def test_no_timeout_returns_none(self):
+        request = httpx.Request("GET", "http://example.com")
+        request.extensions = {}
+        assert _extract_timeouts(request) == (None, None)
+
+    def test_dict_timeout_extracts_values(self):
+        request = httpx.Request("GET", "http://example.com")
+        request.extensions = {
+            "timeout": {"connect": 1.0, "read": 5.0, "write": 3.0, "pool": 2.0}
+        }
+        write_t, read_t = _extract_timeouts(request)
+        assert write_t == 3.0
+        assert read_t == 5.0
+
+
+class TestTimeoutBehavior:
+    def test_sync_transport_raises_on_timeout(self):
+        """A stalling server must trigger httpx.TimeoutException within the deadline."""
+        stop = threading.Event()
+
+        class _SilentHandler(socketserver.BaseRequestHandler):
+            def handle(self):
+                stop.wait(timeout=10)
+
+        with socketserver.TCPServer(("127.0.0.1", 0), _SilentHandler) as srv:
+            port = srv.server_address[1]
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            try:
+                with httpx.Client(transport=Transport(verify=None)) as client:
+                    start = time.monotonic()
+                    with pytest.raises(httpx.TimeoutException):
+                        client.get(f"http://127.0.0.1:{port}/test", timeout=0.5)
+                    assert time.monotonic() - start < 3.0
+            finally:
+                stop.set()
+                srv.shutdown()
 
 
 class TestTransportInit:

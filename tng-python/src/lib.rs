@@ -19,5 +19,9 @@ fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<client::TngClient>()?;
     m.add_class::<client::RequestSender>()?;
     m.add_class::<response::TngResponse>()?;
+    m.add(
+        "TngTimeoutError",
+        m.py().get_type::<client::TngTimeoutError>(),
+    )?;
     Ok(())
 }

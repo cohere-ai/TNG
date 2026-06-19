@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use pyo3::exceptions::PyRuntimeError;
@@ -13,6 +14,25 @@ use tokio_util::io::ReaderStream;
 use url::Url;
 
 use crate::response::TngResponse;
+
+pyo3::create_exception!(tng._native, TngTimeoutError, pyo3::exceptions::PyException);
+
+/// Run a future with an optional timeout; raises `TngTimeoutError` on expiry.
+async fn maybe_timeout<F, T>(
+    fut: F,
+    timeout_secs: Option<f64>,
+    msg: &'static str,
+) -> PyResult<T>
+where
+    F: std::future::Future<Output = PyResult<T>>,
+{
+    match timeout_secs {
+        Some(secs) => tokio::time::timeout(Duration::from_secs_f64(secs), fut)
+            .await
+            .map_err(|_| TngTimeoutError::new_err(msg))?,
+        None => fut.await,
+    }
+}
 
 #[pyclass]
 pub struct TngClient {
@@ -126,43 +146,65 @@ pub struct RequestSender {
 #[pymethods]
 impl RequestSender {
     /// Write a chunk of request body data. Blocks until the chunk is accepted.
-    fn write(&self, py: Python<'_>, data: Vec<u8>) -> PyResult<()> {
+    #[pyo3(signature = (data, timeout_secs=None))]
+    fn write(&self, py: Python<'_>, data: Vec<u8>, timeout_secs: Option<f64>) -> PyResult<()> {
         let writer = self.body_writer.clone();
         let rt = self.rt.clone();
 
         py.allow_threads(move || {
             rt.block_on(async move {
                 use tokio::io::AsyncWriteExt;
-                let mut guard = writer.lock().await;
-                let w = guard
-                    .as_mut()
-                    .ok_or_else(|| PyRuntimeError::new_err("request body already closed"))?;
-                w.write_all(&data)
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(format!("write failed: {e}")))
+                maybe_timeout(
+                    async {
+                        let mut guard = writer.lock().await;
+                        let w = guard.as_mut().ok_or_else(|| {
+                            PyRuntimeError::new_err("request body already closed")
+                        })?;
+                        w.write_all(&data)
+                            .await
+                            .map_err(|e| PyRuntimeError::new_err(format!("write failed: {e}")))
+                    },
+                    timeout_secs,
+                    "timed out writing request body",
+                )
+                .await
             })
         })
     }
 
     /// Write a chunk of request body data (async version).
-    fn write_async<'py>(&self, py: Python<'py>, data: Vec<u8>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (data, timeout_secs=None))]
+    fn write_async<'py>(
+        &self,
+        py: Python<'py>,
+        data: Vec<u8>,
+        timeout_secs: Option<f64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let writer = self.body_writer.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             use tokio::io::AsyncWriteExt;
-            let mut guard = writer.lock().await;
-            let w = guard
-                .as_mut()
-                .ok_or_else(|| PyRuntimeError::new_err("request body already closed"))?;
-            w.write_all(&data)
-                .await
-                .map_err(|e| PyRuntimeError::new_err(format!("write failed: {e}")))?;
-            Ok(())
+            maybe_timeout(
+                async {
+                    let mut guard = writer.lock().await;
+                    let w = guard
+                        .as_mut()
+                        .ok_or_else(|| PyRuntimeError::new_err("request body already closed"))?;
+                    w.write_all(&data)
+                        .await
+                        .map_err(|e| PyRuntimeError::new_err(format!("write failed: {e}")))?;
+                    Ok(())
+                },
+                timeout_secs,
+                "timed out writing request body",
+            )
+            .await
         })
     }
 
     /// Close the body stream and await the response. Returns a `TngResponse`.
-    fn finish(&mut self, py: Python<'_>) -> PyResult<TngResponse> {
+    #[pyo3(signature = (timeout_secs=None))]
+    fn finish(&mut self, py: Python<'_>, timeout_secs: Option<f64>) -> PyResult<TngResponse> {
         let writer = self.body_writer.clone();
         let handle = self
             .handle
@@ -173,7 +215,12 @@ impl RequestSender {
         let (response, attestation_result) = py.allow_threads(|| {
             rt.block_on(async {
                 drop(writer.lock().await.take());
-                handle.await.unwrap()
+                maybe_timeout(
+                    async { handle.await.unwrap() },
+                    timeout_secs,
+                    "timed out waiting for response",
+                )
+                .await
             })
         })?;
 
@@ -185,7 +232,12 @@ impl RequestSender {
     }
 
     /// Close the body stream and await the response (async version).
-    fn finish_async<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    #[pyo3(signature = (timeout_secs=None))]
+    fn finish_async<'py>(
+        &mut self,
+        py: Python<'py>,
+        timeout_secs: Option<f64>,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let writer = self.body_writer.clone();
         let handle = self
             .handle
@@ -195,7 +247,12 @@ impl RequestSender {
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             drop(writer.lock().await.take());
-            let (response, attestation_result) = handle.await.unwrap()?;
+            let (response, attestation_result) = maybe_timeout(
+                async { handle.await.unwrap() },
+                timeout_secs,
+                "timed out waiting for response",
+            )
+            .await?;
             Ok(TngResponse::from_http_response(
                 response,
                 attestation_result,

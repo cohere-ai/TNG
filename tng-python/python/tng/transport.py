@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Iterator, Optional
+from typing import Any, AsyncIterator, Iterator, Optional, Tuple
 
 import httpx
 
-from tng._native import TngClient, TngResponse
+from tng._native import TngClient, TngResponse, TngTimeoutError
 
 _ATTESTATION_HEADER = "x-tng-attestation-token"
+
+
+def _extract_timeouts(request: httpx.Request) -> Tuple[Optional[float], Optional[float]]:
+    """Return (write_timeout, read_timeout) from the per-request extensions.
+
+    httpx populates ``request.extensions["timeout"]`` with a dict mapping
+    ``{"connect": ..., "read": ..., "write": ..., "pool": ...}`` where each
+    value is either a float (seconds) or None.
+    """
+    timeout = request.extensions.get("timeout")
+    if timeout is None:
+        return None, None
+    if isinstance(timeout, dict):
+        return timeout.get("write"), timeout.get("read")
+    # httpx.Timeout object (has .write / .read attributes)
+    return getattr(timeout, "write", None), getattr(timeout, "read", None)
 
 
 def _build_config(
@@ -56,14 +72,19 @@ class Transport(httpx.BaseTransport):
         self._client = TngClient(_build_config(verify=verify, ohttp=ohttp))
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
+        write_timeout, read_timeout = _extract_timeouts(request)
+
         sender = self._client.start_request(
             str(request.method),
             str(request.url),
             request.headers.multi_items(),
         )
-        for chunk in request.stream:
-            sender.write(chunk)
-        tng_response = sender.finish()
+        try:
+            for chunk in request.stream:
+                sender.write(chunk, timeout_secs=write_timeout)
+            tng_response = sender.finish(timeout_secs=read_timeout)
+        except TngTimeoutError as exc:
+            raise httpx.ReadTimeout(str(exc)) from exc
 
         return httpx.Response(
             status_code=tng_response.status,
@@ -93,14 +114,19 @@ class AsyncTransport(httpx.AsyncBaseTransport):
         self._client = TngClient(_build_config(verify=verify, ohttp=ohttp))
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        write_timeout, read_timeout = _extract_timeouts(request)
+
         sender = self._client.start_request(
             str(request.method),
             str(request.url),
             request.headers.multi_items(),
         )
-        async for chunk in request.stream:
-            await sender.write_async(chunk)
-        tng_response = await sender.finish_async()
+        try:
+            async for chunk in request.stream:
+                await sender.write_async(chunk, timeout_secs=write_timeout)
+            tng_response = await sender.finish_async(timeout_secs=read_timeout)
+        except TngTimeoutError as exc:
+            raise httpx.ReadTimeout(str(exc)) from exc
 
         return httpx.Response(
             status_code=tng_response.status,
