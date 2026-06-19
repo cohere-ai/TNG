@@ -249,9 +249,9 @@ impl RequestSender {
             drop(writer.lock().await.take());
             let (response, attestation_result) = maybe_timeout(
                 async {
-                    handle.await.map_err(|e| {
-                        PyRuntimeError::new_err(format!("request task failed: {e}"))
-                    })?
+                    handle
+                        .await
+                        .map_err(|e| PyRuntimeError::new_err(format!("request task failed: {e}")))?
                 },
                 timeout_secs,
                 "timed out waiting for response",
@@ -263,6 +263,14 @@ impl RequestSender {
                 rt,
             ))
         })
+    }
+}
+
+impl Drop for RequestSender {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
     }
 }
 

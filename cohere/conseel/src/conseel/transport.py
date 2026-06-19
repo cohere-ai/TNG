@@ -39,7 +39,7 @@ def _inject_model_header(request: httpx.Request) -> None:
     try:
         model = json.loads(body).get("model")
         if model:
-            request.headers[_MODEL_HEADER] = model
+            request.headers[_MODEL_HEADER] = str(model)
     except (json.JSONDecodeError, AttributeError):
         pass
 
