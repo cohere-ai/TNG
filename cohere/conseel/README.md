@@ -1,4 +1,4 @@
-# conceil
+# conseel
 
 Drop-in encrypted transport for AI SDKs. Wraps [tng](../../tng-python) to route
 requests through OHTTP encryption with TEE attestation verification, and
@@ -8,10 +8,10 @@ automatically promotes the `model` field from JSON request bodies into an
 ## Install
 
 ```bash
-pip install conceil
+pip install conseel
 ```
 
-`conceil` depends on the `tng` package (installed automatically).
+`conseel` depends on the `tng` package (installed automatically).
 
 ## Usage
 
@@ -20,7 +20,7 @@ pip install conceil
 ```python
 import cohere
 import httpx
-from conceil import Transport
+from conseel import Transport
 
 co = cohere.ClientV2(
     api_key="...",
@@ -34,7 +34,7 @@ co.chat(model="command-a-plus-05-2026", messages=[...])
 ```python
 from openai import OpenAI
 import httpx
-from conceil import Transport
+from conseel import Transport
 
 client = OpenAI(
     http_client=httpx.Client(transport=Transport()),
@@ -46,7 +46,7 @@ client.chat.completions.create(model="gpt-4", messages=[...])
 
 ```python
 import httpx
-from conceil import AsyncTransport
+from conseel import AsyncTransport
 
 async with httpx.AsyncClient(transport=AsyncTransport()) as client:
     resp = await client.post(url, json={"model": "command-a-plus-05-2026", ...})
@@ -68,7 +68,7 @@ async with httpx.AsyncClient(transport=AsyncTransport()) as client:
 
 `Transport` and `AsyncTransport` accept the same `verify` and `ohttp` keyword
 arguments as `tng.Transport` (see [TNG configuration docs](../../docs/configuration.md)
-for the full schema). The only difference is that `conceil` provides sensible
+for the full schema). The only difference is that `conseel` provides sensible
 defaults:
 
 - **`verify`** — Defaults to Intel Trust Authority attestation. Pass `None` to

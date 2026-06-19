@@ -41,7 +41,7 @@ jobs:
           name: tng-${{ matrix.os }}-${{ matrix.target }}
           path: tng-python/dist/*.whl
 
-  build-conceil:
+  build-conseel:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -50,14 +50,14 @@ jobs:
         with: { python-version: '3.11' }
       - run: pip install build setuptools-scm
       - run: python -m build --wheel
-        working-directory: cohere/conceil
+        working-directory: cohere/conseel
       - uses: actions/upload-artifact@v6
         with:
-          name: conceil
-          path: cohere/conceil/dist/*.whl
+          name: conseel
+          path: cohere/conseel/dist/*.whl
 
   merge-wheels:
-    needs: [build-tng, build-conceil]
+    needs: [build-tng, build-conseel]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/upload-artifact/merge@v6

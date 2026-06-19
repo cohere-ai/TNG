@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "conceil"
+name = "conseel"
 dynamic = ["version"]
 description = "Drop-in encrypted transport for AI SDKs"
 requires-python = ">=3.8"

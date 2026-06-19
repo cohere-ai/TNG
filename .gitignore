@@ -14,7 +14,7 @@ __pycache__/
 # maturin tng output
 *.so
 
-# conceil output
+# conseel output
 **/build/**
 **/dist/**
 *.egg-info
