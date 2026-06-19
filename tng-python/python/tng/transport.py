@@ -82,6 +82,9 @@ class Transport(httpx.BaseTransport):
         try:
             for chunk in request.stream:
                 sender.write(chunk, timeout_secs=write_timeout)
+        except TngTimeoutError as exc:
+            raise httpx.WriteTimeout(str(exc)) from exc
+        try:
             tng_response = sender.finish(timeout_secs=read_timeout)
         except TngTimeoutError as exc:
             raise httpx.ReadTimeout(str(exc)) from exc
@@ -124,6 +127,9 @@ class AsyncTransport(httpx.AsyncBaseTransport):
         try:
             async for chunk in request.stream:
                 await sender.write_async(chunk, timeout_secs=write_timeout)
+        except TngTimeoutError as exc:
+            raise httpx.WriteTimeout(str(exc)) from exc
+        try:
             tng_response = await sender.finish_async(timeout_secs=read_timeout)
         except TngTimeoutError as exc:
             raise httpx.ReadTimeout(str(exc)) from exc
