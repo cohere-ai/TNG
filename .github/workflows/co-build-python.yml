@@ -13,7 +13,7 @@ jobs:
         include:
           - { os: ubuntu-latest, target: x86_64,  manylinux: auto }
           - { os: ubuntu-latest, target: aarch64, manylinux: manylinux_2_28 }
-          - { os: macos-13,      target: x86_64 }
+          - { os: macos-15-intel, target: x86_64 }
           - { os: macos-14,      target: aarch64 }
           # - { os: windows-latest, target: x86_64 }  # tng crate doesn't compile on Windows yet
     runs-on: ${{ matrix.os }}
