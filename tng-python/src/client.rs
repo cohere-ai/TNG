@@ -18,11 +18,7 @@ use crate::response::TngResponse;
 pyo3::create_exception!(tng._native, TngTimeoutError, pyo3::exceptions::PyException);
 
 /// Run a future with an optional timeout; raises `TngTimeoutError` on expiry.
-async fn maybe_timeout<F, T>(
-    fut: F,
-    timeout_secs: Option<f64>,
-    msg: &'static str,
-) -> PyResult<T>
+async fn maybe_timeout<F, T>(fut: F, timeout_secs: Option<f64>, msg: &'static str) -> PyResult<T>
 where
     F: std::future::Future<Output = PyResult<T>>,
 {
