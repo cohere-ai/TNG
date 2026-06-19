@@ -33,7 +33,7 @@ def _inject_model_header(request: httpx.Request) -> None:
     content_type = request.headers.get("content-type", "")
     if "json" not in content_type:
         return
-    body = request.content
+    body = request.read()
     if not body:
         return
     try:
@@ -52,7 +52,7 @@ class Transport(tng.Transport):
         ohttp: Optional[dict] = None,
     ):
         ohttp = dict(ohttp) if ohttp else {}
-        ohttp.setdefault("forward_headers", _DEFAULT_FORWARD_HEADERS)
+        ohttp.setdefault("forward_headers", list(_DEFAULT_FORWARD_HEADERS))
         super().__init__(verify=verify, ohttp=ohttp)
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
@@ -68,7 +68,7 @@ class AsyncTransport(tng.AsyncTransport):
         ohttp: Optional[dict] = None,
     ):
         ohttp = dict(ohttp) if ohttp else {}
-        ohttp.setdefault("forward_headers", _DEFAULT_FORWARD_HEADERS)
+        ohttp.setdefault("forward_headers", list(_DEFAULT_FORWARD_HEADERS))
         super().__init__(verify=verify, ohttp=ohttp)
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:

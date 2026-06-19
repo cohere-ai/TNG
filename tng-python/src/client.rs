@@ -212,7 +212,11 @@ impl RequestSender {
             rt.block_on(async {
                 drop(writer.lock().await.take());
                 maybe_timeout(
-                    async { handle.await.unwrap() },
+                    async {
+                        handle.await.map_err(|e| {
+                            PyRuntimeError::new_err(format!("request task failed: {e}"))
+                        })?
+                    },
                     timeout_secs,
                     "timed out waiting for response",
                 )
@@ -244,7 +248,11 @@ impl RequestSender {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             drop(writer.lock().await.take());
             let (response, attestation_result) = maybe_timeout(
-                async { handle.await.unwrap() },
+                async {
+                    handle.await.map_err(|e| {
+                        PyRuntimeError::new_err(format!("request task failed: {e}"))
+                    })?
+                },
                 timeout_secs,
                 "timed out waiting for response",
             )
