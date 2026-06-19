@@ -5,12 +5,11 @@ use pyo3::prelude::*;
 
 #[pymodule]
 fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Initialize tracing with a reasonable default filter.
-    // Users can override via RUST_LOG env var.
+    // Users can override via RUST_LOG env var (e.g. RUST_LOG=tng=info).
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,tng=info")),
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("error")),
         )
         .try_init();
 

@@ -224,6 +224,36 @@ jobs:
             '
           REMOTE
 
+      - name: Run Python SDK tests
+        run: |
+          ssh tdx-vm 'bash -s' <<'REMOTE'
+          set -e
+
+          docker run --rm --privileged --network host \
+            -e RUST_LOG=warn \
+            -v ~/workspace:/workspace \
+            -v ~/cargo-registry:/root/.cargo/registry \
+            -v ~/cargo-git:/root/.cargo/git \
+            test-runner \
+            bash -c '
+              # Build the tng Python package
+              python3 -m venv /workspace/.venv
+              /workspace/.venv/bin/pip install maturin httpx pytest
+              cd /workspace/tng-python && /workspace/.venv/bin/maturin develop
+
+              # Python unit tests (no network needed)
+              /workspace/.venv/bin/pytest /workspace/tng-python/tests/ -v
+
+              # Integration tests (spins up TNG egress + backend in network namespaces)
+              cargo test \
+                --no-default-features \
+                --features python-sdk \
+                --package tng-testsuite \
+                --test python_sdk \
+                -- --nocapture
+            '
+          REMOTE
+
       - name: Delete TDX VM
         if: always()
         run: |

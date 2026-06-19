@@ -3,13 +3,13 @@ use std::sync::Arc;
 use anyhow::Context;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use tokio::task::JoinHandle;
-use tokio_util::io::ReaderStream;
 use tng::{
     config::ingress::CommonArgs,
     tunnel::{endpoint::TngEndpoint, ingress::protocol::ohttp::security::OHttpSecurityLayer},
     AttestationResult, RaContext, TokioRuntime,
 };
+use tokio::task::JoinHandle;
+use tokio_util::io::ReaderStream;
 use url::Url;
 
 use crate::response::TngResponse;
@@ -90,8 +90,7 @@ impl TngClient {
         url: &str,
         headers: Vec<(String, String)>,
     ) -> PyResult<RequestSender> {
-        let (request, endpoint, body_writer) =
-            build_streaming_request(method, url, &headers)?;
+        let (request, endpoint, body_writer) = build_streaming_request(method, url, &headers)?;
 
         let security_layer = self.security_layer.clone();
         let rt = self.rt.clone();
@@ -178,7 +177,11 @@ impl RequestSender {
             })
         })?;
 
-        Ok(TngResponse::from_http_response(response, attestation_result, rt))
+        Ok(TngResponse::from_http_response(
+            response,
+            attestation_result,
+            rt,
+        ))
     }
 
     /// Close the body stream and await the response (async version).
@@ -193,7 +196,11 @@ impl RequestSender {
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
             drop(writer.lock().await.take());
             let (response, attestation_result) = handle.await.unwrap()?;
-            Ok(TngResponse::from_http_response(response, attestation_result, rt))
+            Ok(TngResponse::from_http_response(
+                response,
+                attestation_result,
+                rt,
+            ))
         })
     }
 }

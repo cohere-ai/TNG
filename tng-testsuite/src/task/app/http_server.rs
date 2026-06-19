@@ -1,10 +1,9 @@
 use std::net::SocketAddr;
 
 use anyhow::{bail, Result};
-use axum::{body::Body, extract::Request, routing::any, Router};
+use axum::{body::Body, extract::Request, response::Response, routing::any, Router};
 use axum_extra::extract::Host;
 use http::{Method, StatusCode};
-use http_body_util::BodyExt as _;
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
@@ -39,20 +38,24 @@ pub async fn launch_http_server(
 
                     tracing::info!("Got request from client, now sending response to client");
 
+                    // Stream request body back as response for POST/PUT
+                    // so tests can verify streaming round-trip.
                     let method = request.method().clone();
                     if method == Method::POST || method == Method::PUT {
-                        let body_bytes = request.into_body().collect().await?.to_bytes();
-                        Ok((StatusCode::OK, body_bytes.to_vec()))
+                        Ok(Response::new(request.into_body()))
                     } else {
-                        Ok((StatusCode::OK, HTTP_RESPONSE_BODY.as_bytes().to_vec()))
+                        Ok(Response::builder()
+                            .status(StatusCode::OK)
+                            .body(Body::from(HTTP_RESPONSE_BODY))
+                            .unwrap())
                     }
                 })
                 .await
                 .unwrap_or_else(|e: anyhow::Error| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Something went wrong: {e}").into_bytes(),
-                    )
+                    Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::from(format!("Something went wrong: {e}")))
+                        .unwrap()
                 })
             }),
         );

@@ -2,3 +2,19 @@
 tng-*.tar.gz
 .package/
 /.vscode/
+
+# artifacts from attestation stack for tests
+**/.keys/
+*.rego
+
+# python env
+__pycache__/
+**/.venv/
+
+# maturin tng output
+*.so
+
+# conceil output
+**/build/**
+**/dist/**
+*.egg-info
