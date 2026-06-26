@@ -59,8 +59,7 @@ async fn test_python_sdk() -> Result<()> {
         ShellTask {
             name: "python_sdk_test".to_owned(),
             node_type: NodeType::Client,
-            script: r#"
-                ../.venv/bin/python3 -c '
+            script: concat!(env!("CARGO_MANIFEST_DIR"), r#"/../.venv/bin/python3 -c '
 import asyncio
 import tng
 import httpx
@@ -141,7 +140,7 @@ asyncio.run(async_tests())
 
 print("SUCCESS: all Python SDK tests passed")
 '
-            "#
+            "#)
             .to_owned(),
             stop_test_on_finish: true,
             run_in_foreground: false,
