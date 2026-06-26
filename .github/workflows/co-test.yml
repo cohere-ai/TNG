@@ -112,8 +112,8 @@ jobs:
 
       - name: Clone repository
         env:
-          GIT_REF: ${{ github.event_name == 'pull_request' && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.ref }}
-          GIT_SHA: ${{ github.sha }}
+          GIT_REF: ${{ github.event_name == 'pull_request' && format('pull/{0}/head', github.event.pull_request.number) || github.ref_name }}
+          GIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           ssh tdx-vm "bash -s" <<REMOTE
           set -e
