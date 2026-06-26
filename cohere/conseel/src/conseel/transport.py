@@ -7,6 +7,7 @@ request bodies.
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Optional
 
@@ -24,6 +25,8 @@ _DEFAULT_VERIFY: dict = {
     "ita_jwks_addr": "https://portal.trustauthority.intel.com",
     "policy_ids": ["cbeedffa-e224-4664-b6b4-573fcd4133d3"],
 }
+
+_UNSET = object()
 
 
 def _should_extract_model(request: httpx.Request) -> bool:
@@ -47,9 +50,11 @@ class Transport(tng.Transport):
     def __init__(
         self,
         *,
-        verify: Optional[dict] = _DEFAULT_VERIFY,
+        verify: Optional[dict] = _UNSET,
         ohttp: Optional[dict] = None,
     ):
+        if verify is _UNSET:
+            verify = copy.deepcopy(_DEFAULT_VERIFY)
         ohttp = dict(ohttp) if ohttp else {}
         ohttp.setdefault("forward_headers", list(_DEFAULT_FORWARD_HEADERS))
         super().__init__(verify=verify, ohttp=ohttp)
@@ -64,9 +69,11 @@ class AsyncTransport(tng.AsyncTransport):
     def __init__(
         self,
         *,
-        verify: Optional[dict] = _DEFAULT_VERIFY,
+        verify: Optional[dict] = _UNSET,
         ohttp: Optional[dict] = None,
     ):
+        if verify is _UNSET:
+            verify = copy.deepcopy(_DEFAULT_VERIFY)
         ohttp = dict(ohttp) if ohttp else {}
         ohttp.setdefault("forward_headers", list(_DEFAULT_FORWARD_HEADERS))
         super().__init__(verify=verify, ohttp=ohttp)
