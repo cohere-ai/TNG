@@ -42,10 +42,10 @@ def _build_config(
     return config
 
 
-def _build_response_headers(tng_response: TngResponse) -> dict[str, str]:
-    headers = dict(tng_response.headers)
+def _build_response_headers(tng_response: TngResponse) -> list[tuple[str, str]]:
+    headers = tng_response.headers
     if tng_response.attestation_token is not None:
-        headers[_ATTESTATION_HEADER] = tng_response.attestation_token
+        headers.append((_ATTESTATION_HEADER, tng_response.attestation_token))
     return headers
 
 
