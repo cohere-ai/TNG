@@ -1,10 +1,14 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use http_body_util::BodyExt;
 use pyo3::exceptions::{PyRuntimeError, PyStopAsyncIteration};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+use crate::client::TngTimeoutError;
 
 type BodyReceiver = Arc<tokio::sync::Mutex<mpsc::Receiver<Result<Vec<u8>, String>>>>;
 
@@ -20,7 +24,9 @@ pub struct TngResponse {
     headers: Vec<(String, String)>,
     attestation_token: Option<String>,
     body_rx: BodyReceiver,
+    drain_handle: Arc<tokio::sync::Mutex<Option<JoinHandle<()>>>>,
     rt: Arc<tokio::runtime::Runtime>,
+    read_timeout_secs: std::sync::Mutex<Option<f64>>,
 }
 
 impl TngResponse {
@@ -46,7 +52,7 @@ impl TngResponse {
 
         let (tx, rx) = mpsc::channel(32);
 
-        rt.spawn(async move {
+        let handle = rt.spawn(async move {
             let mut body = body;
             loop {
                 match body.frame().await {
@@ -71,8 +77,36 @@ impl TngResponse {
             headers,
             attestation_token,
             body_rx: Arc::new(tokio::sync::Mutex::new(rx)),
+            drain_handle: Arc::new(tokio::sync::Mutex::new(Some(handle))),
             rt,
+            read_timeout_secs: std::sync::Mutex::new(None),
         }
+    }
+}
+
+impl TngResponse {
+    fn read_timeout(&self) -> Option<Duration> {
+        self.read_timeout_secs
+            .lock()
+            .unwrap()
+            .map(Duration::from_secs_f64)
+    }
+}
+
+/// Receive a single chunk with an optional per-chunk timeout.
+/// Returns `Ok(None)` at end-of-stream, `Ok(Some(...))` for a chunk,
+/// or `Err(TngTimeoutError)` on timeout.
+async fn recv_with_timeout(
+    rx: &BodyReceiver,
+    timeout: Option<Duration>,
+) -> PyResult<Option<Result<Vec<u8>, String>>> {
+    let mut guard = rx.lock().await;
+    if let Some(dur) = timeout {
+        tokio::time::timeout(dur, guard.recv())
+            .await
+            .map_err(|_| TngTimeoutError::new_err("timed out reading response body"))
+    } else {
+        Ok(guard.recv().await)
     }
 }
 
@@ -93,29 +127,35 @@ impl TngResponse {
         self.attestation_token.clone()
     }
 
+    /// Set the per-chunk read timeout for body streaming operations.
+    ///
+    /// When set, `__next__`, `__anext__`, and `read_all` will raise
+    /// `TngTimeoutError` if a chunk takes longer than this to arrive.
+    #[pyo3(signature = (timeout_secs=None))]
+    fn set_read_timeout(&self, timeout_secs: Option<f64>) {
+        *self.read_timeout_secs.lock().unwrap() = timeout_secs;
+    }
+
     /// Read the entire remaining body and return it as a single `bytes` object.
     fn read_all<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         let rx = self.body_rx.clone();
         let rt = self.rt.clone();
+        let timeout = self.read_timeout();
 
-        let result = py.allow_threads(|| {
+        let data = py.allow_threads(|| {
             rt.block_on(async {
-                let mut guard = rx.lock().await;
                 let mut buf = Vec::new();
-                while let Some(chunk) = guard.recv().await {
+                while let Some(chunk) = recv_with_timeout(&rx, timeout).await? {
                     match chunk {
                         Ok(data) => buf.extend_from_slice(&data),
-                        Err(e) => return Err(e),
+                        Err(e) => return Err(PyRuntimeError::new_err(e)),
                     }
                 }
                 Ok(buf)
             })
-        });
+        })?;
 
-        match result {
-            Ok(data) => Ok(PyBytes::new(py, &data)),
-            Err(e) => Err(PyRuntimeError::new_err(e)),
-        }
+        Ok(PyBytes::new(py, &data))
     }
 
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
@@ -127,8 +167,9 @@ impl TngResponse {
     fn __next__<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let rx = self.body_rx.clone();
         let rt = self.rt.clone();
+        let timeout = self.read_timeout();
 
-        let result = py.allow_threads(|| rt.block_on(async { rx.lock().await.recv().await }));
+        let result = py.allow_threads(|| rt.block_on(recv_with_timeout(&rx, timeout)))?;
 
         match result {
             Some(Ok(data)) => Ok(Some(PyBytes::new(py, &data))),
@@ -144,14 +185,47 @@ impl TngResponse {
     /// Yield the next chunk of body bytes (async iteration).
     fn __anext__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let rx = self.body_rx.clone();
+        let timeout = self.read_timeout();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {
-            let chunk = rx.lock().await.recv().await;
-            match chunk {
+            match recv_with_timeout(&rx, timeout).await? {
                 Some(Ok(data)) => Ok(data),
                 Some(Err(e)) => Err(PyRuntimeError::new_err(e)),
                 None => Err(PyStopAsyncIteration::new_err(())),
             }
+        })
+    }
+
+    /// Cancel the background body-drain task and close the receiver.
+    ///
+    /// Safe to call multiple times. After close(), iteration will yield no
+    /// further chunks.
+    fn close(&self, py: Python<'_>) {
+        let handle = self.drain_handle.clone();
+        let rx = self.body_rx.clone();
+        let rt = self.rt.clone();
+
+        py.allow_threads(|| {
+            rt.block_on(async {
+                if let Some(h) = handle.lock().await.take() {
+                    h.abort();
+                }
+                rx.lock().await.close();
+            });
+        });
+    }
+
+    /// Async version of close().
+    fn close_async<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let handle = self.drain_handle.clone();
+        let rx = self.body_rx.clone();
+
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            if let Some(h) = handle.lock().await.take() {
+                h.abort();
+            }
+            rx.lock().await.close();
+            Ok(())
         })
     }
 }

@@ -70,6 +70,28 @@ class TestTimeoutBehavior:
                 stop.set()
                 srv.shutdown()
 
+    def test_stream_timeout_raises_read_timeout(self):
+        """A mid-body stall must surface as httpx.ReadTimeout, not block forever."""
+        from tng._native import TngTimeoutError
+        from tng.transport import _ResponseStream
+
+        class _StallingResponse:
+            """Yields one chunk then simulates a body-stream timeout."""
+            def set_read_timeout(self, _t):
+                pass
+            def close(self):
+                pass
+            def __iter__(self):
+                yield b"partial"
+                raise TngTimeoutError("timed out reading response body")
+
+        stream = _ResponseStream(_StallingResponse(), read_timeout=1.0)
+        chunks = []
+        with pytest.raises(httpx.ReadTimeout):
+            for chunk in stream:
+                chunks.append(chunk)
+        assert chunks == [b"partial"]
+
 
 class TestTransportInit:
     def test_requires_verify(self):

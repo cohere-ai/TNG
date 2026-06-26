@@ -92,7 +92,7 @@ class Transport(httpx.BaseTransport):
         return httpx.Response(
             status_code=tng_response.status,
             headers=_build_response_headers(tng_response),
-            stream=_ResponseStream(tng_response),
+            stream=_ResponseStream(tng_response, read_timeout=read_timeout),
         )
 
     def close(self) -> None:
@@ -137,7 +137,7 @@ class AsyncTransport(httpx.AsyncBaseTransport):
         return httpx.Response(
             status_code=tng_response.status,
             headers=_build_response_headers(tng_response),
-            stream=_AsyncResponseStream(tng_response),
+            stream=_AsyncResponseStream(tng_response, read_timeout=read_timeout),
         )
 
     async def aclose(self) -> None:
@@ -153,26 +153,42 @@ class AsyncTransport(httpx.AsyncBaseTransport):
 class _ResponseStream(httpx.SyncByteStream):
     """Wraps TngResponse iteration into an httpx SyncByteStream."""
 
-    def __init__(self, tng_response: TngResponse) -> None:
+    def __init__(
+        self,
+        tng_response: TngResponse,
+        read_timeout: Optional[float] = None,
+    ) -> None:
         self._response = tng_response
+        self._response.set_read_timeout(read_timeout)
 
     def __iter__(self) -> Iterator[bytes]:
-        for chunk in self._response:
-            yield bytes(chunk)
+        try:
+            for chunk in self._response:
+                yield bytes(chunk)
+        except TngTimeoutError as exc:
+            raise httpx.ReadTimeout(str(exc)) from exc
 
     def close(self) -> None:
-        pass
+        self._response.close()
 
 
 class _AsyncResponseStream(httpx.AsyncByteStream):
     """Wraps TngResponse async iteration into an httpx AsyncByteStream."""
 
-    def __init__(self, tng_response: TngResponse) -> None:
+    def __init__(
+        self,
+        tng_response: TngResponse,
+        read_timeout: Optional[float] = None,
+    ) -> None:
         self._response = tng_response
+        self._response.set_read_timeout(read_timeout)
 
     async def __aiter__(self) -> AsyncIterator[bytes]:
-        async for chunk in self._response:
-            yield bytes(chunk)
+        try:
+            async for chunk in self._response:
+                yield bytes(chunk)
+        except TngTimeoutError as exc:
+            raise httpx.ReadTimeout(str(exc)) from exc
 
     async def aclose(self) -> None:
-        pass
+        await self._response.close_async()
