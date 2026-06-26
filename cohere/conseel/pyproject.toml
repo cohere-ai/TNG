@@ -12,3 +12,6 @@ dependencies = ["tng", "httpx>=0.23.0"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools_scm]
+root = "../.."
