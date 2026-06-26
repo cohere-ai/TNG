@@ -30,6 +30,30 @@ where
     }
 }
 
+/// Wrapper that aborts the spawned task when dropped.
+///
+/// Dropping a bare `JoinHandle` only detaches the task (it keeps running).
+/// This wrapper ensures the task is cancelled if e.g. a timeout fires and
+/// the future holding the handle is dropped before the task completes.
+struct AbortOnDrop<T>(JoinHandle<T>);
+
+impl<T> std::future::Future for AbortOnDrop<T> {
+    type Output = Result<T, tokio::task::JoinError>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.0).poll(cx)
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 #[pyclass]
 pub struct TngClient {
     security_layer: Arc<OHttpSecurityLayer>,
@@ -201,11 +225,12 @@ impl RequestSender {
     /// Close the body stream and await the response. Returns a `TngResponse`.
     #[pyo3(signature = (timeout_secs=None))]
     fn finish(&mut self, py: Python<'_>, timeout_secs: Option<f64>) -> PyResult<TngResponse> {
+        let handle = AbortOnDrop(
+            self.handle
+                .take()
+                .ok_or_else(|| PyRuntimeError::new_err("request already finished"))?,
+        );
         let writer = self.body_writer.clone();
-        let handle = self
-            .handle
-            .take()
-            .ok_or_else(|| PyRuntimeError::new_err("request already finished"))?;
         let rt = self.rt.clone();
 
         let (response, attestation_result) = py.allow_threads(|| {
@@ -238,11 +263,12 @@ impl RequestSender {
         py: Python<'py>,
         timeout_secs: Option<f64>,
     ) -> PyResult<Bound<'py, PyAny>> {
+        let handle = AbortOnDrop(
+            self.handle
+                .take()
+                .ok_or_else(|| PyRuntimeError::new_err("request already finished"))?,
+        );
         let writer = self.body_writer.clone();
-        let handle = self
-            .handle
-            .take()
-            .ok_or_else(|| PyRuntimeError::new_err("request already finished"))?;
         let rt = self.rt.clone();
 
         pyo3_async_runtimes::tokio::future_into_py(py, async move {

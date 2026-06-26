@@ -93,6 +93,34 @@ class TestTimeoutBehavior:
         assert chunks == [b"partial"]
 
 
+    def test_finish_timeout_aborts_background_task(self):
+        """After finish() times out the background task must be aborted,
+        not left running.  Verify by checking the server sees the TCP
+        connection close while the Transport (and its Tokio runtime) is
+        still alive."""
+        conn_closed = threading.Event()
+
+        class _Handler(socketserver.BaseRequestHandler):
+            def handle(self):
+                try:
+                    while self.request.recv(4096):
+                        pass
+                except OSError:
+                    pass
+                conn_closed.set()
+
+        with socketserver.TCPServer(("127.0.0.1", 0), _Handler) as srv:
+            port = srv.server_address[1]
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            transport = Transport(verify=None)
+            with pytest.raises(httpx.TimeoutException):
+                httpx.Client(transport=transport).get(
+                    f"http://127.0.0.1:{port}/", timeout=0.5
+                )
+            assert conn_closed.wait(timeout=3.0), "background task leaked"
+            srv.shutdown()
+
+
 class TestTransportInit:
     def test_requires_verify(self):
         with pytest.raises(TypeError):
