@@ -1,0 +1,19 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "tng"
+dynamic = ["version"]
+description = "Python SDK for TNG — direct OHTTP encryption for confidential AI"
+requires-python = ">=3.8"
+license = { text = "Apache-2.0" }
+dependencies = ["httpx>=0.23.0"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "pytest-httpserver"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "tng._native"

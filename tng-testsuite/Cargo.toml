@@ -45,6 +45,7 @@ serial_test = {workspace = true}
 [features]
 default = ["on-source-code"]
 js-sdk = ["dep:chromedriver-manager", "dep:thirtyfour"]
+python-sdk = []
 on-bin = []
 on-podman = []
 on-source-code = ["dep:tng"]

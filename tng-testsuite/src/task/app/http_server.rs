@@ -1,9 +1,9 @@
 use std::net::SocketAddr;
 
 use anyhow::{bail, Result};
-use axum::{body::Body, extract::Request, routing::any, Router};
+use axum::{body::Body, extract::Request, response::Response, routing::any, Router};
 use axum_extra::extract::Host;
-use http::StatusCode;
+use http::{Method, StatusCode};
 use tokio::{net::TcpListener, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
@@ -26,7 +26,7 @@ pub async fn launch_http_server(
         let app = Router::new().route(
             "/{*path}",
             any(|Host(hostname): Host, request: Request<Body>| async move {
-                (|| -> Result<_> {
+                (async {
                     if hostname != expected_host_header {
                         bail!("Got hostname `{hostname}`, but `{expected_host_header}` is expected");
                     }
@@ -37,13 +37,25 @@ pub async fn launch_http_server(
                     }
 
                     tracing::info!("Got request from client, now sending response to client");
-                    Ok((StatusCode::OK, HTTP_RESPONSE_BODY.to_owned()))
-                })()
-                .unwrap_or_else(|e| {
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        format!("Something went wrong: {e}"),
-                    )
+
+                    // Stream request body back as response for POST/PUT
+                    // so tests can verify streaming round-trip.
+                    let method = request.method().clone();
+                    if method == Method::POST || method == Method::PUT {
+                        Ok(Response::new(request.into_body()))
+                    } else {
+                        Ok(Response::builder()
+                            .status(StatusCode::OK)
+                            .body(Body::from(HTTP_RESPONSE_BODY))
+                            .unwrap())
+                    }
+                })
+                .await
+                .unwrap_or_else(|e: anyhow::Error| {
+                    Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::from(format!("Something went wrong: {e}")))
+                        .unwrap()
                 })
             }),
         );
