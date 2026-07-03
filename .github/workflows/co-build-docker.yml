@@ -13,12 +13,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - variant: egress
+          - target: egress
             image: ghcr.io/cohere-ai/tng
-            dockerfile: cohere/egress/Dockerfile
-          - variant: ingress
+          - target: ingress
             image: ghcr.io/cohere-ai/tng-ingress
-            dockerfile: cohere/ingress/Dockerfile
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -55,12 +53,13 @@ jobs:
         uses: docker/build-push-action@v6.9.0
         with:
           context: .
-          file: ${{ matrix.dockerfile }}
+          file: cohere/docker/Dockerfile
+          target: ${{ matrix.target }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Attest build provenance
         uses: actions/attest@v4
@@ -71,7 +70,7 @@ jobs:
 
       # Only one matrix leg creates the GitHub Release to avoid duplicates.
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/') && matrix.variant == 'egress'
+        if: startsWith(github.ref, 'refs/tags/') && matrix.target == 'egress'
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -80,12 +79,12 @@ jobs:
         uses: anchore/sbom-action@v0
         with:
           image: ${{ matrix.image }}@${{ steps.build.outputs.digest }}
-          output-file: sbom-${{ matrix.variant }}.spdx.json
+          output-file: sbom-${{ matrix.target }}.spdx.json
 
       - name: Attest SBOM
         uses: actions/attest@v4
         with:
           subject-name: ${{ matrix.image }}
           subject-digest: ${{ steps.build.outputs.digest }}
-          sbom-path: sbom-${{ matrix.variant }}.spdx.json
+          sbom-path: sbom-${{ matrix.target }}.spdx.json
           push-to-registry: true
