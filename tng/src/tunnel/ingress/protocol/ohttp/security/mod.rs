@@ -292,6 +292,7 @@ async fn promote_body_fields(
         .get(http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
+    let content_type = content_type.to_ascii_lowercase();
     if !content_type.starts_with("application/json") {
         tracing::debug!(
             content_type,

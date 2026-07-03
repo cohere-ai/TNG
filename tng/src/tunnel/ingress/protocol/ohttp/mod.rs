@@ -85,7 +85,10 @@ mod unix_specific_module {
                                 {
                                     Ok((mut response, attestation_result)) => {
                                         if let Some(att) = attestation_result {
-                                            if let Ok(token) = serde_json::to_string(&att) {
+                                            if let Some(token) = serde_json::to_value(&att)
+                                                .ok()
+                                                .and_then(|v| v.as_str().map(String::from))
+                                            {
                                                 if let Ok(val) = HeaderValue::from_str(&token) {
                                                     response
                                                         .headers_mut()
