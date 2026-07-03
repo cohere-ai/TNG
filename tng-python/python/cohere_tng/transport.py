@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator, Iterator, Optional, Tuple
 
 import httpx
 
-from tng._native import TngClient, TngResponse, TngTimeoutError
+from cohere_tng._rust import TngClient, TngResponse, TngTimeoutError
 
 _ATTESTATION_HEADER = "x-tng-attestation-token"
 

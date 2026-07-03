@@ -1,4 +1,4 @@
-# tng
+# cohere-tng
 
 Python SDK for TNG — drop-in OHTTP encryption for `httpx` with TEE attestation
 verification. Built as a native Rust extension via PyO3.
@@ -6,7 +6,7 @@ verification. Built as a native Rust extension via PyO3.
 ## Install
 
 ```bash
-pip install tng
+pip install cohere-tng
 ```
 
 ## Usage
@@ -15,9 +15,9 @@ pip install tng
 
 ```python
 import httpx
-import tng
+import cohere_tng
 
-transport = tng.Transport(verify={
+transport = cohere_tng.Transport(verify={
     "model": "passport",
     "as_provider": "ita",
     "ita_jwks_addr": "https://portal.trustauthority.intel.com",
@@ -36,9 +36,9 @@ with httpx.Client(transport=transport) as client:
 
 ```python
 import httpx
-import tng
+import cohere_tng
 
-transport = tng.AsyncTransport(verify={
+transport = cohere_tng.AsyncTransport(verify={
     "model": "passport",
     "as_provider": "ita",
     "ita_jwks_addr": "https://portal.trustauthority.intel.com",
@@ -95,8 +95,8 @@ python3 -m venv .venv
 
 ## How it works
 
-The `tng` package embeds TNG's Rust OHTTP implementation directly into the
-Python process via PyO3. When you make a request through `tng.Transport`:
+The `cohere-tng` package embeds TNG's Rust OHTTP implementation directly into the
+Python process via PyO3. When you make a request through `cohere_tng.Transport`:
 
 1. The TEE running the TNG egress is verified via remote attestation (e.g.
    Intel Trust Authority) before any data is sent.

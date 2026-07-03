@@ -4,7 +4,7 @@ mod response;
 use pyo3::prelude::*;
 
 #[pymodule]
-fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Users can override via RUST_LOG env var (e.g. RUST_LOG=tng=info).
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
