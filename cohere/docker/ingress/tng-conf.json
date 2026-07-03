@@ -14,8 +14,13 @@
             },
             "ohttp": {
                 "forward_headers": [
-                    "x-gateway-model-name",
                     "authorization"
+                ],
+                "body_field_headers": [
+                    {
+                        "field_name": "model",
+                        "header_name": "x-gateway-model-name"
+                    }
                 ]
             },
             "verify": {

@@ -1,9 +1,10 @@
 # conseel
 
 Drop-in encrypted transport for AI SDKs. Wraps [cohere-tng](https://pypi.org/project/cohere-tng/) to route
-requests through OHTTP encryption with TEE attestation verification, and
+requests through OHTTP encryption with TEE attestation verification. TNG
 automatically promotes the `model` field from JSON request bodies into an
-`x-gateway-model-name` header for backend routing.
+`x-gateway-model-name` header for backend routing (via `body_field_headers`
+config).
 
 ## Install
 
@@ -56,9 +57,11 @@ async with httpx.AsyncClient(transport=AsyncTransport()) as client:
    cannot inspect request or response payloads.
 2. **Verifies** the remote TEE via Intel Trust Authority attestation before
    sending any data (configurable via the `verify` parameter).
-3. **Extracts** the `model` field from JSON request bodies and sets it as the
-   `x-gateway-model-name` HTTP header for gateway routing. Non-JSON requests
-   (e.g. multipart audio uploads) are streamed through without inspection.
+3. **Promotes** the `model` field from JSON request bodies to the
+   `x-gateway-model-name` HTTP header for gateway routing. This happens
+   inside TNG via `body_field_headers` config. Body parsing is skipped
+   entirely for non-JSON requests (e.g. multipart audio uploads) and
+   when the target headers are already present on the request.
 4. **Forwards** `authorization` and `x-gateway-model-name` headers through the
    OHTTP layer to the backend.
 
@@ -71,5 +74,6 @@ defaults:
 
 - **`verify`** — Defaults to Intel Trust Authority attestation. Pass `None` to
   disable verification (not recommended for production).
-- **`ohttp`** — Defaults include forwarding `authorization` and
-  `x-gateway-model-name` headers.
+- **`ohttp`** — Defaults include forwarding `authorization` headers and
+  promoting the `model` JSON body field to `x-gateway-model-name` via
+  `body_field_headers`.
