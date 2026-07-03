@@ -145,6 +145,13 @@ pub struct Socks5AuthArgs {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
+pub struct BodyFieldHeader {
+    pub field_name: String,
+    pub header_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct OHttpArgs {
     #[serde(default)]
     pub path_rewrites: Vec<PathRewrite>,
@@ -161,6 +168,10 @@ pub struct OHttpArgs {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tls_ca_certs: Vec<String>,
+
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub body_field_headers: Vec<BodyFieldHeader>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -354,6 +365,30 @@ mod tests {
 
         let args2: super::OHttpArgs = serde_json::from_value(json!({}))?;
         assert!(args2.tls_ca_certs.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_ohttp_args_body_field_headers_roundtrip() -> Result<()> {
+        let input = json!({
+            "body_field_headers": [
+                { "field_name": "model", "header_name": "x-gateway-model-name" }
+            ]
+        });
+        let args: super::OHttpArgs = serde_json::from_value(input)?;
+        assert_eq!(args.body_field_headers.len(), 1);
+        assert_eq!(args.body_field_headers[0].field_name, "model");
+        assert_eq!(
+            args.body_field_headers[0].header_name,
+            "x-gateway-model-name"
+        );
+
+        let roundtripped: super::OHttpArgs = serde_json::from_value(serde_json::to_value(&args)?)?;
+        assert_eq!(roundtripped.body_field_headers.len(), 1);
+        assert_eq!(roundtripped.body_field_headers[0].field_name, "model");
+
+        let empty: super::OHttpArgs = serde_json::from_value(json!({}))?;
+        assert!(empty.body_field_headers.is_empty());
         Ok(())
     }
 }
