@@ -1,0 +1,31 @@
+{
+    "add_ingress": [
+        {
+            "mapping": {
+                "in": {
+                    "host": "${IN_HOST}",
+                    "port": ${IN_PORT}
+                },
+                "out": {
+                    "host": "${OUT_HOST}",
+                    "port": ${OUT_PORT},
+                    "scheme": "${OUT_SCHEME}"
+                }
+            },
+            "ohttp": {
+                "forward_headers": [
+                    "x-gateway-model-name",
+                    "authorization"
+                ]
+            },
+            "verify": {
+                "as_provider": "ita",
+                "ita_jwks_addr": "https://portal.trustauthority.intel.com",
+                "model": "passport",
+                "policy_ids": [
+                    "cbeedffa-e224-4664-b6b4-573fcd4133d3"
+                ]
+            }
+        }
+    ]
+}

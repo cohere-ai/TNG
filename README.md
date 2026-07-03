@@ -110,6 +110,10 @@ npm install tng-<version>.tgz
 ```
 
 
+## Cohere Ingress Image
+
+A pre-configured ingress image is available at `ghcr.io/cohere-ai/tng-ingress` for encrypting client traffic to a Cohere TNG egress endpoint. See [cohere/ingress/README.md](cohere/ingress/README.md) for usage and environment variables.
+
 ## More Documentation
 
 - **Detailed Configuration Manual**: For meanings of each configuration field and common templates, please refer to [docs/configuration.md](docs/configuration.md).
