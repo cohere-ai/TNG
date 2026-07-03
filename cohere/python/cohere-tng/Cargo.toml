@@ -26,4 +26,4 @@ tokio-util = { workspace = true }
 url = { workspace = true }
 
 [dependencies.tng]
-path = "../tng"
+path = "../../../tng"

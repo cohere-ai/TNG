@@ -7,7 +7,7 @@ import time
 import httpx
 import pytest
 
-from tng.transport import Transport, AsyncTransport, _build_config, _extract_timeouts
+from cohere_tng.transport import Transport, AsyncTransport, _build_config, _extract_timeouts
 
 
 class TestBuildConfig:
@@ -72,8 +72,8 @@ class TestTimeoutBehavior:
 
     def test_stream_timeout_raises_read_timeout(self):
         """A mid-body stall must surface as httpx.ReadTimeout, not block forever."""
-        from tng._native import TngTimeoutError
-        from tng.transport import _ResponseStream
+        from cohere_tng._rust import TngTimeoutError
+        from cohere_tng.transport import _ResponseStream
 
         class _StallingResponse:
             """Yields one chunk then simulates a body-stream timeout."""

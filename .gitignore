@@ -5,7 +5,7 @@ tng-*.tar.gz
 
 # artifacts from attestation stack for tests
 **/.keys/
-rego.github/test-deps/attestation-service/storage/attestation_service_policy/default_gpu.rego
+.github/test-deps/attestation-service/storage/attestation_service_policy/default_gpu.rego
 .github/test-deps/attestation-service/storage/attestation_service_policy/default_ppcie.rego
 .github/test-deps/attestation-service/storage/attestation_service_policy/default_switch.rego
 

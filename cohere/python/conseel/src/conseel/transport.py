@@ -13,7 +13,7 @@ from typing import Optional
 
 import httpx
 
-import tng
+import cohere_tng as tng
 
 _MODEL_HEADER = "x-gateway-model-name"
 

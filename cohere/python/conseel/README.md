@@ -1,6 +1,6 @@
 # conseel
 
-Drop-in encrypted transport for AI SDKs. Wraps [tng](../../tng-python) to route
+Drop-in encrypted transport for AI SDKs. Wraps [cohere-tng](https://pypi.org/project/cohere-tng/) to route
 requests through OHTTP encryption with TEE attestation verification, and
 automatically promotes the `model` field from JSON request bodies into an
 `x-gateway-model-name` header for backend routing.
@@ -10,8 +10,6 @@ automatically promotes the `model` field from JSON request bodies into an
 ```bash
 pip install conseel
 ```
-
-`conseel` depends on the `tng` package (installed automatically).
 
 ## Usage
 
@@ -67,7 +65,7 @@ async with httpx.AsyncClient(transport=AsyncTransport()) as client:
 ## Configuration
 
 `Transport` and `AsyncTransport` accept the same `verify` and `ohttp` keyword
-arguments as `tng.Transport` (see [TNG configuration docs](../../docs/configuration.md)
+arguments as `cohere_tng.Transport` (see [TNG configuration docs](https://github.com/cohere-ai/tng/blob/cohere/docs/configuration.md)
 for the full schema). The only difference is that `conseel` provides sensible
 defaults:
 

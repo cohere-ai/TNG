@@ -18,7 +18,7 @@ use tng_testsuite::{
 ///   ```sh
 ///   python3 -m venv .venv
 ///   .venv/bin/pip install maturin httpx
-///   cd tng-python && ../.venv/bin/maturin develop
+///   cd cohere/python/cohere-tng && ../../../.venv/bin/maturin develop
 ///   ```
 ///
 /// Run with: `cargo test -p tng-testsuite --features python-sdk --test python_sdk`
@@ -61,7 +61,7 @@ async fn test_python_sdk() -> Result<()> {
             node_type: NodeType::Client,
             script: concat!(env!("CARGO_MANIFEST_DIR"), r#"/../.venv/bin/python3 -c '
 import asyncio
-import tng
+import cohere_tng as tng
 import httpx
 
 URL = "http://192.168.1.1:20001/test?q=1"

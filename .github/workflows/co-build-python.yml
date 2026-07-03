@@ -2,12 +2,12 @@ name: Cohere Build Python
 
 on:
   push:
-    branches: [cohere, tng-python]  # remove tng-python before merging
+    branches: [cohere]
     tags: ['v*']
   workflow_dispatch:
 
 jobs:
-  build-tng:
+  build-cohere-tng:
     strategy:
       matrix:
         include:
@@ -25,7 +25,7 @@ jobs:
         run: choco install protoc -y
       - uses: PyO3/maturin-action@v1
         with:
-          working-directory: tng-python
+          working-directory: cohere/python/cohere-tng
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: ${{ matrix.manylinux || 'auto' }}
@@ -43,10 +43,12 @@ jobs:
             python3 -c "import zipfile; zipfile.ZipFile('/tmp/protoc.zip').extractall('/usr/local')"
             chmod +x /usr/local/bin/protoc
             protoc --version
+      # Validate package metadata and README will render correctly on PyPI
+      - run: pip install twine && twine check cohere/python/cohere-tng/dist/*.whl
       - uses: actions/upload-artifact@v6
         with:
-          name: tng-${{ matrix.os }}-${{ matrix.target }}
-          path: tng-python/dist/*.whl
+          name: cohere-tng-${{ matrix.os }}-${{ matrix.target }}
+          path: cohere/python/cohere-tng/dist/*.whl
 
   build-conseel:
     runs-on: ubuntu-latest
@@ -56,32 +58,64 @@ jobs:
       - uses: actions/setup-python@v6
         with: { python-version: '3.11' }
       - run: pip install build setuptools-scm
-      - run: python -m build --wheel
-        working-directory: cohere/conseel
+      - run: python -m build
+        working-directory: cohere/python/conseel
+      # Validate package metadata and README will render correctly on PyPI
+      - run: pip install twine && twine check cohere/python/conseel/dist/*
       - uses: actions/upload-artifact@v6
         with:
           name: conseel
-          path: cohere/conseel/dist/*.whl
+          path: cohere/python/conseel/dist/*
 
-  merge-wheels:
-    needs: [build-tng, build-conseel]
+  merge-cohere-tng-wheels:
+    needs: [build-cohere-tng]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/upload-artifact/merge@v6
         with:
-          name: all-wheels
-          pattern: '*'
+          name: cohere-tng-wheels
+          pattern: 'cohere-tng-*'
           delete-merged: true
+
+  # --- Publish (PyPI then GitHub Release) ---
+  # Chained sequentially: cohere-tng first (conseel depends on it),
+  # then conseel, then GitHub Release only after both succeed.
+
+  publish-cohere-tng:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [merge-cohere-tng-wheels]
+    runs-on: ubuntu-latest
+    environment: pypi-cohere-tng
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with: { name: cohere-tng-wheels, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-conseel:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [publish-cohere-tng, build-conseel]
+    runs-on: ubuntu-latest
+    environment: pypi-conseel
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with: { name: conseel, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
 
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [merge-wheels]
+    needs: [publish-cohere-tng, publish-conseel]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
-        with: { name: all-wheels, path: dist }
+      - uses: actions/download-artifact@v6
+        with: { name: cohere-tng-wheels, path: dist }
+      - uses: actions/download-artifact@v6
+        with: { name: conseel, path: dist }
       - uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.whl
+          files: dist/*

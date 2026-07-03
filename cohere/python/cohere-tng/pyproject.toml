@@ -3,12 +3,19 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "tng"
+name = "cohere-tng"
 dynamic = ["version"]
 description = "Python SDK for TNG — direct OHTTP encryption for confidential AI"
+readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "Apache-2.0" }
+authors = [{ name = "Cohere", email = "support@cohere.com" }]
 dependencies = ["httpx>=0.23.0"]
+
+[project.urls]
+Homepage = "https://github.com/cohere-ai/tng"
+Repository = "https://github.com/cohere-ai/tng"
+Documentation = "https://github.com/cohere-ai/tng/blob/cohere/docs/configuration.md"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "pytest-httpserver"]
@@ -16,4 +23,4 @@ dev = ["pytest", "pytest-asyncio", "pytest-httpserver"]
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
-module-name = "tng._native"
+module-name = "cohere_tng._rust"
