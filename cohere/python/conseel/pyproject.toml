@@ -20,4 +20,4 @@ Repository = "https://github.com/cohere-ai/tng"
 where = ["src"]
 
 [tool.setuptools_scm]
-root = "../.."
+root = "../../.."
