@@ -18,7 +18,7 @@ use tng_testsuite::{
 ///   ```sh
 ///   python3 -m venv .venv
 ///   .venv/bin/pip install maturin httpx
-///   cd tng-python && ../.venv/bin/maturin develop
+///   cd cohere/python/cohere-tng && ../../../.venv/bin/maturin develop
 ///   ```
 ///
 /// Run with: `cargo test -p tng-testsuite --features python-sdk --test python_sdk`

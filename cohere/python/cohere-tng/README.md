@@ -77,7 +77,7 @@ with httpx.Client(transport=transport) as client:
 ## Configuration
 
 Both `verify` and `ohttp` follow the same schema as TNG's
-[configuration](../docs/configuration.md).
+[configuration](https://github.com/cohere-ai/tng/blob/cohere/docs/configuration.md).
 
 - **`verify`** (required) — Attestation verification config dict. Pass `None`
   to explicitly disable verification — not recommended for production.
@@ -109,3 +109,8 @@ Python process via PyO3. When you make a request through `cohere_tng.Transport`:
 
 Both request and response bodies are streamed — large payloads are never fully
 buffered in memory.
+
+## Acknowledgements
+
+[cohere-ai/tng](https://github.com/cohere-ai/tng) is a fork of [inclavare-containers/tng](https://github.com/inclavare-containers/tng).
+Licensed under Apache-2.0.

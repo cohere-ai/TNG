@@ -240,10 +240,10 @@ jobs:
               apt-get update && apt-get install -y --no-install-recommends python3-venv
               python3 -m venv /workspace/.venv
               /workspace/.venv/bin/pip install maturin httpx pytest
-              cd /workspace/tng-python && /workspace/.venv/bin/maturin develop
+              cd /workspace/cohere/python/cohere-tng && /workspace/.venv/bin/maturin develop
 
               # Python unit tests (no network needed)
-              /workspace/.venv/bin/pytest /workspace/tng-python/tests/ -v
+              /workspace/.venv/bin/pytest /workspace/cohere/python/cohere-tng/tests/ -v
 
               # Integration tests (spins up TNG egress + backend in network namespaces)
               cargo test \

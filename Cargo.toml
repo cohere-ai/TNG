@@ -3,7 +3,7 @@ default-members = ["tng"]
 exclude = ["deps/"]
 members = [
   "tng",
-  "tng-python",
+  "cohere/python/cohere-tng",
   "tng-testsuite",
   "tng-wasm",
   "deps/hyper-util-shim",

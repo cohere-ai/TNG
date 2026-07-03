@@ -25,7 +25,7 @@ jobs:
         run: choco install protoc -y
       - uses: PyO3/maturin-action@v1
         with:
-          working-directory: tng-python
+          working-directory: cohere/python/cohere-tng
           target: ${{ matrix.target }}
           args: --release --out dist
           manylinux: ${{ matrix.manylinux || 'auto' }}
@@ -46,7 +46,7 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: tng-${{ matrix.os }}-${{ matrix.target }}
-          path: tng-python/dist/*.whl
+          path: cohere/python/cohere-tng/dist/*.whl
 
   build-conseel:
     runs-on: ubuntu-latest
@@ -57,11 +57,11 @@ jobs:
         with: { python-version: '3.11' }
       - run: pip install build setuptools-scm
       - run: python -m build --wheel
-        working-directory: cohere/conseel
+        working-directory: cohere/python/conseel
       - uses: actions/upload-artifact@v6
         with:
           name: conseel
-          path: cohere/conseel/dist/*.whl
+          path: cohere/python/conseel/dist/*.whl
 
   merge-wheels:
     needs: [build-tng, build-conseel]
