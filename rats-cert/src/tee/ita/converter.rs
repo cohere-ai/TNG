@@ -290,7 +290,10 @@ impl GenericConverter for ItaConverter {
 
         tracing::debug!(token = %attest_resp.token, "ITA attest request succeeded");
         let token = ItaToken::new(attest_resp.token)?;
-        self.check_policy_matching(&token)?;
+        if let Err(e) = self.check_policy_matching(&token) {
+            tracing::error!(token = %token.as_str(), error = %e, "Policy matching failed");
+            return Err(e);
+        }
         Ok(token)
     }
 }
