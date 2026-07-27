@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::retry::RetryPolicy;
@@ -10,6 +11,7 @@ use crate::errors::*;
 use crate::tee::GenericConverter;
 
 use super::evidence::{ItaEvidence, ItaNonce};
+use super::policy::{PolicyIdSource, StaticPolicyIds};
 use super::token::ItaToken;
 
 /// ITA delegates GPU evidence verification to NVIDIA's Remote Attestation Service
@@ -71,23 +73,35 @@ pub struct ItaConverter {
     http: Client,
     api_key: String,
     base_url: String,
-    policy_ids: Vec<String>,
+    policy_id_source: Arc<dyn PolicyIdSource>,
     max_retries: usize,
     retry_initial_delay: Duration,
     retry_max_delay: Duration,
 }
 
 impl ItaConverter {
-    pub fn new(api_key: &str, base_url: &str, policy_ids: &[String]) -> Result<Self> {
+    pub fn new(
+        api_key: &str,
+        base_url: &str,
+        policy_id_source: Arc<dyn PolicyIdSource>,
+    ) -> Result<Self> {
         Ok(Self {
             http: Client::new(),
             api_key: api_key.to_string(),
             base_url: base_url.trim_end_matches('/').to_string(),
-            policy_ids: policy_ids.to_vec(),
+            policy_id_source,
             max_retries: ITA_MAX_RETRIES,
             retry_initial_delay: ITA_RETRY_INITIAL_DELAY,
             retry_max_delay: ITA_RETRY_MAX_DELAY,
         })
+    }
+
+    pub fn new_static(api_key: &str, base_url: &str, policy_ids: &[String]) -> Result<Self> {
+        Self::new(
+            api_key,
+            base_url,
+            Arc::new(StaticPolicyIds::new(policy_ids.to_vec())),
+        )
     }
 
     pub fn with_max_retries(mut self, max_retries: usize) -> Self {
@@ -105,8 +119,8 @@ impl ItaConverter {
         self
     }
 
-    fn check_policy_matching(&self, token: &ItaToken) -> Result<()> {
-        if self.policy_ids.is_empty() {
+    fn check_policy_matching(policy_ids: &[String], token: &ItaToken) -> Result<()> {
+        if policy_ids.is_empty() {
             return Ok(());
         }
 
@@ -127,7 +141,7 @@ impl ItaConverter {
             .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
             .collect();
 
-        for expected_id in &self.policy_ids {
+        for expected_id in policy_ids {
             if !matched_ids.contains(expected_id.as_str()) {
                 return Err(Error::ItaError(format!(
                     "Expected policy ID '{expected_id}' not found in policy_ids_matched"
@@ -240,6 +254,8 @@ impl GenericConverter for ItaConverter {
     }
 
     async fn convert(&self, in_evidence: &ItaEvidence) -> Result<ItaToken> {
+        let policy_ids = self.policy_id_source.get_policy_ids().await?;
+
         let quote_b64 = BASE64.encode(&in_evidence.tdx_quote);
         let runtime_data_b64 = BASE64.encode(&in_evidence.runtime_data);
 
@@ -261,7 +277,7 @@ impl GenericConverter for ItaConverter {
             });
 
         let body = ItaAttestRequest {
-            policy_ids: self.policy_ids.clone(),
+            policy_ids: policy_ids.clone(),
             token_signing_alg: "PS384".to_string(),
             policy_must_match: false,
             tdx,
@@ -290,7 +306,7 @@ impl GenericConverter for ItaConverter {
 
         tracing::debug!(token = %attest_resp.token, "ITA attest request succeeded");
         let token = ItaToken::new(attest_resp.token)?;
-        self.check_policy_matching(&token)?;
+        Self::check_policy_matching(&policy_ids, &token)?;
         Ok(token)
     }
 }
@@ -368,7 +384,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let converter = ItaConverter::new("test-key", &server.uri(), &[]).unwrap();
+        let converter = ItaConverter::new_static("test-key", &server.uri(), &[]).unwrap();
         let nonce_str = converter.get_nonce().await.unwrap();
         let nonce: ItaNonce = serde_json::from_str(&nonce_str).unwrap();
         assert_eq!(nonce.val, expected_nonce.val);
@@ -393,7 +409,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let converter = ItaConverter::new("test-key", &server.uri(), &[]).unwrap();
+        let converter = ItaConverter::new_static("test-key", &server.uri(), &[]).unwrap();
         let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
         let token = converter.convert(&evidence).await.unwrap();
         assert_eq!(token.as_str(), expected_jwt);
@@ -412,7 +428,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let converter = ItaConverter::new("key", &server.uri(), &[]).unwrap();
+        let converter = ItaConverter::new_static("key", &server.uri(), &[]).unwrap();
         let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
         let err = converter.convert(&evidence).await.unwrap_err();
         assert!(matches!(
@@ -435,7 +451,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let converter = ItaConverter::new("key", &server.uri(), &[]).unwrap();
+        let converter = ItaConverter::new_static("key", &server.uri(), &[]).unwrap();
         let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
         let err = converter.convert(&evidence).await.unwrap_err();
         assert!(matches!(
@@ -459,7 +475,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let converter = ItaConverter::new("key", &server.uri(), &[])
+        let converter = ItaConverter::new_static("key", &server.uri(), &[])
             .unwrap()
             .with_max_retries(custom_retries)
             .with_retry_initial_delay(Duration::from_millis(10))
@@ -491,29 +507,27 @@ mod tests {
 
     #[test]
     fn policy_check_skipped_when_no_ids_configured() {
-        let converter = ItaConverter::new("key", "https://example.com", &[]).unwrap();
+        let ids: Vec<String> = vec![];
         let token = ItaToken::new("not-even-a-jwt".into()).unwrap();
-        converter.check_policy_matching(&token).unwrap();
+        ItaConverter::check_policy_matching(&ids, &token).unwrap();
     }
 
     #[test]
     fn policy_check_passes_when_all_ids_matched() {
-        let ids = vec!["p1".into(), "p2".into()];
-        let converter = ItaConverter::new("key", "https://example.com", &ids).unwrap();
+        let ids: Vec<String> = vec!["p1".into(), "p2".into()];
         let token = make_token(&serde_json::json!({
             "policy_ids_matched": [{"id": "p1"}, {"id": "p2"}, {"id": "p3"}]
         }));
-        converter.check_policy_matching(&token).unwrap();
+        ItaConverter::check_policy_matching(&ids, &token).unwrap();
     }
 
     #[test]
     fn policy_check_fails_when_expected_id_missing() {
-        let ids = vec!["p1".into(), "p2".into()];
-        let converter = ItaConverter::new("key", "https://example.com", &ids).unwrap();
+        let ids: Vec<String> = vec!["p1".into(), "p2".into()];
         let token = make_token(&serde_json::json!({
             "policy_ids_matched": [{"id": "p1"}]
         }));
-        let err = converter.check_policy_matching(&token).unwrap_err();
+        let err = ItaConverter::check_policy_matching(&ids, &token).unwrap_err();
         assert!(
             matches!(&err, Error::ItaError(msg) if msg.contains("p2")),
             "expected error about missing p2, got: {err:?}"
@@ -522,10 +536,9 @@ mod tests {
 
     #[test]
     fn policy_check_fails_when_field_missing() {
-        let ids = vec!["p1".into()];
-        let converter = ItaConverter::new("key", "https://example.com", &ids).unwrap();
+        let ids: Vec<String> = vec!["p1".into()];
         let token = make_token(&serde_json::json!({"sub": "test"}));
-        assert!(converter.check_policy_matching(&token).is_err());
+        assert!(ItaConverter::check_policy_matching(&ids, &token).is_err());
     }
 
     #[tokio::test]
@@ -547,7 +560,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let converter = ItaConverter::new("test-key", &server.uri(), &policy_ids).unwrap();
+        let converter = ItaConverter::new_static("test-key", &server.uri(), &policy_ids).unwrap();
         let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
         converter.convert(&evidence).await.unwrap();
     }
@@ -563,7 +576,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let converter = ItaConverter::new("key", &server.uri(), &[]).unwrap();
+        let converter = ItaConverter::new_static("key", &server.uri(), &[]).unwrap();
         assert!(converter.get_nonce().await.is_err());
     }
 }

@@ -42,7 +42,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_evidence_rejects_provider_mismatch() {
-        let ita_verifier = ItaVerifier::new("https://unused.example.com", &[]).unwrap();
+        let ita_verifier = ItaVerifier::new_static("https://unused.example.com", &[]).unwrap();
         let verifier = TngVerifier::Ita(ita_verifier);
 
         let coco_token = TngToken::from_wire(ProviderType::Coco, "fake.jwt.token".into()).unwrap();

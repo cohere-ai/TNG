@@ -12,6 +12,7 @@ pub mod hyper;
 #[cfg(target_os = "linux")]
 pub mod iptables;
 pub mod maybe_cached;
+pub mod remote_policy;
 pub mod runtime;
 #[cfg(unix)]
 pub mod rustls_config;

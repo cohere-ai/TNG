@@ -27,9 +27,12 @@
                 "as_provider": "ita",
                 "ita_jwks_addr": "https://portal.trustauthority.intel.com",
                 "model": "passport",
-                "policy_ids": [
-                    "cbeedffa-e224-4664-b6b4-573fcd4133d3"
-                ]
+                "policy_ids": [],
+                "remote_policy": {
+                    "predicate_url": "https://github.com/cohere-ai/integritee/releases/latest/download/predicate.json",
+                    "attestation_bundle_url": "https://github.com/cohere-ai/integritee/releases/latest/download/attestation-bundle.sigstore.json",
+                    "cache_ttl_secs": 300
+                }
             }
         }
     ]

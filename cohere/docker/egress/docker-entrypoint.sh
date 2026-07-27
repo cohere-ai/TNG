@@ -22,6 +22,20 @@ if [ -n "$POLICY_IDS" ]; then
     ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
 fi
 
+if [ -n "$PREDICATE_URL" ]; then
+    tmp=$(mktemp)
+    jq --arg url "$PREDICATE_URL" --arg bundle "${ATTESTATION_BUNDLE_URL:-}" '
+        (.add_egress[].ohttp.key.attest.remote_policy.predicate_url) = $url |
+        (.add_egress[].ohttp.key.verify.remote_policy.predicate_url) = $url |
+        (.add_egress[].attest.remote_policy.predicate_url) = $url |
+        if $bundle != "" then
+            (.add_egress[].ohttp.key.attest.remote_policy.attestation_bundle_url) = $bundle |
+            (.add_egress[].ohttp.key.verify.remote_policy.attestation_bundle_url) = $bundle |
+            (.add_egress[].attest.remote_policy.attestation_bundle_url) = $bundle
+        else . end
+    ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+fi
+
 if [ -n "$PEERS" ]; then
     tmp=$(mktemp)
     jq --arg peers "$PEERS" '

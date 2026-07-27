@@ -1,6 +1,8 @@
 #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
 pub mod evidence;
 #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
+pub mod policy;
+#[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
 pub mod token;
 
 #[cfg(feature = "attester-ita")]
@@ -18,6 +20,8 @@ pub mod verifier;
 
 #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
 pub use evidence::{ItaEvidence, ItaNonce};
+#[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
+pub use policy::{PolicyIdSource, StaticPolicyIds};
 #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
 pub use token::ItaToken;
 
@@ -56,11 +60,12 @@ mod tests {
         let attester = ItaAttester::new(TEST_AA_ADDR).expect("Failed to create attester");
 
         // Create converter (sends evidence to ITA for appraisal)
-        let converter =
-            ItaConverter::new(&api_key, TEST_ITA_API_URL, &[]).expect("Failed to create converter");
+        let converter = ItaConverter::new_static(&api_key, TEST_ITA_API_URL, &[])
+            .expect("Failed to create converter");
 
         // Create verifier (validates ITA-issued JWT via JWKS)
-        let verifier = ItaVerifier::new(TEST_ITA_JWKS_URL, &[]).expect("Failed to create verifier");
+        let verifier =
+            ItaVerifier::new_static(TEST_ITA_JWKS_URL, &[]).expect("Failed to create verifier");
 
         // Get evidence from TEE via AA
         let report_data = ReportData::Claims(serde_json::Map::new());
@@ -94,11 +99,12 @@ mod tests {
         let attester = ItaAttester::new(TEST_AA_ADDR).expect("Failed to create attester");
 
         // Create converter (sends evidence to ITA for appraisal)
-        let converter =
-            ItaConverter::new(&api_key, TEST_ITA_API_URL, &[]).expect("Failed to create converter");
+        let converter = ItaConverter::new_static(&api_key, TEST_ITA_API_URL, &[])
+            .expect("Failed to create converter");
 
         // Create verifier (validates ITA-issued JWT via JWKS)
-        let verifier = ItaVerifier::new(TEST_ITA_JWKS_URL, &[]).expect("Failed to create verifier");
+        let verifier =
+            ItaVerifier::new_static(TEST_ITA_JWKS_URL, &[]).expect("Failed to create verifier");
 
         // Fetch nonce from ITA
         let nonce = converter
@@ -147,11 +153,12 @@ mod tests {
         let attester = ItaAsrAttester::new(TEST_ASR_ADDR).expect("Failed to create ASR attester");
 
         // Create converter (sends evidence to ITA for appraisal)
-        let converter =
-            ItaConverter::new(&api_key, TEST_ITA_API_URL, &[]).expect("Failed to create converter");
+        let converter = ItaConverter::new_static(&api_key, TEST_ITA_API_URL, &[])
+            .expect("Failed to create converter");
 
         // Create verifier (validates ITA-issued JWT via JWKS)
-        let verifier = ItaVerifier::new(TEST_ITA_JWKS_URL, &[]).expect("Failed to create verifier");
+        let verifier =
+            ItaVerifier::new_static(TEST_ITA_JWKS_URL, &[]).expect("Failed to create verifier");
 
         // Fetch nonce from ITA
         let nonce = converter

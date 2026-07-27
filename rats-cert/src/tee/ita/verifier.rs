@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use reqwest::Client;
@@ -10,6 +10,7 @@ use tokio::sync::RwLock;
 use crate::errors::*;
 use crate::tee::{GenericVerifier, ReportData};
 
+use super::policy::{PolicyIdSource, StaticPolicyIds};
 use super::token::ItaToken;
 
 const ITA_JWKS_PATH: &str = "/certs";
@@ -26,19 +27,29 @@ static JWKS_CACHE: LazyLock<RwLock<HashMap<String, Vec<CachedKey>>>> =
 
 pub struct ItaVerifier {
     jwks_url: String,
-    policy_ids: Vec<String>,
+    policy_id_source: Arc<dyn PolicyIdSource>,
 }
 
 impl ItaVerifier {
-    pub fn new(ita_jwks_base_addr: &str, policy_ids: &[String]) -> Result<Self> {
+    pub fn new(
+        ita_jwks_base_addr: &str,
+        policy_id_source: Arc<dyn PolicyIdSource>,
+    ) -> Result<Self> {
         Ok(Self {
             jwks_url: format!(
                 "{}{}",
                 ita_jwks_base_addr.trim_end_matches('/'),
                 ITA_JWKS_PATH
             ),
-            policy_ids: policy_ids.to_vec(),
+            policy_id_source,
         })
+    }
+
+    pub fn new_static(ita_jwks_base_addr: &str, policy_ids: &[String]) -> Result<Self> {
+        Self::new(
+            ita_jwks_base_addr,
+            Arc::new(StaticPolicyIds::new(policy_ids.to_vec())),
+        )
     }
 
     async fn verify_jwt(&self, token: &str) -> Result<Value> {
@@ -216,7 +227,7 @@ impl ItaVerifier {
         Ok(())
     }
 
-    fn check_policy_matching(&self, claims: &Value) -> Result<()> {
+    fn check_policy_matching(policy_ids: &[String], claims: &Value) -> Result<()> {
         if let Some(unmatched) = claims.get("policy_ids_unmatched") {
             if let Some(arr) = unmatched.as_array() {
                 if !arr.is_empty() {
@@ -235,7 +246,7 @@ impl ItaVerifier {
             }
         }
 
-        if self.policy_ids.is_empty() {
+        if policy_ids.is_empty() {
             return Ok(());
         }
 
@@ -246,7 +257,7 @@ impl ItaVerifier {
                     .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
                     .collect();
 
-                for expected_id in &self.policy_ids {
+                for expected_id in policy_ids {
                     if !matched_ids.contains(expected_id.as_str()) {
                         return Err(Error::ItaError(format!(
                             "Expected policy ID '{expected_id}' not found in policy_ids_matched"
@@ -273,12 +284,13 @@ impl GenericVerifier for ItaVerifier {
     type Evidence = ItaToken;
 
     async fn verify_evidence(&self, evidence: &ItaToken, report_data: &ReportData) -> Result<()> {
+        let policy_ids = self.policy_id_source.get_policy_ids().await?;
         let token = evidence.as_str();
-        tracing::debug!("Verifying ITA token with policy_ids: {:?}", self.policy_ids);
+        tracing::debug!("Verifying ITA token with policy_ids: {:?}", policy_ids);
 
         let claims = self.verify_jwt(token).await?;
         Self::check_runtime_data_binding(&claims, report_data)?;
-        self.check_policy_matching(&claims)?;
+        Self::check_policy_matching(&policy_ids, &claims)?;
 
         Ok(())
     }
@@ -324,7 +336,7 @@ mod tests {
 
     fn verifier(policy_ids: &[&str]) -> ItaVerifier {
         let ids: Vec<String> = policy_ids.iter().copied().map(String::from).collect();
-        ItaVerifier::new("https://portal.trustauthority.intel.com", &ids).unwrap()
+        ItaVerifier::new_static("https://portal.trustauthority.intel.com", &ids).unwrap()
     }
 
     /// Generate an RSA key pair, sign a JWT with PS384, and pre-populate JWKS_CACHE
@@ -372,7 +384,7 @@ mod tests {
         });
         let token = setup_cached_key(&jwks_url, "test-kid-1", &claims).await;
 
-        let v = ItaVerifier::new(base, &[]).unwrap();
+        let v = ItaVerifier::new_static(base, &[]).unwrap();
         let result = v.verify_jwt(&token).await.unwrap();
         assert_eq!(result["sub"], sub);
     }
@@ -381,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     async fn verify_jwt_rejects_non_https() {
-        let v = ItaVerifier::new("http://bad.example.com", &[]).unwrap();
+        let v = ItaVerifier::new_static("http://bad.example.com", &[]).unwrap();
         let err = v.verify_jwt("any.jwt.here").await.unwrap_err();
         assert!(
             matches!(&err, Error::ItaError(msg) if msg.contains("HTTPS")),
@@ -430,7 +442,7 @@ mod tests {
         let parts: Vec<&str> = token.split('.').collect();
         let tampered = format!("{header}.{}.{}", parts[1], parts[2]);
 
-        let v = ItaVerifier::new(base, &[]).unwrap();
+        let v = ItaVerifier::new_static(base, &[]).unwrap();
         let err = v.verify_jwt(&tampered).await.unwrap_err();
         assert!(
             matches!(err, Error::ItaHttpRequestFailed { .. }),
@@ -442,48 +454,48 @@ mod tests {
 
     #[test]
     fn policy_no_ids_configured_passes() {
-        let v = verifier(&[]);
-        v.check_policy_matching(&json!({})).unwrap();
+        let ids: Vec<String> = vec![];
+        ItaVerifier::check_policy_matching(&ids, &json!({})).unwrap();
     }
 
     #[test]
     fn policy_unmatched_ids_fail() {
-        let v = verifier(&[]);
+        let ids: Vec<String> = vec![];
         let claims = json!({
             "policy_ids_unmatched": [{"id": "bad-policy"}]
         });
-        assert!(v.check_policy_matching(&claims).is_err());
+        assert!(ItaVerifier::check_policy_matching(&ids, &claims).is_err());
     }
 
     #[test]
     fn policy_expected_id_present_passes() {
-        let v = verifier(&["p1"]);
+        let ids: Vec<String> = vec!["p1".into()];
         let claims = json!({
             "policy_ids_matched": [{"id": "p1"}]
         });
-        v.check_policy_matching(&claims).unwrap();
+        ItaVerifier::check_policy_matching(&ids, &claims).unwrap();
     }
 
     #[test]
     fn policy_expected_id_missing_fails() {
-        let v = verifier(&["p1", "p2"]);
+        let ids: Vec<String> = vec!["p1".into(), "p2".into()];
         let claims = json!({
             "policy_ids_matched": [{"id": "p1"}]
         });
-        assert!(v.check_policy_matching(&claims).is_err());
+        assert!(ItaVerifier::check_policy_matching(&ids, &claims).is_err());
     }
 
     #[test]
     fn policy_ids_configured_but_field_missing_fails() {
-        let v = verifier(&["p1"]);
-        assert!(v.check_policy_matching(&json!({})).is_err());
+        let ids: Vec<String> = vec!["p1".into()];
+        assert!(ItaVerifier::check_policy_matching(&ids, &json!({})).is_err());
     }
 
     #[test]
     fn policy_ids_matched_not_array_fails() {
-        let v = verifier(&["p1"]);
+        let ids: Vec<String> = vec!["p1".into()];
         let claims = json!({"policy_ids_matched": "not-an-array"});
-        assert!(v.check_policy_matching(&claims).is_err());
+        assert!(ItaVerifier::check_policy_matching(&ids, &claims).is_err());
     }
 
     // ---- check_runtime_data_binding ----

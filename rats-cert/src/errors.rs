@@ -401,6 +401,10 @@ pub enum Error {
     #[error("ITA error: {0}")]
     ItaError(String),
 
+    #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
+    #[error("Policy ID resolution failed: {0}")]
+    PolicyResolutionFailed(String),
+
     #[error("Incompatible types: {detail}")]
     IncompatibleTypes { detail: String },
 

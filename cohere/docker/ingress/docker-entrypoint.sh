@@ -43,4 +43,12 @@ if [ -n "$POLICY_IDS" ]; then
     ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
 fi
 
+if [ -n "$PREDICATE_URL" ]; then
+    tmp=$(mktemp)
+    jq --arg url "$PREDICATE_URL" --arg bundle "${ATTESTATION_BUNDLE_URL:-}" '
+        .add_ingress[0].verify.remote_policy.predicate_url = $url |
+        if $bundle != "" then .add_ingress[0].verify.remote_policy.attestation_bundle_url = $bundle else . end
+    ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+fi
+
 exec tng launch --config-file "$CONFIG" "$@"

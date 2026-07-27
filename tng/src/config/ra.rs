@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context as _, Result};
 use serde::de::Deserializer;
@@ -90,6 +91,7 @@ impl<'de> Deserialize<'de> for RaArgsUnchecked {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum RaArgs {
     #[cfg(unix)]
     AttestOnly(AttestArgs),
@@ -410,6 +412,27 @@ fn default_ita_portal_url() -> String {
     DEFAULT_ITA_PORTAL_URL.to_string()
 }
 
+/// Configuration for fetching ITA policy IDs from a remote HTTPS URL.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RemotePolicyIdConfig {
+    /// HTTPS URL to fetch predicate.json from.
+    pub predicate_url: String,
+
+    /// Optional HTTPS URL to the Sigstore attestation bundle (.sigstore.json).
+    /// When set, the downloaded predicate.json is verified against this bundle
+    /// before extracting the policy ID.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation_bundle_url: Option<String>,
+
+    /// Cache TTL in seconds. Default: 300 (5 minutes).
+    #[serde(default = "default_cache_ttl")]
+    pub cache_ttl_secs: u64,
+}
+
+fn default_cache_ttl() -> u64 {
+    300
+}
+
 /// Provider-tagged converter config. Serde reads "as_provider" from flat JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "as_provider", rename_all = "snake_case")]
@@ -428,6 +451,10 @@ pub struct ItaConverterArgs {
     pub api_key: Option<String>,
     #[serde(default)]
     pub policy_ids: Vec<String>,
+    /// When set and `policy_ids` is empty, policy IDs are fetched from this
+    /// remote source with caching and optional Sigstore verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_policy: Option<RemotePolicyIdConfig>,
     /// Max number of retries for ITA API calls (nonce + attest).
     /// When unset, uses the default from `ItaConverter`.
     pub ita_max_retries: Option<usize>,
@@ -446,6 +473,7 @@ impl std::fmt::Debug for ItaConverterArgs {
             .field("as_addr", &self.as_addr)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
             .field("policy_ids", &self.policy_ids)
+            .field("remote_policy", &self.remote_policy)
             .field("ita_max_retries", &self.ita_max_retries)
             .field(
                 "ita_retry_initial_delay_ms",
@@ -463,8 +491,9 @@ impl ItaConverterArgs {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("ITA api_key is required but not set"))?;
 
+        let policy_source = self.resolve_policy_source()?;
         let mut converter =
-            rats_cert::tee::ita::ItaConverter::new(api_key, &self.as_addr, &self.policy_ids)?;
+            rats_cert::tee::ita::ItaConverter::new(api_key, &self.as_addr, policy_source)?;
         if let Some(n) = self.ita_max_retries {
             converter = converter.with_max_retries(n);
         }
@@ -475,6 +504,22 @@ impl ItaConverterArgs {
             converter = converter.with_retry_max_delay(std::time::Duration::from_millis(ms));
         }
         Ok(converter)
+    }
+
+    fn resolve_policy_source(
+        &self,
+    ) -> anyhow::Result<Arc<dyn rats_cert::tee::ita::PolicyIdSource>> {
+        if !self.policy_ids.is_empty() {
+            return Ok(Arc::new(rats_cert::tee::ita::StaticPolicyIds::new(
+                self.policy_ids.clone(),
+            )));
+        }
+        if let Some(remote) = &self.remote_policy {
+            return Ok(Arc::new(
+                crate::tunnel::utils::remote_policy::RemotePolicyIdProvider::new(remote.clone())?,
+            ));
+        }
+        Ok(Arc::new(rats_cert::tee::ita::StaticPolicyIds::new(vec![])))
     }
 }
 
@@ -529,12 +574,33 @@ pub struct ItaVerifierArgs {
     pub ita_jwks_addr: String,
     #[serde(default)]
     pub policy_ids: Vec<String>,
+    /// When set and `policy_ids` is empty, policy IDs are fetched from this
+    /// remote source with caching and optional Sigstore verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_policy: Option<RemotePolicyIdConfig>,
 }
 
 impl ItaVerifierArgs {
     pub fn to_verifier(&self) -> anyhow::Result<rats_cert::tee::ita::ItaVerifier> {
-        rats_cert::tee::ita::ItaVerifier::new(&self.ita_jwks_addr, &self.policy_ids)
+        let policy_source = self.resolve_policy_source()?;
+        rats_cert::tee::ita::ItaVerifier::new(&self.ita_jwks_addr, policy_source)
             .map_err(Into::into)
+    }
+
+    fn resolve_policy_source(
+        &self,
+    ) -> anyhow::Result<Arc<dyn rats_cert::tee::ita::PolicyIdSource>> {
+        if !self.policy_ids.is_empty() {
+            return Ok(Arc::new(rats_cert::tee::ita::StaticPolicyIds::new(
+                self.policy_ids.clone(),
+            )));
+        }
+        if let Some(remote) = &self.remote_policy {
+            return Ok(Arc::new(
+                crate::tunnel::utils::remote_policy::RemotePolicyIdProvider::new(remote.clone())?,
+            ));
+        }
+        Ok(Arc::new(rats_cert::tee::ita::StaticPolicyIds::new(vec![])))
     }
 }
 
@@ -1855,6 +1921,7 @@ mod tests {
             as_addr: "https://api.trustauthority.intel.com".to_string(),
             api_key: Some(secret.to_string()),
             policy_ids: vec![],
+            remote_policy: None,
             ita_max_retries: None,
             ita_retry_initial_delay_ms: None,
             ita_retry_max_delay_ms: None,
@@ -1868,5 +1935,159 @@ mod tests {
             debug_output.contains("[REDACTED]"),
             "Debug output should show [REDACTED] for api_key"
         );
+    }
+
+    #[test]
+    fn test_ita_passport_verify_with_remote_policy() {
+        let json = json!({
+            "verify": {
+                "model": "passport",
+                "as_provider": "ita",
+                "ita_jwks_addr": "https://portal.trustauthority.intel.com",
+                "policy_ids": [],
+                "remote_policy": {
+                    "predicate_url": "https://github.com/cohere-ai/integritee/releases/latest/download/predicate.json",
+                    "attestation_bundle_url": "https://github.com/cohere-ai/integritee/releases/latest/download/attestation-bundle.sigstore.json",
+                    "cache_ttl_secs": 300
+                }
+            }
+        });
+
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
+
+        match &ra_args.verify {
+            Some(VerifyArgs::Passport { verifier }) => match verifier {
+                VerifierArgs::Ita(ita) => {
+                    assert!(ita.policy_ids.is_empty());
+                    let remote = ita
+                        .remote_policy
+                        .as_ref()
+                        .expect("remote_policy should be set");
+                    assert!(remote.predicate_url.contains("predicate.json"));
+                    assert!(remote
+                        .attestation_bundle_url
+                        .as_ref()
+                        .unwrap()
+                        .contains("sigstore.json"));
+                    assert_eq!(remote.cache_ttl_secs, 300);
+                }
+                _ => panic!("Expected Ita verifier"),
+            },
+            _ => panic!("Expected Passport variant"),
+        }
+    }
+
+    #[test]
+    fn test_ita_background_check_verify_with_remote_policy() {
+        let json = json!({
+            "verify": {
+                "model": "background_check",
+                "as_provider": "ita",
+                "as_addr": "https://api.trustauthority.intel.com",
+                "api_key": "test-key",
+                "policy_ids": [],
+                "remote_policy": {
+                    "predicate_url": "https://example.com/predicate.json"
+                }
+            }
+        });
+
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
+
+        match &ra_args.verify {
+            Some(VerifyArgs::BackgroundCheck {
+                converter,
+                verifier,
+            }) => {
+                match converter {
+                    ConverterArgs::Ita(ita) => {
+                        assert!(ita.policy_ids.is_empty());
+                        let remote = ita
+                            .remote_policy
+                            .as_ref()
+                            .expect("remote_policy should be set");
+                        assert_eq!(remote.predicate_url, "https://example.com/predicate.json");
+                        assert!(remote.attestation_bundle_url.is_none());
+                        assert_eq!(remote.cache_ttl_secs, 300);
+                    }
+                    _ => panic!("Expected Ita converter"),
+                }
+                match verifier {
+                    VerifierArgs::Ita(ita) => {
+                        assert!(ita.policy_ids.is_empty());
+                        let remote = ita
+                            .remote_policy
+                            .as_ref()
+                            .expect("remote_policy should be set");
+                        assert_eq!(remote.predicate_url, "https://example.com/predicate.json");
+                    }
+                    _ => panic!("Expected Ita verifier"),
+                }
+            }
+            _ => panic!("Expected BackgroundCheck variant"),
+        }
+    }
+
+    #[test]
+    fn test_ita_static_policy_ids_override_remote() {
+        let json = json!({
+            "verify": {
+                "model": "passport",
+                "as_provider": "ita",
+                "policy_ids": ["override-id"],
+                "remote_policy": {
+                    "predicate_url": "https://example.com/predicate.json"
+                }
+            }
+        });
+
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
+
+        match &ra_args.verify {
+            Some(VerifyArgs::Passport { verifier }) => match verifier {
+                VerifierArgs::Ita(ita) => {
+                    assert_eq!(ita.policy_ids, vec!["override-id"]);
+                    assert!(ita.remote_policy.is_some());
+                }
+                _ => panic!("Expected Ita verifier"),
+            },
+            _ => panic!("Expected Passport variant"),
+        }
+    }
+
+    #[test]
+    fn test_ita_remote_policy_serde_round_trip() {
+        let json = json!({
+            "verify": {
+                "model": "passport",
+                "as_provider": "ita",
+                "policy_ids": [],
+                "remote_policy": {
+                    "predicate_url": "https://example.com/predicate.json",
+                    "attestation_bundle_url": "https://example.com/bundle.sigstore.json",
+                    "cache_ttl_secs": 120
+                }
+            }
+        });
+
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
+        let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
+        let back: RaArgsUnchecked =
+            serde_json::from_str(&serialized).expect("Failed to re-deserialize");
+
+        match &back.verify {
+            Some(VerifyArgs::Passport { verifier }) => match verifier {
+                VerifierArgs::Ita(ita) => {
+                    let remote = ita
+                        .remote_policy
+                        .as_ref()
+                        .expect("remote_policy should survive round-trip");
+                    assert_eq!(remote.predicate_url, "https://example.com/predicate.json");
+                    assert_eq!(remote.cache_ttl_secs, 120);
+                }
+                _ => panic!("Expected Ita verifier after round-trip"),
+            },
+            _ => panic!("Expected Passport after round-trip"),
+        }
     }
 }

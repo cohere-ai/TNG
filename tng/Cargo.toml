@@ -136,6 +136,7 @@ hyper = {workspace = true, features = ["http1", "http2", "client", "server"]}
 once_cell = {workspace = true}
 portpicker = {workspace = true}
 serial_test = {workspace = true}
+wiremock = "0.6"
 
 [features]
 default = [
