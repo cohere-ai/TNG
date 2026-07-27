@@ -1,23 +1,22 @@
 """Encrypted httpx transports for AI APIs.
 
 Extends tng.Transport with Cohere-specific defaults (ITA attestation,
-header forwarding) and automatic model-name header promotion from JSON
-request bodies.
+header forwarding, and model-name header promotion from JSON request
+bodies via TNG's body_field_headers config).
 """
 
 from __future__ import annotations
 
 import copy
-import json
 from typing import Optional
-
-import httpx
 
 import cohere_tng as tng
 
-_MODEL_HEADER = "x-gateway-model-name"
+_DEFAULT_FORWARD_HEADERS: list = ["authorization"]
 
-_DEFAULT_FORWARD_HEADERS: list = ["authorization", _MODEL_HEADER]
+_DEFAULT_BODY_FIELD_HEADERS: list = [
+    {"field_name": "model", "header_name": "x-gateway-model-name"},
+]
 
 _DEFAULT_VERIFY: dict = {
     "model": "passport",
@@ -29,21 +28,11 @@ _DEFAULT_VERIFY: dict = {
 _UNSET = object()
 
 
-def _should_extract_model(request: httpx.Request) -> bool:
-    if _MODEL_HEADER in request.headers:
-        return False
-    return "json" in request.headers.get("content-type", "")
-
-
-def _promote_model_from_body(request: httpx.Request, body: bytes) -> None:
-    if not body:
-        return
-    try:
-        model = json.loads(body).get("model")
-        if model:
-            request.headers[_MODEL_HEADER] = str(model)
-    except (json.JSONDecodeError, AttributeError):
-        pass
+def _apply_ohttp_defaults(ohttp: Optional[dict]) -> dict:
+    ohttp = dict(ohttp) if ohttp else {}
+    ohttp.setdefault("forward_headers", list(_DEFAULT_FORWARD_HEADERS))
+    ohttp.setdefault("body_field_headers", copy.deepcopy(_DEFAULT_BODY_FIELD_HEADERS))
+    return ohttp
 
 
 class Transport(tng.Transport):
@@ -55,14 +44,7 @@ class Transport(tng.Transport):
     ):
         if verify is _UNSET:
             verify = copy.deepcopy(_DEFAULT_VERIFY)
-        ohttp = dict(ohttp) if ohttp else {}
-        ohttp.setdefault("forward_headers", list(_DEFAULT_FORWARD_HEADERS))
-        super().__init__(verify=verify, ohttp=ohttp)
-
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        if _should_extract_model(request):
-            _promote_model_from_body(request, request.read())
-        return super().handle_request(request)
+        super().__init__(verify=verify, ohttp=_apply_ohttp_defaults(ohttp))
 
 
 class AsyncTransport(tng.AsyncTransport):
@@ -74,11 +56,4 @@ class AsyncTransport(tng.AsyncTransport):
     ):
         if verify is _UNSET:
             verify = copy.deepcopy(_DEFAULT_VERIFY)
-        ohttp = dict(ohttp) if ohttp else {}
-        ohttp.setdefault("forward_headers", list(_DEFAULT_FORWARD_HEADERS))
-        super().__init__(verify=verify, ohttp=ohttp)
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        if _should_extract_model(request):
-            _promote_model_from_body(request, await request.aread())
-        return await super().handle_async_request(request)
+        super().__init__(verify=verify, ohttp=_apply_ohttp_defaults(ohttp))

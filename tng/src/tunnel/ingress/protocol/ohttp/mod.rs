@@ -23,6 +23,7 @@ mod unix_specific_module {
     use anyhow::{anyhow, Result};
     use async_trait::async_trait;
     use axum::response::IntoResponse as _;
+    use http::HeaderValue;
     use tracing::Instrument;
 
     pub struct OHttpStreamForwarder {
@@ -82,7 +83,21 @@ mod unix_specific_module {
                                     )
                                     .await
                                 {
-                                    Ok((response, _attestation_result)) => response,
+                                    Ok((mut response, attestation_result)) => {
+                                        if let Some(att) = attestation_result {
+                                            if let Some(token) = serde_json::to_value(&att)
+                                                .ok()
+                                                .and_then(|v| v.as_str().map(String::from))
+                                            {
+                                                if let Ok(val) = HeaderValue::from_str(&token) {
+                                                    response
+                                                        .headers_mut()
+                                                        .insert("x-tng-attestation-token", val);
+                                                }
+                                            }
+                                        }
+                                        response
+                                    }
                                     Err(error) => error.into_response(),
                                 },
                             )

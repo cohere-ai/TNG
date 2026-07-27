@@ -1043,6 +1043,21 @@ The OHTTP capability can be enabled by specifying the `ohttp` field in the `add_
 
 - **`key_refresh_before_expiry_seconds`** (integer, optional, default `0`): If an OHTTP public key stored in the ingress cache is about to expire, this field allows us to trigger a background refresh earlier than the actual expiration time. A non-zero value mitigates a race condition where the ingress sends a request encrypted with a public key whose private key may have already been evicted on the egress by the time the request reaches it. When set to `0` (the default), the refresh asynchronously occurs once the key expires.
 
+- **`forward_headers`** (array [string], optional, default is an empty array): A list of HTTP header names that should be extracted from the inner (plaintext) HTTP request and forwarded in the clear on the outer OHTTP request. This allows L7 gateways to inspect these headers for routing and load balancing without decrypting the request body. Example: `["authorization", "x-custom-routing"]`.
+
+- **`body_field_headers`** (array [BodyFieldHeader], optional, default is an empty array): A list of rules for promoting top-level fields from a JSON request body into HTTP headers. This is useful when a routing-relevant field (such as `model`) is inside the encrypted request body and needs to be visible to L7 gateways. Each entry specifies a JSON field name and the corresponding header name to set. Promoted headers are automatically added to the `forward_headers` list internally, so they do not need to be listed separately.
+
+    - **`field_name`** (string): The name of the top-level JSON field to extract (e.g. `"model"`).
+    - **`header_name`** (string): The HTTP header name to set with the extracted value (e.g. `"x-gateway-model-name"`).
+
+    Body field promotion has the following behavior:
+    - If all target headers are already present on the request, body parsing is skipped entirely.
+    - Only applies when the request `Content-Type` starts with `application/json`. Non-JSON requests (e.g. multipart file uploads) are passed through without inspection.
+    - If the JSON body exceeds 64 MB, the request is rejected with an error. This limit is only enforced after confirming the content type is JSON.
+    - If the JSON field is missing, not a string, or the body cannot be parsed as JSON, promotion is silently skipped and the request continues normally.
+    - Existing headers are never overwritten.
+
+- **`tls_ca_certs`** (array [string], optional, default is an empty array): A list of file paths to PEM-encoded CA certificates. These certificates are added to the trust store used for TLS connections from the ingress to the egress. This is useful when the egress is behind a TLS gateway using a certificate signed by a private CA.
 > [!NOTE]
 > For syntax information about regular expressions, please refer to the <a href="#regex">Regular Expressions</a> section.
 
@@ -1095,6 +1110,7 @@ In many Layer 7 gateway scenarios, after TNG protects traffic using the OHTTP pr
 3. The Host (or `:authority`) of the encrypted HTTP request is consistent with the inner protected business HTTP request.
 4. The encrypted HTTP request and response will use `Content-Type: message/ohttp-chunked-req` and `Content-Type: message/ohttp-chunked-res` as `Content-Type` respectively.
 5. The encrypted HTTP request and response will not contain the request headers and response headers in the encrypted HTTP request.
+6. Specific headers from the inner request can be forwarded in the clear using `forward_headers`, and fields from JSON request bodies can be promoted to headers using `body_field_headers`.
 
 ### OHttp: Egress Configuration
 

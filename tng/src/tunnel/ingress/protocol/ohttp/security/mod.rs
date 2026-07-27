@@ -28,12 +28,15 @@ struct OHttpClientCacheKey {
     forwarded_headers: Vec<(String, String)>,
 }
 
+const BODY_FIELD_PROMOTION_MAX_BYTES: usize = 64 * 1024 * 1024;
+
 pub struct OHttpSecurityLayer {
     ra_context: Arc<RaContext>,
     http_client: Arc<reqwest::Client>,
     ohttp_clients: RwLock<HashMap<OHttpClientCacheKey, Arc<OnceCell<Arc<OHttpClient>>>>>,
     path_rewrite_group: PathRewriteGroup,
     forward_header_names: Vec<HeaderName>,
+    body_field_headers: Vec<(String, HeaderName)>,
     key_refresh_before_expiry_seconds: Option<u64>,
     runtime: TokioRuntime,
 }
@@ -87,6 +90,21 @@ impl OHttpSecurityLayer {
 
             builder.build()?
         };
+        let body_field_headers = ohttp_args
+            .body_field_headers
+            .iter()
+            .map(|bfh| {
+                let header_name =
+                    HeaderName::from_bytes(bfh.header_name.as_bytes()).with_context(|| {
+                        format!(
+                            "Invalid body_field_headers header_name: {}",
+                            bfh.header_name
+                        )
+                    })?;
+                Ok((bfh.field_name.clone(), header_name))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         let mut forward_header_names = ohttp_args
             .forward_headers
             .iter()
@@ -95,6 +113,9 @@ impl OHttpSecurityLayer {
                     .with_context(|| format!("Invalid forward_headers entry: {name}"))
             })
             .collect::<Result<Vec<_>>>()?;
+        for (_, header_name) in &body_field_headers {
+            forward_header_names.push(header_name.clone());
+        }
         forward_header_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         forward_header_names.dedup();
 
@@ -104,6 +125,7 @@ impl OHttpSecurityLayer {
             ohttp_clients: Default::default(),
             path_rewrite_group: PathRewriteGroup::new(&ohttp_args.path_rewrites)?,
             forward_header_names,
+            body_field_headers,
             key_refresh_before_expiry_seconds: ohttp_args.key_refresh_before_expiry_seconds,
             runtime,
         })
@@ -115,6 +137,12 @@ impl OHttpSecurityLayer {
         request: axum::extract::Request,
     ) -> Result<(axum::response::Response, Option<AttestationResult>), TngError> {
         async {
+            let request = if !self.body_field_headers.is_empty() {
+                self.promote_body_fields_to_headers(request).await?
+            } else {
+                request
+            };
+
             let base_url = self.construct_base_url(endpoint, &request)?;
             let (forward_headers, cache_key_forwarded_headers) =
                 Self::extract_forward_headers(&request, &self.forward_header_names);
@@ -130,6 +158,13 @@ impl OHttpSecurityLayer {
             tracing::error!(?error, "Failed to forward HTTP request");
             error
         })
+    }
+
+    async fn promote_body_fields_to_headers(
+        &self,
+        request: axum::extract::Request,
+    ) -> Result<axum::extract::Request, TngError> {
+        promote_body_fields(&self.body_field_headers, request).await
     }
 
     fn construct_base_url(
@@ -240,6 +275,92 @@ impl OHttpSecurityLayer {
     }
 }
 
+async fn promote_body_fields(
+    body_field_headers: &[(String, HeaderName)],
+    request: axum::extract::Request,
+) -> Result<axum::extract::Request, TngError> {
+    let all_present = body_field_headers
+        .iter()
+        .all(|(_, header_name)| request.headers().contains_key(header_name));
+    if all_present {
+        tracing::debug!("All body_field_headers already present, skipping body parsing");
+        return Ok(request);
+    }
+
+    let content_type = request
+        .headers()
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let content_type = content_type.to_ascii_lowercase();
+    if !content_type.starts_with("application/json") {
+        tracing::debug!(
+            content_type,
+            "Non-JSON content type, skipping body field promotion"
+        );
+        return Ok(request);
+    }
+
+    let (parts, body) = request.into_parts();
+    let bytes = axum::body::to_bytes(body, BODY_FIELD_PROMOTION_MAX_BYTES)
+        .await
+        .map_err(|e| {
+            TngError::InvalidOHttpRequest(anyhow::anyhow!(
+                "Failed to buffer request body for field promotion: {e}"
+            ))
+        })?;
+
+    let json_value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("Failed to parse JSON body for field promotion: {e}");
+            return Ok(axum::extract::Request::from_parts(
+                parts,
+                axum::body::Body::from(bytes),
+            ));
+        }
+    };
+
+    let mut parts = parts;
+    if let serde_json::Value::Object(ref map) = json_value {
+        for (field_name, header_name) in body_field_headers {
+            if parts.headers.contains_key(header_name) {
+                continue;
+            }
+            if let Some(serde_json::Value::String(value)) = map.get(field_name.as_str()) {
+                match HeaderValue::from_str(value) {
+                    Ok(header_value) => {
+                        tracing::debug!(
+                            field = field_name,
+                            header = header_name.as_str(),
+                            value = value,
+                            "Promoted body field to header"
+                        );
+                        parts.headers.insert(header_name.clone(), header_value);
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            field = field_name,
+                            value = value,
+                            "Skipping body field promotion, invalid header value: {e}"
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    field = field_name,
+                    "Body field not found or not a string, skipping promotion"
+                );
+            }
+        }
+    }
+
+    Ok(axum::extract::Request::from_parts(
+        parts,
+        axum::body::Body::from(bytes),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +410,46 @@ mod tests {
         };
 
         assert_ne!(key_for_route_a, key_for_route_b);
+    }
+
+    #[tokio::test]
+    async fn test_promote_body_fields_json_happy_path() {
+        let config = vec![(
+            "model".to_owned(),
+            HeaderName::from_static("x-gateway-model-name"),
+        )];
+        let body = serde_json::json!({"model": "command-r-plus", "message": "hello"});
+        let request = axum::extract::Request::builder()
+            .uri("http://example.com/v1/chat")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+
+        let result = promote_body_fields(&config, request).await.unwrap();
+
+        assert_eq!(
+            result
+                .headers()
+                .get("x-gateway-model-name")
+                .and_then(|v| v.to_str().ok()),
+            Some("command-r-plus")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_promote_body_fields_non_json_skipped() {
+        let config = vec![(
+            "model".to_owned(),
+            HeaderName::from_static("x-gateway-model-name"),
+        )];
+        let request = axum::extract::Request::builder()
+            .uri("http://example.com/v1/audio/transcriptions")
+            .header("content-type", "multipart/form-data; boundary=---abc")
+            .body(Body::from("some binary data"))
+            .unwrap();
+
+        let result = promote_body_fields(&config, request).await.unwrap();
+
+        assert!(result.headers().get("x-gateway-model-name").is_none());
     }
 }
