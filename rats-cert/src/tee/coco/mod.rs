@@ -49,9 +49,13 @@ mod tests {
         let attester = CocoAttester::new(TEST_AA_ADDR).expect("Failed to create attester");
 
         // Create converter (sends evidence to remote AS for verification)
-        let converter =
-            CocoRestfulConverter::new(TEST_AS_ADDR, &vec!["default".to_string()], &HashMap::new())
-                .expect("Failed to create converter");
+        let converter = CocoRestfulConverter::new(
+            TEST_AS_ADDR,
+            &vec!["default".to_string()],
+            &HashMap::new(),
+            &[],
+        )
+        .expect("Failed to create converter");
 
         // Create verifier (validates AS-issued token)
         let verifier = CocoRemoteVerifier::new(
@@ -89,9 +93,13 @@ mod tests {
         let attester = CocoAttester::new(TEST_AA_ADDR).expect("Failed to create attester");
 
         // Create converter (attester-side, converts evidence to token via AS)
-        let converter =
-            CocoRestfulConverter::new(TEST_AS_ADDR, &vec!["default".to_string()], &HashMap::new())
-                .expect("Failed to create converter");
+        let converter = CocoRestfulConverter::new(
+            TEST_AS_ADDR,
+            &vec!["default".to_string()],
+            &HashMap::new(),
+            &[],
+        )
+        .expect("Failed to create converter");
 
         // Get evidence
         let report_data = ReportData::Claims(serde_json::Map::new());
@@ -135,9 +143,13 @@ mod tests {
         let attester = CocoAsrAttester::new(TEST_ASR_ADDR).expect("Failed to create ASR attester");
 
         // Create converter (sends evidence to remote AS for verification)
-        let converter =
-            CocoRestfulConverter::new(TEST_AS_ADDR, &vec!["default".to_string()], &HashMap::new())
-                .expect("Failed to create converter");
+        let converter = CocoRestfulConverter::new(
+            TEST_AS_ADDR,
+            &vec!["default".to_string()],
+            &HashMap::new(),
+            &[],
+        )
+        .expect("Failed to create converter");
 
         // Create verifier (validates AS-issued token)
         let verifier = CocoRemoteVerifier::new(

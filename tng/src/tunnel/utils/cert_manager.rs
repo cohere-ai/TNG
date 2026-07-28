@@ -250,6 +250,7 @@ mod tests {
                     as_addr: "http://127.0.0.1:8080".to_owned(),
                     policy_ids: vec!["default".to_string()],
                     as_headers: HashMap::new(),
+                    as_ca_certs: vec![],
                 }),
                 refresh_interval: Some(0),
                 max_retries: None,

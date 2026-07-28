@@ -58,6 +58,12 @@ impl From<AttestationServiceHashAlgo> for HashAlgo {
 
 /// Convert Tee to its string representation for API calls.
 pub fn tee_to_string(tee: Tee) -> Result<String> {
+    match tee {
+        Tee::AzSnpVtpm => return Ok("az-snp-vtpm".to_string()),
+        Tee::AzTdxVtpm => return Ok("az-tdx-vtpm".to_string()),
+        _ => {}
+    }
+
     serde_json::to_value(tee)
         .ok()
         .and_then(|v| v.as_str().map(|s| s.to_string()))
@@ -66,6 +72,12 @@ pub fn tee_to_string(tee: Tee) -> Result<String> {
 
 /// Convert Tee to its string representation for API calls.
 pub fn tee_from_str(tee_type: &str) -> Result<Tee> {
+    match tee_type {
+        "az-snp-vtpm" => return Ok(Tee::AzSnpVtpm),
+        "az-tdx-vtpm" => return Ok(Tee::AzTdxVtpm),
+        _ => {}
+    }
+
     serde_json::from_value::<Tee>(serde_json::Value::String(tee_type.to_string())).map_err(|_| {
         Error::TeeTypeFromStringFailed {
             tee_type: tee_type.to_string(),
@@ -133,6 +145,19 @@ impl CocoEvidence {
             serde_json::from_value::<CocoEvidenceJsonHelper>(value)
                 .map_err(Error::DeserializeEvidenceFromJsonFailed)?,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn azure_tee_names_use_kebab_case() {
+        assert_eq!(tee_from_str("az-snp-vtpm").unwrap(), Tee::AzSnpVtpm);
+        assert_eq!(tee_from_str("az-tdx-vtpm").unwrap(), Tee::AzTdxVtpm);
+        assert_eq!(tee_to_string(Tee::AzSnpVtpm).unwrap(), "az-snp-vtpm");
+        assert_eq!(tee_to_string(Tee::AzTdxVtpm).unwrap(), "az-tdx-vtpm");
     }
 }
 

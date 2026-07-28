@@ -41,8 +41,9 @@ pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
                 as_addr,
                 policy_ids,
                 as_headers,
+                as_ca_certs,
             } => Ok(TngConverter::Coco(CocoConverter::Restful(
-                CocoRestfulConverter::new(as_addr, policy_ids, as_headers)?,
+                CocoRestfulConverter::new(as_addr, policy_ids, as_headers, as_ca_certs)?,
             ))),
             CocoConverterArgs::Grpc {
                 as_addr,
