@@ -920,6 +920,7 @@ In the Passport model, the [Attest](#attest) configuration should include the fo
 - **`as_type`** (string, optional, defaults to "restful"): Attestation Service type. Possible values: "restful", "grpc"
 - **`as_addr`** (string): Address of the Attestation Service
 - **`as_headers`** (object, optional, default is {}): Custom headers to be sent with attestation service requests. This is useful when the attestation service is deployed behind an authentication mechanism that requires additional Authorization headers or other custom headers.
+- **`as_ca_certs`** (array [string], optional, default is empty): PEM CA bundle paths used to authenticate an HTTPS Attestation Service.
 - **`policy_ids`** (array [string]): List of policy IDs
 
 As with Background Check mode, you can use `aa_provider` = `"coco_asr"` with `asr_addr` instead of `aa_addr` to collect evidence via the ASR HTTP proxy.

@@ -100,6 +100,7 @@ impl CocoGrpcConverter {
 
         let runtime_data_hash_algorithm =
             AttestationServiceHashAlgo::from(in_evidence.get_aa_runtime_data_hash_algo()).str_id();
+        let runtime_data = in_evidence.aa_runtime_data_ref().to_owned();
 
         let request = tonic::Request::from_parts(
             self.request_metadata.clone(),
@@ -110,11 +111,11 @@ impl CocoGrpcConverter {
                 evidence: URL_SAFE_NO_PAD.encode(in_evidence.aa_evidence_ref()),
                 runtime_data: Some(
                     as_api::v1_6_0::individual_attestation_request::RuntimeData::StructuredRuntimeData(
-                        in_evidence.aa_runtime_data_ref().into(),
+                        runtime_data.clone(),
                     ),
                 ),
                 init_data: None, // TODO: add support for init_data when support on AA is ready
-                runtime_data_hash_algorithm: runtime_data_hash_algorithm.into(),
+                runtime_data_hash_algorithm: runtime_data_hash_algorithm.to_owned(),
             })).chain(
                 convert_additional_evidence(in_evidence)?
                     .iter()
@@ -123,8 +124,12 @@ impl CocoGrpcConverter {
                             tee: tee_to_string(*tee_type)?,
                             evidence: URL_SAFE_NO_PAD.encode(evidence.to_string()),
                             init_data: None,
-                            runtime_data: None, // Always None for additional evidence
-                            runtime_data_hash_algorithm: "".to_owned(),
+                            runtime_data: Some(
+                                as_api::v1_6_0::individual_attestation_request::RuntimeData::StructuredRuntimeData(
+                                    runtime_data.clone(),
+                                ),
+                            ),
+                            runtime_data_hash_algorithm: runtime_data_hash_algorithm.to_owned(),
                         })
                     }),
             )

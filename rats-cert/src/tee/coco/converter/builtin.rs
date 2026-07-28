@@ -420,8 +420,6 @@ impl GenericConverter for BuiltinCocoConverter {
         // Get hash algorithm
         let hash_algo =
             AttestationServiceHashAlgo::from(in_evidence.get_aa_runtime_data_hash_algo());
-        let hash_algorithm = Self::hash_algo_to_as(&hash_algo);
-
         // Parse runtime data as JSON
         let runtime_data: serde_json::Value =
             serde_json::from_str(in_evidence.aa_runtime_data_ref())
@@ -432,8 +430,10 @@ impl GenericConverter for BuiltinCocoConverter {
             evidence: serde_json::from_slice(in_evidence.aa_evidence_ref())
                 .map_err(Error::ParseEvidenceFromBytesFailed)?,
             tee: *tee,
-            runtime_data: Some(attestation_service::RuntimeData::Structured(runtime_data)),
-            runtime_data_hash_algorithm: hash_algorithm,
+            runtime_data: Some(attestation_service::RuntimeData::Structured(
+                runtime_data.clone(),
+            )),
+            runtime_data_hash_algorithm: Self::hash_algo_to_as(&hash_algo),
             init_data: None,
             additional_data: None,
         }];
@@ -443,8 +443,10 @@ impl GenericConverter for BuiltinCocoConverter {
             verification_requests.push(attestation_service::VerificationRequest {
                 evidence,
                 tee: tee_type,
-                runtime_data: None,
-                runtime_data_hash_algorithm: HashAlgorithm::Sha256,
+                runtime_data: Some(attestation_service::RuntimeData::Structured(
+                    runtime_data.clone(),
+                )),
+                runtime_data_hash_algorithm: Self::hash_algo_to_as(&hash_algo),
                 init_data: None,
                 additional_data: None,
             });

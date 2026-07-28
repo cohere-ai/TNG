@@ -385,6 +385,7 @@ mod tests {
             as_addr: TEST_AS_ADDR.to_string(),
             policy_ids: vec!["default".to_string()],
             as_headers: HashMap::new(),
+            as_ca_certs: vec![],
         })
     }
 
