@@ -266,9 +266,6 @@ mod tests {
         async fn peek_exact(&mut self, _: &mut [u8]) -> io::Result<()> {
             unimplemented!()
         }
-        fn consume_peek(&mut self) {
-            unimplemented!()
-        }
         async fn write_all(&mut self, payload: &[u8]) -> io::Result<()> {
             self.stream.write_all(payload).await
         }

@@ -15,7 +15,7 @@ use futures::StreamExt;
 use serf::delegate::CompositeDelegate;
 use serf::net::hostaddr::Host;
 use serf::net::resolver::socket_addr::SocketAddrResolver;
-use serf::net::{HostAddr, NetTransport, NetTransportOptions, Node, NodeId};
+use serf::net::{HostAddr, NetTransport, NetTransportOptions, NodeId};
 use serf::types::MaybeResolvedAddress;
 use serf::{MemberlistOptions, Options};
 use uuid::Uuid;
@@ -327,7 +327,7 @@ async fn resolve_peer_addresses(addr: &String) -> Result<Vec<SocketAddr>, TngErr
 async fn join_serf_cluster(serf: &Serf, peers: &[String]) -> Result<(), TngError> {
     let mut any_joined = false;
 
-    for (i, peer) in peers.iter().enumerate() {
+    for peer in peers.iter() {
         tracing::info!(peer, "Attempting to join Serf cluster");
 
         let socket_addrs = match resolve_peer_addresses(peer).await {
@@ -349,13 +349,7 @@ async fn join_serf_cluster(serf: &Serf, peers: &[String]) -> Result<(), TngError
                 "Attempting to join serf cluster using resolved socket address"
             );
 
-            let node = Node::new(
-                #[allow(clippy::unwrap_used)]
-                NodeId::<255>::new(format!("unresolved_peer_{}", i)).unwrap(),
-                MaybeResolvedAddress::resolved(socket_addr),
-            );
-
-            match serf.join(node, false).await {
+            match serf.join(MaybeResolvedAddress::resolved(socket_addr), false).await {
                 Ok(_) => {
                     tracing::info!(
                         ?peer,
