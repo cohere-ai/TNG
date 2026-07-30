@@ -252,10 +252,6 @@ impl<R: Runtime> serf::net::Connection for RatsTlsStream<R> {
     async fn peek_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
         self.reader.peek_exact(buf).await
     }
-
-    fn consume_peek(&mut self) {
-        self.reader.consume();
-    }
 }
 
 impl<R: Runtime> PromisedStream for RatsTlsStream<R> {
