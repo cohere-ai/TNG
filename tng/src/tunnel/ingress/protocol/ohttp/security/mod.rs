@@ -90,6 +90,9 @@ impl OHttpSecurityLayer {
                 }
             }
 
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+            builder = builder.no_proxy();
+
             builder.build()?
         };
         let body_field_headers = ohttp_args
@@ -127,7 +130,7 @@ impl OHttpSecurityLayer {
             .map(|rules| DirectForwardTrafficDetector::new(rules.clone()))
             .transpose()
             .context("Failed to initialize direct_forward detector")
-            .map_err(TngError::CreateOHttpClientFailed)?;
+            .map_err(TngError::InvalidParameter)?;
 
         Ok(Self {
             ra_context,
@@ -247,7 +250,7 @@ impl OHttpSecurityLayer {
         let reqwest_body = reqwest::Body::wrap_stream(request.into_body().into_data_stream());
 
         let response = req_builder.body(reqwest_body).send().await.map_err(|e| {
-            TngError::CreateOHttpClientFailed(anyhow::anyhow!("direct forward failed: {e}"))
+            TngError::DirectForwardFailed(anyhow::anyhow!("request to upstream failed: {e}"))
         })?;
 
         let status = response.status();
@@ -261,7 +264,7 @@ impl OHttpSecurityLayer {
         let resp = resp
             .body(axum::body::Body::from_stream(resp_body_stream))
             .map_err(|e| {
-                TngError::CreateOHttpClientFailed(anyhow::anyhow!("response build failed: {e}"))
+                TngError::DirectForwardFailed(anyhow::anyhow!("response build failed: {e}"))
             })?;
 
         Ok((resp, None))

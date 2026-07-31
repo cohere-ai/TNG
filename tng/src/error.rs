@@ -93,6 +93,9 @@ pub enum TngError {
     #[error("Failed to create OHTTP client")]
     CreateOHttpClientFailed(#[source] anyhow::Error),
 
+    #[error("Direct forward failed: {0}")]
+    DirectForwardFailed(#[source] anyhow::Error),
+
     #[error("Failed to create RA context")]
     RaContextCreationFailed(#[source] anyhow::Error),
 
@@ -184,6 +187,7 @@ impl IntoResponse for TngError {
                 }
             }
             TngError::HttpCipherTextBadResponse(..) => StatusCode::BAD_GATEWAY,
+            TngError::DirectForwardFailed(..) => StatusCode::BAD_GATEWAY,
 
             // Metadata I/O errors
             TngError::MetadataReadError(..) => StatusCode::BAD_REQUEST,
