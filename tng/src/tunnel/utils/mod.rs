@@ -1,6 +1,7 @@
 #[cfg(unix)]
 pub mod cert_manager;
 pub mod certs;
+pub mod direct_forward;
 #[cfg(unix)]
 pub mod endpoint_matcher;
 #[cfg(unix)]

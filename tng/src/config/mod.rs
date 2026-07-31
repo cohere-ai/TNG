@@ -4,6 +4,16 @@ use ingress::AddIngressArgs;
 use observability::{metric::MetricArgs, trace::TraceArgs};
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectForwardRules(pub Vec<DirectForwardRule>);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DirectForwardRule {
+    pub http_path: String,
+}
+
 pub mod control_interface;
 pub mod egress;
 pub mod ingress;

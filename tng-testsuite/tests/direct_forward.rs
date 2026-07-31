@@ -11,6 +11,56 @@ use tng_testsuite::{
 
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn test_ingress_direct_forward_with_ohttp() -> Result<()> {
+    run_test(vec![
+        TngInstance::TngClient(
+            r#"
+            {
+                "add_ingress": [
+                    {
+                        "mapping": {
+                            "in": {
+                                "host": "0.0.0.0",
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.1",
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {
+                            "direct_forward": [
+                                {"http_path": "/public/.*"}
+                            ]
+                        },
+                        "no_ra": true
+                    }
+                ]
+            }
+            "#,
+        )
+        .boxed(),
+        AppType::HttpServer {
+            port: 30001,
+            expected_host_header: "192.168.1.1:30001",
+            expected_path_and_query: "/public/resource",
+        }
+        .boxed(),
+        AppType::HttpClient {
+            host: "192.168.1.253",
+            port: 10001,
+            host_header: "192.168.1.1:30001",
+            path_and_query: "/public/resource",
+        }
+        .boxed(),
+    ])
+    .await?;
+
+    Ok(())
+}
+
+#[serial]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_conflict_config_field() -> Result<()> {
     assert!(run_test(vec![
         TngInstance::TngServer(r#"

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ra::RaArgsUnchecked, Endpoint};
+use super::{ra::RaArgsUnchecked, DirectForwardRule, DirectForwardRules, Endpoint};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddEgressArgs {
@@ -22,16 +22,6 @@ pub struct CommonArgs {
 
     #[serde(flatten)]
     pub ra_args: RaArgsUnchecked,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DirectForwardRules(pub Vec<DirectForwardRule>);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DirectForwardRule {
-    pub http_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

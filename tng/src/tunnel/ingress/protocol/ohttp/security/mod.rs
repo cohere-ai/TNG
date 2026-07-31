@@ -14,6 +14,7 @@ use crate::{
         endpoint::TngEndpoint,
         ingress::protocol::ohttp::security::{client::OHttpClient, path_rewrite::PathRewriteGroup},
         ra_context::RaContext,
+        utils::direct_forward::DirectForwardTrafficDetector,
     },
     AttestationResult, TokioRuntime, HTTP_REQUEST_USER_AGENT_HEADER,
 };
@@ -38,6 +39,7 @@ pub struct OHttpSecurityLayer {
     forward_header_names: Vec<HeaderName>,
     body_field_headers: Vec<(String, HeaderName)>,
     key_refresh_before_expiry_seconds: Option<u64>,
+    direct_forward_detector: Option<DirectForwardTrafficDetector>,
     runtime: TokioRuntime,
 }
 
@@ -119,6 +121,14 @@ impl OHttpSecurityLayer {
         forward_header_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         forward_header_names.dedup();
 
+        let direct_forward_detector = ohttp_args
+            .direct_forward
+            .as_ref()
+            .map(|rules| DirectForwardTrafficDetector::new(rules.clone()))
+            .transpose()
+            .context("Failed to initialize direct_forward detector")
+            .map_err(TngError::CreateOHttpClientFailed)?;
+
         Ok(Self {
             ra_context,
             http_client: Arc::new(http_client),
@@ -127,6 +137,7 @@ impl OHttpSecurityLayer {
             forward_header_names,
             body_field_headers,
             key_refresh_before_expiry_seconds: ohttp_args.key_refresh_before_expiry_seconds,
+            direct_forward_detector,
             runtime,
         })
     }
@@ -136,6 +147,16 @@ impl OHttpSecurityLayer {
         endpoint: &TngEndpoint,
         request: axum::extract::Request,
     ) -> Result<(axum::response::Response, Option<AttestationResult>), TngError> {
+        if let Some(detector) = &self.direct_forward_detector {
+            if detector.matches_path(request.uri().path()) {
+                tracing::debug!(
+                    path = request.uri().path(),
+                    "Direct forwarding request (bypassing OHTTP)"
+                );
+                return self.forward_directly(endpoint, request).await;
+            }
+        }
+
         async {
             let request = if !self.body_field_headers.is_empty() {
                 self.promote_body_fields_to_headers(request).await?
@@ -198,6 +219,52 @@ impl OHttpSecurityLayer {
                 .map_err(TngError::CreateOHttpClientFailed)?
         };
         Ok(base_url)
+    }
+
+    async fn forward_directly(
+        &self,
+        endpoint: &TngEndpoint,
+        request: axum::extract::Request,
+    ) -> Result<(axum::response::Response, Option<AttestationResult>), TngError> {
+        let method = request.method().clone();
+        let url = format!(
+            "{}://{}:{}{}",
+            endpoint.scheme(),
+            endpoint.host(),
+            endpoint.port(),
+            request
+                .uri()
+                .path_and_query()
+                .map(|pq| pq.as_str())
+                .unwrap_or("/")
+        );
+
+        let mut req_builder = self.http_client.request(method, &url);
+        for (name, value) in request.headers() {
+            req_builder = req_builder.header(name, value);
+        }
+
+        let reqwest_body = reqwest::Body::wrap_stream(request.into_body().into_data_stream());
+
+        let response = req_builder.body(reqwest_body).send().await.map_err(|e| {
+            TngError::CreateOHttpClientFailed(anyhow::anyhow!("direct forward failed: {e}"))
+        })?;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let resp_body_stream = response.bytes_stream();
+
+        let mut resp = axum::response::Response::builder().status(status);
+        for (name, value) in headers.iter() {
+            resp = resp.header(name, value);
+        }
+        let resp = resp
+            .body(axum::body::Body::from_stream(resp_body_stream))
+            .map_err(|e| {
+                TngError::CreateOHttpClientFailed(anyhow::anyhow!("response build failed: {e}"))
+            })?;
+
+        Ok((resp, None))
     }
 
     async fn get_or_create_ohttp_client(
