@@ -12,34 +12,34 @@ use tng_testsuite::{
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_ingress_direct_forward_with_ohttp() -> Result<()> {
+    let tng_client_config = r#"
+        {
+            "add_ingress": [
+                {
+                    "mapping": {
+                        "in": {
+                            "host": "0.0.0.0",
+                            "port": 10001
+                        },
+                        "out": {
+                            "host": "192.168.1.1",
+                            "port": 30001
+                        }
+                    },
+                    "ohttp": {
+                        "direct_forward": [
+                            {"http_path": "/public/.*"}
+                        ]
+                    },
+                    "no_ra": true
+                }
+            ]
+        }
+        "#;
+
+    // Matching path: forwarded directly as plain HTTP, plain server handles it fine
     run_test(vec![
-        TngInstance::TngClient(
-            r#"
-            {
-                "add_ingress": [
-                    {
-                        "mapping": {
-                            "in": {
-                                "host": "0.0.0.0",
-                                "port": 10001
-                            },
-                            "out": {
-                                "host": "192.168.1.1",
-                                "port": 30001
-                            }
-                        },
-                        "ohttp": {
-                            "direct_forward": [
-                                {"http_path": "/public/.*"}
-                            ]
-                        },
-                        "no_ra": true
-                    }
-                ]
-            }
-            "#,
-        )
-        .boxed(),
+        TngInstance::TngClient(tng_client_config).boxed(),
         AppType::HttpServer {
             port: 30001,
             expected_host_header: "192.168.1.1:30001",
@@ -55,6 +55,26 @@ async fn test_ingress_direct_forward_with_ohttp() -> Result<()> {
         .boxed(),
     ])
     .await?;
+
+    // Non-matching path: goes through OHTTP encryption, plain server cannot handle it
+    assert!(run_test(vec![
+        TngInstance::TngClient(tng_client_config).boxed(),
+        AppType::HttpServer {
+            port: 30001,
+            expected_host_header: "192.168.1.1:30001",
+            expected_path_and_query: "/private/resource",
+        }
+        .boxed(),
+        AppType::HttpClient {
+            host: "192.168.1.253",
+            port: 10001,
+            host_header: "192.168.1.1:30001",
+            path_and_query: "/private/resource",
+        }
+        .boxed(),
+    ])
+    .await
+    .is_err());
 
     Ok(())
 }
