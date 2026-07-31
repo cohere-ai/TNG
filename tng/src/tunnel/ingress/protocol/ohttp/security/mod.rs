@@ -19,9 +19,21 @@ use crate::{
     AttestationResult, TokioRuntime, HTTP_REQUEST_USER_AGENT_HEADER,
 };
 use anyhow::{Context, Result};
-use http::{header::HeaderName, HeaderValue};
+use http::{header, header::HeaderName, HeaderValue};
 use tokio::sync::{OnceCell, RwLock};
 use url::Url;
+
+// Headers that apply only to a single transport-level connection and must not
+// be forwarded by proxies (RFC 7230 §6.1).
+const HOP_BY_HOP_HEADERS: &[header::HeaderName] = &[
+    header::CONNECTION,
+    header::TRANSFER_ENCODING,
+    header::PROXY_AUTHENTICATE,
+    header::PROXY_AUTHORIZATION,
+    header::TE,
+    header::TRAILER,
+    header::UPGRADE,
+];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct OHttpClientCacheKey {
@@ -244,6 +256,9 @@ impl OHttpSecurityLayer {
 
         let mut req_builder = self.http_client.request(method, &url);
         for (name, value) in request.headers() {
+            if HOP_BY_HOP_HEADERS.contains(name) {
+                continue;
+            }
             req_builder = req_builder.header(name, value);
         }
 
@@ -259,6 +274,9 @@ impl OHttpSecurityLayer {
 
         let mut resp = axum::response::Response::builder().status(status);
         for (name, value) in headers.iter() {
+            if HOP_BY_HOP_HEADERS.contains(name) {
+                continue;
+            }
             resp = resp.header(name, value);
         }
         let resp = resp
