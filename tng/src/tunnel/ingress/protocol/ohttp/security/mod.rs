@@ -20,6 +20,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use http::{header, header::HeaderName, HeaderValue};
+use http_body::Body as _;
 use tokio::sync::{OnceCell, RwLock};
 use url::Url;
 
@@ -104,6 +105,7 @@ impl OHttpSecurityLayer {
 
             builder = builder.redirect(reqwest::redirect::Policy::none());
             builder = builder.no_proxy();
+            builder = builder.no_gzip().no_brotli().no_zstd();
 
             builder.build()?
         };
@@ -254,6 +256,8 @@ impl OHttpSecurityLayer {
                 .unwrap_or("/")
         );
 
+        let has_body = request.body().size_hint().upper() != Some(0);
+
         let mut req_builder = self.http_client.request(method, &url);
         for (name, value) in request.headers() {
             if HOP_BY_HOP_HEADERS.contains(name) {
@@ -262,9 +266,12 @@ impl OHttpSecurityLayer {
             req_builder = req_builder.header(name, value);
         }
 
-        let reqwest_body = reqwest::Body::wrap_stream(request.into_body().into_data_stream());
+        if has_body {
+            let reqwest_body = reqwest::Body::wrap_stream(request.into_body().into_data_stream());
+            req_builder = req_builder.body(reqwest_body);
+        }
 
-        let response = req_builder.body(reqwest_body).send().await.map_err(|e| {
+        let response = req_builder.send().await.map_err(|e| {
             TngError::DirectForwardFailed(anyhow::anyhow!("request to upstream failed: {e}"))
         })?;
 
