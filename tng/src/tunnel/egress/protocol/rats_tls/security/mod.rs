@@ -6,6 +6,7 @@ use std::sync::Arc;
 use crate::tunnel::{
     attestation_result::AttestationResult,
     ra_context::RaContext,
+    service_metrics::AttestationMetrics,
     stream::CommonStreamTrait,
     utils::{runtime::TokioRuntime, rustls_config::TlsConfigGenerator},
 };
@@ -19,8 +20,13 @@ pub(super) struct RatsTlsSecurityLayer {
 }
 
 impl RatsTlsSecurityLayer {
-    pub async fn new(ra_context: Arc<RaContext>, runtime: TokioRuntime) -> Result<Self> {
-        let tls_config_generator = TlsConfigGenerator::new(ra_context, runtime).await?;
+    pub async fn new(
+        ra_context: Arc<RaContext>,
+        attestation_metrics: AttestationMetrics,
+        runtime: TokioRuntime,
+    ) -> Result<Self> {
+        let tls_config_generator =
+            TlsConfigGenerator::new(ra_context, attestation_metrics, runtime).await?;
 
         Ok(Self {
             tls_config_generator,

@@ -4,6 +4,8 @@ mod path_rewrite;
 use std::{collections::HashMap, sync::Arc};
 
 #[cfg(unix)]
+use crate::tunnel::service_metrics::AttestationMetrics;
+#[cfg(unix)]
 use crate::tunnel::utils::socket::{
     TCP_KEEPALIVE_IDLE_SECS, TCP_KEEPALIVE_INTERVAL_SECS, TCP_KEEPALIVE_PROBE_COUNT,
 };
@@ -38,6 +40,8 @@ pub struct OHttpSecurityLayer {
     forward_header_names: Vec<HeaderName>,
     body_field_headers: Vec<(String, HeaderName)>,
     key_refresh_before_expiry_seconds: Option<u64>,
+    #[cfg(unix)]
+    attestation_metrics: AttestationMetrics,
     runtime: TokioRuntime,
 }
 
@@ -47,6 +51,7 @@ impl OHttpSecurityLayer {
         transport_so_mark: Option<u32>,
         ohttp_args: &OHttpArgs,
         ra_context: Arc<RaContext>,
+        #[cfg(unix)] attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self> {
         let http_client = {
@@ -127,6 +132,8 @@ impl OHttpSecurityLayer {
             forward_header_names,
             body_field_headers,
             key_refresh_before_expiry_seconds: ohttp_args.key_refresh_before_expiry_seconds,
+            #[cfg(unix)]
+            attestation_metrics,
             runtime,
         })
     }
@@ -242,6 +249,8 @@ impl OHttpSecurityLayer {
                     base_url,
                     forward_headers,
                     self.key_refresh_before_expiry_seconds,
+                    #[cfg(unix)]
+                    self.attestation_metrics.clone(),
                     self.runtime.clone(),
                 )
                 .await

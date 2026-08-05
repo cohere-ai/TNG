@@ -23,6 +23,7 @@ use crate::{
         endpoint::TngEndpoint,
         ingress::protocol::rats_tls::RatsTlsStreamForwarder,
         ra_context::RaContext,
+        service_metrics::AttestationMetrics,
     },
     CommonStreamTrait, TokioRuntime,
 };
@@ -38,16 +39,17 @@ impl<R: Runtime> StreamLayer for RatsTls<R> {
     type Runtime = R;
     type Listener = RatsTlsListener<R>;
     type Stream = RatsTlsStream<R>;
-    type Options = (Arc<RaContext>, TokioRuntime);
+    type Options = (Arc<RaContext>, AttestationMetrics, TokioRuntime);
 
     #[inline]
-    async fn new((ra_context, runtime): Self::Options) -> io::Result<Self> {
+    async fn new((ra_context, attestation_metrics, runtime): Self::Options) -> io::Result<Self> {
         Ok(Self {
             forwarder: Arc::new(
                 RatsTlsStreamForwarder::new(
                     #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                     None,
                     ra_context.clone(),
+                    attestation_metrics.clone(),
                     runtime.clone(),
                 )
                 .await
@@ -55,7 +57,7 @@ impl<R: Runtime> StreamLayer for RatsTls<R> {
                 .map_err(io::Error::other)?,
             ),
             decoder: Arc::new(
-                RatsTlsStreamDecoder::new(ra_context, runtime)
+                RatsTlsStreamDecoder::new(ra_context, attestation_metrics, runtime)
                     .await
                     .context("Failed to create rats-tls stream decoder")
                     .map_err(io::Error::other)?,

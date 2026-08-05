@@ -16,6 +16,7 @@ mod unix_specific_module {
                 ProtocolStreamForwarderOutput,
             },
             ra_context::RaContext,
+            service_metrics::AttestationMetrics,
         },
         CommonStreamTrait, TokioIo, TokioRuntime,
     };
@@ -37,6 +38,7 @@ mod unix_specific_module {
             transport_so_mark: Option<u32>,
             ohttp_args: &OHttpArgs,
             ra_context: Arc<RaContext>,
+            attestation_metrics: AttestationMetrics,
             runtime: TokioRuntime,
         ) -> Result<Self> {
             Ok(Self {
@@ -50,6 +52,7 @@ mod unix_specific_module {
                         transport_so_mark,
                         ohttp_args,
                         ra_context,
+                        attestation_metrics,
                         runtime.clone(),
                     )
                     .await?,

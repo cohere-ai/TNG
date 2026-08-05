@@ -9,6 +9,7 @@ use crate::tunnel::ingress::protocol::rats_tls::RatsTlsStreamForwarder;
 use crate::tunnel::ingress::protocol::ProtocolStreamForwarder;
 use crate::tunnel::ingress::stream_manager::TngEndpoint;
 use crate::tunnel::ra_context::RaContext;
+use crate::tunnel::service_metrics::AttestationMetrics;
 use crate::CommonStreamTrait;
 use crate::{
     config::ingress::CommonArgs,
@@ -27,6 +28,7 @@ pub struct TrustedStreamManager {
 impl TrustedStreamManager {
     pub async fn new(
         common_args: &CommonArgs,
+        attestation_metrics: AttestationMetrics,
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         transport_so_mark: Option<u32>,
         runtime: TokioRuntime,
@@ -51,6 +53,7 @@ impl TrustedStreamManager {
                             transport_so_mark,
                             ohttp_args,
                             ra_context,
+                            attestation_metrics,
                             runtime.clone(),
                         )
                         .await?,
@@ -65,6 +68,7 @@ impl TrustedStreamManager {
                             ))]
                             transport_so_mark,
                             ra_context,
+                            attestation_metrics,
                             runtime.clone(),
                         )
                         .await?,

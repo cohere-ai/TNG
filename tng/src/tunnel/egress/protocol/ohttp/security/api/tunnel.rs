@@ -28,6 +28,7 @@ use crate::tunnel::ohttp::protocol::metadata::{
 };
 use crate::tunnel::ohttp::protocol::userdata::ClientUserData;
 use crate::tunnel::ra_context::VerifyContext;
+use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 
 impl OhttpServerApi {
     /// Interface 2: Process Encrypted Request
@@ -99,9 +100,18 @@ impl OhttpServerApi {
         );
 
         // Check metadata
-        self.validate_client_attestation_consistency(metadata.client_auth)
-            .await
-            .map_err(TngError::MetadataValidateError)?;
+        let attestation_required = self.ra_context.verify_context().is_some();
+        let attestation_result = self
+            .validate_client_attestation_consistency(metadata.client_auth)
+            .await;
+        if attestation_required {
+            self.attestation_metrics.record(
+                AttestationOperation::Verify,
+                AttestationProtocol::Ohttp,
+                attestation_result.is_ok(),
+            );
+        }
+        attestation_result.map_err(TngError::MetadataValidateError)?;
 
         let key_info = if let Some(hint) = metadata.key_config_hint {
             // Get key by hint

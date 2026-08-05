@@ -9,6 +9,7 @@ use crate::{
             ProtocolStreamForwarderOutput,
         },
         ra_context::RaContext,
+        service_metrics::AttestationMetrics,
         utils,
     },
     AttestationResult, CommonStreamTrait, TokioRuntime,
@@ -30,6 +31,7 @@ impl RatsTlsStreamForwarder {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         transport_so_mark: Option<u32>,
         ra_context: Arc<RaContext>,
+        attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self> {
         Ok(Self {
@@ -37,6 +39,7 @@ impl RatsTlsStreamForwarder {
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 transport_so_mark,
                 ra_context,
+                attestation_metrics,
                 runtime,
             )
             .await?,

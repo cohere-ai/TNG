@@ -73,6 +73,7 @@ impl IngressFlow {
         let trusted_stream_manager = Arc::new(
             TrustedStreamManager::new(
                 common_args,
+                metrics.attestation(),
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
                 transport_so_mark,
                 {

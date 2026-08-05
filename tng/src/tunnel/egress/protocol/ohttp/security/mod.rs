@@ -10,6 +10,7 @@ use crate::{
     tunnel::{
         egress::protocol::ohttp::security::{context::TngStreamContext, server::OhttpServer},
         ra_context::RaContext,
+        service_metrics::AttestationMetrics,
     },
     AttestationResult, CommonStreamTrait, TokioRuntime,
 };
@@ -29,11 +30,13 @@ impl OHttpSecurityLayer {
     pub async fn new(
         ra_context: Arc<RaContext>,
         ohttp_args: OHttpArgs,
+        attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self> {
         Ok(Self {
             runtime: runtime.clone(),
-            ohttp_server: OhttpServer::new(ra_context, ohttp_args, runtime).await?,
+            ohttp_server: OhttpServer::new(ra_context, ohttp_args, attestation_metrics, runtime)
+                .await?,
         })
     }
     pub async fn handle_stream(

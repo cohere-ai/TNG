@@ -29,6 +29,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 
 use crate::tunnel::ra_context::RaContext;
+use crate::tunnel::service_metrics::AttestationMetrics;
 use crate::tunnel::utils::file_watcher::FileWatcher;
 use std::path::Path;
 
@@ -60,7 +61,11 @@ pub struct PeerSharedKeyManagerInner {
 }
 
 impl PeerSharedKeyManager {
-    pub async fn new(runtime: TokioRuntime, peer_shared: PeerSharedArgs) -> Result<Self, TngError> {
+    pub async fn new(
+        runtime: TokioRuntime,
+        peer_shared: PeerSharedArgs,
+        attestation_metrics: AttestationMetrics,
+    ) -> Result<Self, TngError> {
         if peer_shared.join_max_attempts != 1 && peer_shared.join_retry_interval == 0 {
             return Err(TngError::InvalidParameter(anyhow!(
                 "join_retry_interval must be > 0 when join_max_attempts is not 1"
@@ -80,7 +85,8 @@ impl PeerSharedKeyManager {
         // Step 2: Initialize Serf node and network transport.
         // The exchange layer holds a reference to `inner` so it can read own keys
         // and merge peer keys directly during TCP push-pull connections.
-        let (serf, _node_id_str) = Self::setup_serf(&runtime, &peer_shared, inner.clone()).await?;
+        let (serf, _node_id_str) =
+            Self::setup_serf(&runtime, &peer_shared, inner.clone(), attestation_metrics).await?;
 
         // Step 3: Join cluster via static peers and optional file
         let (peers_file_watch_task, retry_join_task) =
@@ -99,6 +105,7 @@ impl PeerSharedKeyManager {
         runtime: &TokioRuntime,
         peer_shared: &PeerSharedArgs,
         inner: Arc<PeerSharedKeyManagerInner>,
+        attestation_metrics: AttestationMetrics,
     ) -> Result<(Arc<SerfGracefulShutdown>, String), TngError> {
         let memberlist_opts = MemberlistOptions::lan()
             .with_push_pull_interval(Duration::from_secs(peer_shared.push_pull_interval));
@@ -120,7 +127,7 @@ impl PeerSharedKeyManager {
         let net_opts =
             NetTransportOptions::<_, SocketAddrResolver<InstrumentedTokioRuntime>, _>::with_stream_layer_options(
                 node_id,
-                ((ra_context, runtime.clone()), inner),
+                ((ra_context, attestation_metrics, runtime.clone()), inner),
             )
             .with_bind_addresses(
                 [{

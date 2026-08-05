@@ -19,6 +19,9 @@ use crate::tunnel::ohttp::protocol::{
     AttestationRequest, HpkeKeyConfig, KeyConfigRequest, KeyConfigResponse, ServerAttestationInfo,
 };
 use crate::tunnel::ra_context::{AttestContext, RaContext};
+use crate::tunnel::service_metrics::{
+    AttestationMetrics, AttestationOperation, AttestationProtocol,
+};
 use crate::tunnel::utils::maybe_cached::{Expire, MaybeCached};
 
 impl OhttpServerApi {
@@ -54,6 +57,7 @@ impl OhttpServerApi {
                     let ra_context = self.ra_context.clone();
                     let key_manager = Arc::clone(&self.key_manager);
                     let payload = Arc::new(payload);
+                    let attestation_metrics = self.attestation_metrics.clone();
 
                     let refresh_strategy = attest_ctx.refresh_strategy();
 
@@ -64,12 +68,14 @@ impl OhttpServerApi {
                             let ra_context = ra_context.clone();
                             let key_manager = key_manager.clone();
                             let payload = payload.clone();
+                            let attestation_metrics = attestation_metrics.clone();
 
                             async move {
                                 let response = Self::get_hpke_configuration_internal(
                                     &ra_context,
                                     key_manager.as_ref(),
                                     payload.as_ref().clone(),
+                                    &attestation_metrics,
                                 )
                                 .await?;
 
@@ -90,6 +96,7 @@ impl OhttpServerApi {
                 &self.ra_context,
                 self.key_manager.as_ref(),
                 payload,
+                &self.attestation_metrics,
             )
             .await
             .map(|response: KeyConfigResponse| IntoResponse::into_response(Json(response))),
@@ -100,6 +107,7 @@ impl OhttpServerApi {
         ra_context: &RaContext,
         key_manager: &dyn KeyManager,
         payload: Option<Json<KeyConfigRequest>>,
+        attestation_metrics: &AttestationMetrics,
     ) -> Result<KeyConfigResponse, TngError> {
         // Collect all client visible keys, and create encoded_key_config_list
         let all_keys = key_manager.get_client_visible_keys().await?;
@@ -130,6 +138,7 @@ impl OhttpServerApi {
         };
 
         let attestation_request = payload.and_then(|Json(payload)| payload.attestation_request);
+        let attestation_requested = attestation_request.is_some();
 
         let response = async {
             Ok(match ra_context.attest_context() {
@@ -206,8 +215,17 @@ impl OhttpServerApi {
                 }
             })
         }
-        .await
-        .map_err(TngError::GenServerHpkeConfigurationResponseFailed)?;
+        .await;
+
+        if attestation_requested {
+            attestation_metrics.record(
+                AttestationOperation::Generate,
+                AttestationProtocol::Ohttp,
+                response.is_ok(),
+            );
+        }
+
+        let response = response.map_err(TngError::GenServerHpkeConfigurationResponseFailed)?;
 
         Ok(response)
     }

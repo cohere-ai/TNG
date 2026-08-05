@@ -9,6 +9,7 @@ use crate::tunnel::ohttp::protocol::{
 };
 use crate::tunnel::provider::{ProviderType, TngEvidence};
 use crate::tunnel::ra_context::VerifyContext;
+use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 
 impl OhttpServerApi {
     /// Interface 3: Attestation Forward - Get Challenge
@@ -19,7 +20,7 @@ impl OhttpServerApi {
     pub async fn get_attestation_challenge(
         &self,
     ) -> Result<Json<AttestationChallengeResponse>, TngError> {
-        async {
+        let result = async {
             match self.ra_context.verify_context() {
                 Some(verify_ctx) => match verify_ctx {
                     VerifyContext::Passport { .. } => {
@@ -35,7 +36,13 @@ impl OhttpServerApi {
             }
         }
         .await
-        .map_err(TngError::ServerVerifyClientGetChallengeTokenFailed)
+        .map_err(TngError::ServerVerifyClientGetChallengeTokenFailed);
+        self.attestation_metrics.record(
+            AttestationOperation::Challenge,
+            AttestationProtocol::Ohttp,
+            result.is_ok(),
+        );
+        result
     }
 
     /// Interface 3: Attestation Forward - Verify Evidence
@@ -47,7 +54,7 @@ impl OhttpServerApi {
         &self,
         Json(payload): Json<AttestationVerifyRequest>,
     ) -> Result<Json<AttestationVerifyResponse>, TngError> {
-        async {
+        let result = async {
             match self.ra_context.verify_context() {
                 Some(verify_ctx) => match verify_ctx {
                     VerifyContext::Passport { .. } => {
@@ -70,6 +77,12 @@ impl OhttpServerApi {
             }
         }
         .await
-        .map_err(TngError::ServerVerifyClientEvidenceFailed)
+        .map_err(TngError::ServerVerifyClientEvidenceFailed);
+        self.attestation_metrics.record(
+            AttestationOperation::Verify,
+            AttestationProtocol::Ohttp,
+            result.is_ok(),
+        );
+        result
     }
 }

@@ -31,6 +31,7 @@ use crate::{
         endpoint::TngEndpoint,
         ingress::protocol::rats_tls::wrapping::RatsTlsWrappingLayer,
         ra_context::RaContext,
+        service_metrics::AttestationMetrics,
         utils::{runtime::TokioRuntime, rustls_config::TlsConfigGenerator, tokio::TokioIo},
     },
     CommonStreamTrait,
@@ -57,14 +58,16 @@ impl RatsTlsSecurityLayer {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         transport_so_mark: Option<u32>,
         ra_context: Arc<RaContext>,
+        attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self> {
         let transport_layer_creator = RatsTlsTransportLayerCreator::new(
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
             transport_so_mark,
         );
-        let tls_config_generator =
-            Arc::new(TlsConfigGenerator::new(ra_context, runtime.clone()).await?);
+        let tls_config_generator = Arc::new(
+            TlsConfigGenerator::new(ra_context, attestation_metrics, runtime.clone()).await?,
+        );
 
         Ok(Self {
             next_id: AtomicU64::new(0),
