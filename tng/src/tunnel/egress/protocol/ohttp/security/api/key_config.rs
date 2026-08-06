@@ -221,7 +221,9 @@ impl OhttpServerApi {
             attestation_metrics.record(
                 AttestationOperation::Generate,
                 AttestationProtocol::Ohttp,
-                response.is_ok(),
+                response
+                    .as_ref()
+                    .is_ok_and(|response| response.attestation_info.is_some()),
             );
         }
 

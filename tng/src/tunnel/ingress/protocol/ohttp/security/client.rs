@@ -329,6 +329,11 @@ impl OHttpClientInner {
             }
         };
 
+        #[cfg(unix)]
+        if let Some(attempt) = attestation_attempt {
+            attempt.mark_succeeded();
+        }
+
         expire = std::cmp::min(
             expire,
             Expire::from_timestamp(server_key_config.expire_timestamp)?,
@@ -359,10 +364,6 @@ impl OHttpClientInner {
             },
             expire,
         );
-        #[cfg(unix)]
-        if let Some(attempt) = attestation_attempt {
-            attempt.mark_succeeded();
-        }
         Ok(result)
     }
 
