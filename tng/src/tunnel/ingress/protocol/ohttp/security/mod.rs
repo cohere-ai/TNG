@@ -268,9 +268,15 @@ impl OHttpSecurityLayer {
                 .unwrap_or("/")
         );
 
-        let has_body = request.body().size_hint().upper() != Some(0)
-            && (request.headers().contains_key(header::CONTENT_LENGTH)
-                || request.headers().contains_key(header::TRANSFER_ENCODING));
+        let has_body = match request.body().size_hint().upper() {
+            Some(0) => false,
+            Some(_) => true,
+            // Unknown length (e.g. Python SDK's Body::from_stream): use headers as signal
+            None => {
+                request.headers().contains_key(header::CONTENT_LENGTH)
+                    || request.headers().contains_key(header::TRANSFER_ENCODING)
+            }
+        };
 
         let mut req_builder = self.http_client.request(method, &url);
         for (name, value) in request.headers() {
