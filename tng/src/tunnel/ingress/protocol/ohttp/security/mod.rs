@@ -36,6 +36,18 @@ const HOP_BY_HOP_HEADERS: &[header::HeaderName] = &[
     header::UPGRADE,
 ];
 
+/// Returns true if the header is hop-by-hop per RFC 7230 §6.1: either in the
+/// static list or named by a Connection header token.
+fn is_hop_by_hop(name: &http::header::HeaderName, headers: &http::HeaderMap) -> bool {
+    HOP_BY_HOP_HEADERS.contains(name)
+        || headers
+            .get_all(header::CONNECTION)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .any(|t| t.trim().eq_ignore_ascii_case(name.as_str()))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct OHttpClientCacheKey {
     base_url: Url,
@@ -262,7 +274,7 @@ impl OHttpSecurityLayer {
 
         let mut req_builder = self.http_client.request(method, &url);
         for (name, value) in request.headers() {
-            if HOP_BY_HOP_HEADERS.contains(name) {
+            if is_hop_by_hop(name, request.headers()) {
                 continue;
             }
             req_builder = req_builder.header(name, value);
@@ -283,7 +295,7 @@ impl OHttpSecurityLayer {
 
         let mut resp = axum::response::Response::builder().status(status);
         for (name, value) in headers.iter() {
-            if HOP_BY_HOP_HEADERS.contains(name) {
+            if is_hop_by_hop(name, &headers) {
                 continue;
             }
             resp = resp.header(name, value);
