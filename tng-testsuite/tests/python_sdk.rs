@@ -19,6 +19,7 @@ use tng_testsuite::{
 ///   python3 -m venv .venv
 ///   .venv/bin/pip install maturin httpx
 ///   cd cohere/python/cohere-tng && ../../../.venv/bin/maturin develop
+///   cd cohere/python/conseel && ../../../.venv/bin/pip install -e .
 ///   ```
 ///
 /// Run with: `cargo test -p tng-testsuite --features python-sdk --test python_sdk`
@@ -141,6 +142,56 @@ asyncio.run(async_tests())
 print("SUCCESS: all Python SDK tests passed")
 '
             "#)
+            .to_owned(),
+            stop_test_on_finish: true,
+            run_in_foreground: false,
+        }
+        .boxed(),
+    ])
+    .await?;
+
+    Ok(())
+}
+
+/// Test that conseel.Transport direct_forward works through the Python SDK path.
+///
+/// Topology:
+///   Python (client netns, using conseel.Transport) --> Plain HTTP server (server netns :30001)
+///   No TNG Egress — if direct_forward fails, OHTTP-encrypted bytes hit the plain server and error.
+///
+/// Run with: `cargo test -p tng-testsuite --features python-sdk --test python_sdk -- test_python_sdk_direct_forward`
+#[cfg(feature = "python-sdk")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+#[serial]
+async fn test_python_sdk_direct_forward() -> Result<()> {
+    run_test(vec![
+        AppType::HttpServer {
+            port: 30001,
+            expected_host_header: "192.168.1.1:30001",
+            expected_path_and_query: "/v1/models",
+        }
+        .boxed(),
+        ShellTask {
+            name: "python_sdk_direct_forward_test".to_owned(),
+            node_type: NodeType::Client,
+            script: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                r#"/../.venv/bin/python3 -c '
+import conseel
+import httpx
+
+URL = "http://192.168.1.1:30001/v1/models"
+
+transport = conseel.Transport(verify=None)
+with httpx.Client(transport=transport) as client:
+    resp = client.get(URL)
+    assert resp.status_code == 200, f"expected 200, got {resp.status_code}"
+    print("PASS: direct_forward GET /v1/models via conseel.Transport")
+
+print("SUCCESS: direct_forward test passed")
+'
+            "#
+            )
             .to_owned(),
             stop_test_on_finish: true,
             run_in_foreground: false,
