@@ -20,7 +20,6 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use http::{header, header::HeaderName, HeaderValue};
-use http_body::Body as _;
 use tokio::sync::{OnceCell, RwLock};
 use url::Url;
 
@@ -268,16 +267,6 @@ impl OHttpSecurityLayer {
                 .unwrap_or("/")
         );
 
-        let has_body = match request.body().size_hint().upper() {
-            Some(0) => false,
-            Some(_) => true,
-            // Unknown length (e.g. Python SDK's Body::from_stream): use headers as signal
-            None => {
-                request.headers().contains_key(header::CONTENT_LENGTH)
-                    || request.headers().contains_key(header::TRANSFER_ENCODING)
-            }
-        };
-
         let mut req_builder = self.http_client.request(method, &url);
         for (name, value) in request.headers() {
             if is_hop_by_hop(name, request.headers()) {
@@ -286,10 +275,8 @@ impl OHttpSecurityLayer {
             req_builder = req_builder.header(name, value);
         }
 
-        if has_body {
-            let reqwest_body = reqwest::Body::wrap_stream(request.into_body().into_data_stream());
-            req_builder = req_builder.body(reqwest_body);
-        }
+        let reqwest_body = reqwest::Body::wrap_stream(request.into_body().into_data_stream());
+        req_builder = req_builder.body(reqwest_body);
 
         let response = req_builder.send().await.map_err(|e| {
             TngError::DirectForwardFailed(anyhow::anyhow!("request to upstream failed: {e}"))
@@ -566,5 +553,143 @@ mod tests {
         let result = promote_body_fields(&config, request).await.unwrap();
 
         assert!(result.headers().get("x-gateway-model-name").is_none());
+    }
+
+    /// Verifies forward_directly preserves request framing across all common cases.
+    #[tokio::test]
+    async fn test_direct_forward_preserves_request_framing() {
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        use crate::config::ingress::OHttpArgs;
+        use crate::config::ra::RaArgs;
+        use crate::config::{DirectForwardRule, DirectForwardRules};
+        use crate::tunnel::endpoint::TngEndpoint;
+        use crate::tunnel::ra_context::RaContext;
+
+        let listener = Arc::new(TcpListener::bind("127.0.0.1:0").await.unwrap());
+        let port = listener.local_addr().unwrap().port();
+
+        let shutdown = tokio_graceful::Shutdown::new(futures::future::pending::<()>());
+        let layer = Arc::new(
+            OHttpSecurityLayer::new(
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                None,
+                &OHttpArgs {
+                    direct_forward: Some(DirectForwardRules(vec![DirectForwardRule {
+                        http_path: "/.*".to_owned(),
+                    }])),
+                    ..Default::default()
+                },
+                Arc::new(RaContext::from_ra_args(&RaArgs::NoRa).await.unwrap()),
+                TokioRuntime::current(shutdown.guard()).unwrap(),
+            )
+            .await
+            .unwrap(),
+        );
+        let endpoint = TngEndpoint::new("127.0.0.1", port).with_scheme("http");
+
+        // Send a request and return the raw bytes the upstream received
+        let forward = |req: axum::extract::Request| {
+            let l = listener.clone();
+            let layer = layer.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                let srv = tokio::spawn(async move {
+                    let (mut s, _) = l.accept().await.unwrap();
+                    let mut buf = vec![0u8; 8192];
+                    let n = s.read(&mut buf).await.unwrap();
+                    s.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                        .await
+                        .unwrap();
+                    String::from_utf8_lossy(&buf[..n]).to_string()
+                });
+                layer.forward_http_request(&endpoint, req).await.unwrap();
+                srv.await.unwrap()
+            }
+        };
+
+        // GET with Body::empty (sidecar path)
+        let raw = forward(
+            axum::extract::Request::builder()
+                .method("GET")
+                .uri(format!("http://127.0.0.1:{port}/v1/models"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            !raw.to_lowercase().contains("transfer-encoding"),
+            "GET (empty): {raw}"
+        );
+
+        // GET with Body::from_stream (Python SDK path — empty duplex)
+        let (rd, wr) = tokio::io::duplex(1024);
+        drop(wr);
+        let raw = forward(
+            axum::extract::Request::builder()
+                .method("GET")
+                .uri(format!("http://127.0.0.1:{port}/v1/models"))
+                .body(Body::from_stream(tokio_util::io::ReaderStream::new(rd)))
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            !raw.to_lowercase().contains("transfer-encoding"),
+            "GET (stream): {raw}"
+        );
+
+        // POST with Content-Length
+        let raw = forward(
+            axum::extract::Request::builder()
+                .method("POST")
+                .uri(format!("http://127.0.0.1:{port}/v1/chat"))
+                .header("content-length", "11")
+                .body(Body::from("hello world"))
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            raw.to_lowercase().contains("content-length: 11"),
+            "POST CL: {raw}"
+        );
+        assert!(
+            !raw.to_lowercase().contains("transfer-encoding"),
+            "POST CL TE: {raw}"
+        );
+        assert!(raw.ends_with("hello world"), "POST CL body: {raw}");
+
+        // POST streaming (no Content-Length)
+        let (mut tx, rx) = tokio::io::duplex(1024);
+        let req = axum::extract::Request::builder()
+            .method("POST")
+            .uri(format!("http://127.0.0.1:{port}/v1/stream"))
+            .body(Body::from_stream(tokio_util::io::ReaderStream::new(rx)))
+            .unwrap();
+        let l = listener.clone();
+        let srv = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let n = s.read(&mut buf).await.unwrap();
+            s.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&buf[..n]).to_string()
+        });
+        let fwd = tokio::spawn({
+            let layer = layer.clone();
+            let endpoint = endpoint.clone();
+            async move { layer.forward_http_request(&endpoint, req).await.unwrap() }
+        });
+        tx.write_all(b"streamed").await.unwrap();
+        drop(tx);
+        fwd.await.unwrap();
+        let raw = srv.await.unwrap();
+        assert!(raw.contains("streamed"), "POST stream body: {raw}");
+        assert!(
+            !raw.to_lowercase().contains("content-length"),
+            "POST stream CL: {raw}"
+        );
     }
 }
