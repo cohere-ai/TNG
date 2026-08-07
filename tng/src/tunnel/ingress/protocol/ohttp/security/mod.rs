@@ -557,6 +557,7 @@ mod tests {
 
     /// Verifies forward_directly preserves request framing across all common cases.
     #[tokio::test]
+    #[allow(clippy::disallowed_methods)]
     async fn test_direct_forward_preserves_request_framing() {
         use std::sync::Arc;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -670,12 +671,22 @@ mod tests {
         let l = listener.clone();
         let srv = tokio::spawn(async move {
             let (mut s, _) = l.accept().await.unwrap();
-            let mut buf = vec![0u8; 8192];
-            let n = s.read(&mut buf).await.unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 4096];
+            loop {
+                let n = s.read(&mut tmp).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&tmp[..n]);
+                if buf.windows(8).any(|w| w == b"streamed") {
+                    break;
+                }
+            }
             s.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
                 .await
                 .unwrap();
-            String::from_utf8_lossy(&buf[..n]).to_string()
+            String::from_utf8_lossy(&buf).to_string()
         });
         let fwd = tokio::spawn({
             let layer = layer.clone();
