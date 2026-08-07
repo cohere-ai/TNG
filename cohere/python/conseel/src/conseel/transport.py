@@ -12,6 +12,10 @@ from typing import Optional
 
 import cohere_tng as tng
 
+_DEFAULT_DIRECT_FORWARD: list = [
+    {"http_path": r"^/v1/models(?:/[^/]+)?$"},
+]
+
 _DEFAULT_FORWARD_HEADERS: list = ["authorization"]
 
 _DEFAULT_BODY_FIELD_HEADERS: list = [
@@ -30,6 +34,7 @@ _UNSET = object()
 
 def _apply_ohttp_defaults(ohttp: Optional[dict]) -> dict:
     ohttp = dict(ohttp) if ohttp else {}
+    ohttp.setdefault("direct_forward", copy.deepcopy(_DEFAULT_DIRECT_FORWARD))
     ohttp.setdefault("forward_headers", list(_DEFAULT_FORWARD_HEADERS))
     ohttp.setdefault("body_field_headers", copy.deepcopy(_DEFAULT_BODY_FIELD_HEADERS))
     return ohttp

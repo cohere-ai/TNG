@@ -13,6 +13,9 @@
                 }
             },
             "ohttp": {
+                "direct_forward": [
+                    {"http_path": "^/v1/models(?:/[^/]+)?$"}
+                ],
                 "forward_headers": [
                     "authorization"
                 ],
