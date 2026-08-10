@@ -182,12 +182,32 @@ pub(crate) fn wrap_runtime_data_as_structed(report_data: &ReportData) -> Result<
     }
 }
 
-/// Deterministic canonical-JSON serialization via [`canon_json`].
+/// Deterministic canonical-JSON (RFC 8785) serialization.
+///
+/// This has to agree byte for byte with the attestation service, which hashes the same value
+/// to check it against the digest bound into the evidence, so it deliberately uses the same
+/// implementation the AS does.
 #[cfg(feature = "attester-coco")]
 pub(crate) fn serialize_canon_json<T: serde::Serialize>(value: T) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    let mut ser =
-        serde_json::Serializer::with_formatter(&mut buf, canon_json::CanonicalFormatter::new());
-    serde::Serialize::serialize(&value, &mut ser).map_err(Error::SerializeCanonicalJsonFailed)?;
-    Ok(buf)
+    serde_json_canonicalizer::to_vec(&value).map_err(Error::SerializeCanonicalJsonFailed)
+}
+
+#[cfg(all(test, feature = "attester-coco"))]
+mod canon_json_tests {
+    use super::serialize_canon_json;
+
+    /// The digest of this output is bound into the evidence and re-derived by the attestation
+    /// service, so the byte-level shape is a compatibility surface, not an implementation
+    /// detail: keys sorted, no insignificant whitespace, nesting canonicalized too.
+    #[test]
+    fn canonical_json_sorts_keys_and_stays_compact() {
+        let value = serde_json::json!({"b": 1, "a": "test", "c": {"e": "f", "d": "g"}});
+
+        let out = serialize_canon_json(&value).unwrap();
+
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            r#"{"a":"test","b":1,"c":{"d":"g","e":"f"}}"#
+        );
+    }
 }
