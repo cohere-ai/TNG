@@ -189,7 +189,6 @@ jobs:
               --workspace \
               --bins \
               --lib \
-              --exclude tng-wasm \
               -- --nocapture '"$SKIP_FLAGS"''
           REMOTE
 

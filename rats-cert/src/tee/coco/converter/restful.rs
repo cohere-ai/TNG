@@ -55,6 +55,19 @@ impl CocoRestfulConverter {
             let mut builder = reqwest::Client::builder()
                 .user_agent(format!("rats-rs/{}", env!("CARGO_PKG_VERSION")));
             builder = builder.default_headers(headers);
+            // On wasm32 the browser owns the trust store: reqwest exposes neither
+            // `Certificate` nor `add_root_certificate`, and there is no filesystem to read from.
+            #[cfg(all(
+                target_arch = "wasm32",
+                target_vendor = "unknown",
+                target_os = "unknown"
+            ))]
+            let _ = as_ca_certs;
+            #[cfg(not(all(
+                target_arch = "wasm32",
+                target_vendor = "unknown",
+                target_os = "unknown"
+            )))]
             for path in as_ca_certs {
                 let pem = std::fs::read(path).map_err(|source| {
                     Error::ReadAttestationServiceCaCertFailed {

@@ -1,12 +1,14 @@
 [workspace]
 default-members = ["tng"]
 exclude = ["deps/"]
+# tng-wasm is deliberately not a member: it is its own workspace so that it can keep
+# the `[patch.crates-io] hyper-util` shim that the native build cannot tolerate.
+# deps/hyper-util-shim is referenced by both workspaces via the patch below, so it is
+# not a member of either.
 members = [
   "tng",
   "cohere/python/cohere-tng",
   "tng-testsuite",
-  "tng-wasm",
-  "deps/hyper-util-shim",
   "rats-cert",
 ]
 resolver = "2"
@@ -174,6 +176,3 @@ rev = "59b43a6315a8f48ebfa4d12bbcd80cc0b1969a26"
 [patch.crates-io]
 hyper-util = {path = "./deps/hyper-util-shim"}
 
-[profile.release.package.tng-wasm]
-# Tell `rustc` to optimize for small code size.
-opt-level = "s"
