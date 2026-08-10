@@ -72,9 +72,11 @@ pub fn tee_to_string(tee: Tee) -> Result<String> {
 
 /// Convert Tee to its string representation for API calls.
 pub fn tee_from_str(tee_type: &str) -> Result<Tee> {
+    // Both spellings are accepted: `kbs-types` renames these to the hyphenated form, but older
+    // attestation agents built against the pre-0.13 lowercase serde emit the compact one.
     match tee_type {
-        "az-snp-vtpm" => return Ok(Tee::AzSnpVtpm),
-        "az-tdx-vtpm" => return Ok(Tee::AzTdxVtpm),
+        "az-snp-vtpm" | "azsnpvtpm" => return Ok(Tee::AzSnpVtpm),
+        "az-tdx-vtpm" | "aztdxvtpm" => return Ok(Tee::AzTdxVtpm),
         _ => {}
     }
 
@@ -158,6 +160,31 @@ mod tests {
         assert_eq!(tee_from_str("az-tdx-vtpm").unwrap(), Tee::AzTdxVtpm);
         assert_eq!(tee_to_string(Tee::AzSnpVtpm).unwrap(), "az-snp-vtpm");
         assert_eq!(tee_to_string(Tee::AzTdxVtpm).unwrap(), "az-tdx-vtpm");
+    }
+
+    #[test]
+    fn azure_tee_names_accept_legacy_spelling() {
+        assert_eq!(tee_from_str("azsnpvtpm").unwrap(), Tee::AzSnpVtpm);
+        assert_eq!(tee_from_str("aztdxvtpm").unwrap(), Tee::AzTdxVtpm);
+    }
+
+    #[test]
+    fn other_tee_names_round_trip() {
+        for (name, tee) in [
+            ("tdx", Tee::Tdx),
+            ("snp", Tee::Snp),
+            ("sgx", Tee::Sgx),
+            ("nvidia", Tee::Nvidia),
+            ("tpm", Tee::Tpm),
+        ] {
+            assert_eq!(tee_from_str(name).unwrap(), tee);
+            assert_eq!(tee_to_string(tee).unwrap(), name);
+        }
+    }
+
+    #[test]
+    fn unknown_tee_name_is_rejected() {
+        assert!(tee_from_str("definitely-not-a-tee").is_err());
     }
 }
 

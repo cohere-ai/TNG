@@ -664,7 +664,7 @@ checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
 [[package]]
 name = "bhttp"
 version = "0.7.0"
-source = "git+https://github.com/inclavare-containers/ohttp.git?rev=990bc9a7add7025b020444c1a6802b500fb08e9a#990bc9a7add7025b020444c1a6802b500fb08e9a"
+source = "git+https://github.com/inclavare-containers/ohttp.git?rev=89a6520b01b78d87bf4fa88dad07cac60b711fdb#89a6520b01b78d87bf4fa88dad07cac60b711fdb"
 dependencies = [
  "async-stream",
  "bytes",
@@ -811,7 +811,8 @@ dependencies = [
 [[package]]
 name = "canon-json"
 version = "0.2.1"
-source = "git+https://github.com/inclavare-containers/canon-json-rs#d6fa90c68f60d3d7a51daf942d882b589541be51"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5ae9f90437d2e2efba2a6c75b8279aa6b8f2f4017e0a4aeb64a76cd9d3a2bab"
 dependencies = [
  "serde",
  "serde_derive",
@@ -1786,12 +1787,14 @@ dependencies = [
 
 [[package]]
 name = "fast-socks5"
-version = "0.10.0"
-source = "git+https://github.com/dizda/fast-socks5.git?rev=4c8985c#4c8985cf686e7a86348f14c0892a17783dde878f"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9545787d8304a71e1bf1b711705070a4c400cce9b332c4a11800627b7c9a2067"
 dependencies = [
  "anyhow",
  "async-trait",
  "log",
+ "socket2 0.5.10",
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
@@ -3026,8 +3029,9 @@ dependencies = [
 
 [[package]]
 name = "kbs-types"
-version = "0.12.0"
-source = "git+https://github.com/inclavare-containers/kbs-types.git?rev=5c029c9#5c029c904afb458ce7e331d27d734fab1d0faf06"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4453d70e4a9a7db181a83661803dc296471957d16cb4ddd2af7a52d17eb234cc"
 dependencies = [
  "base64 0.22.1",
  "serde",
