@@ -1,10 +1,9 @@
 [workspace]
 default-members = ["tng"]
 exclude = ["deps/"]
-# tng-wasm is deliberately not a member: it is its own workspace so that it can keep
-# the `[patch.crates-io] hyper-util` shim that the native build cannot tolerate.
-# deps/hyper-util-shim is referenced by both workspaces via the patch below, so it is
-# not a member of either.
+# tng-wasm is deliberately not a member: it is its own workspace so that it can keep the
+# `[patch.crates-io]` hyper-util shim and reqwest fork that the native build cannot tolerate.
+# deps/hyper-util-shim is referenced only by that workspace, so it is not a member of either.
 members = [
   "tng",
   "cohere/python/cohere-tng",
@@ -63,7 +62,7 @@ http-body = "1.0.1"
 http-body-util = "0.1.3"
 httparse = "1.10.1"
 hyper = {version = "1", default-features = false, features = ["http1", "http2"]}
-hyper-util = {version = "=0.1.7", features = ["service", "client-legacy", "http1", "http2"]}# version locked for used with hyper-util-shim
+hyper-util = {version = "0.1.20", features = ["service", "client-legacy", "http1", "http2"]}
 indexmap = {version = "2.9.0", features = ["serde"]}
 itertools = "0.14.0"
 js-sys = "0.3.77"
@@ -91,7 +90,7 @@ rand = "0.9.1"
 rand_chacha = "0.9.0"
 rayon = "1.10.0"
 regex = "1.11.1"
-reqwest = {version = "=0.12.9", default-features = false, features = ["json", "http2", "rustls-tls-webpki-roots", "brotli", "gzip", "zstd"]}# select 0.12.9 version since we have to align to the hyper-util=0.1.7 version used by hyper-util-wasm
+reqwest = {version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls-webpki-roots", "brotli", "gzip", "zstd"]}
 ring = "0.17.8"
 rsa = {version = "0.9.7", features = ["sha2"]}
 rstest = "0.25.0"
@@ -112,10 +111,11 @@ serial_test = "3.2.0"
 sha2 = "0.10.8"
 shadow-rs = {version = "=1.0.0", default-features = false}
 signature = "2.2.0"
-socket2 = "0.5.10"
+socket2 = {version = "0.5.10", features = ["all"]}# `all` gates set_mark() and original_dst(), used by the netfilter transport
 spin = {version = "0.10.0", default-features = false, features = ["mutex", "spin_mutex"]}
 strum = "0.27.1"
 strum_macros = "0.27.1"
+sync_wrapper = "1.0.2"
 tempfile = "3.20.0"
 thirtyfour = "0.35.0"
 thiserror = "2.0.17"
@@ -126,9 +126,9 @@ tokio-rustls = {version = "0.26.2", default-features = false, features = ["loggi
 tokio-util = "0.7.15"
 tokio_with_wasm = {version = "=0.8.6", features = ["rt", "macros", "time"]}
 tokio_with_wasm_proc = "=0.8.6"
-tonic = {version = "=0.14.2", default-features = false}# locked to 0.14.2 due to limit of hyper-util=0.1.7
-tonic-prost = {version = "=0.14.2", default-features = false}# locked to 0.14.2 due to limit of hyper-util=0.1.7
-tonic-prost-build = {version = "=0.14.2", default-features = false}# locked to 0.14.2 due to limit of hyper-util=0.1.7
+tonic = {version = "0.14", default-features = false}
+tonic-prost = {version = "0.14", default-features = false}
+tonic-prost-build = {version = "0.14", default-features = false}
 tonic-web-wasm-client = "0.8.0"
 tower = {version = "0.5"}
 tower-http = "0.6.6"
@@ -153,6 +153,17 @@ ws_stream_wasm = "=0.7.5"
 x509-cert = {version = "0.2.5", features = ["builder", "pem"]}
 zeroize = "1.8.1"
 
+# These two forks are each a single commit raising a size cap to the value TLS and X.509
+# already permit (16MB). They are required because a DICE cert carrying CoCo evidence is
+# larger than 64KB -- a TDX quote with event logs measures ~71KB -- while rustls contracts
+# handshake messages and certificates to 64KB, and webpki caps nested DER lengths at 64KB.
+# Neither cap comes from a protocol limit; both are self-imposed hardening, and rustls does
+# not expose them for configuration (see rustls#698). TLS 1.3 certificate compression is
+# already enabled via the `brotli` feature, but rustls checks the cap after decompression,
+# so it does not help.
+#
+# Consequence to keep in mind: raising the caps to 16MB also removes the memory-exhaustion
+# guard they provide, so a peer can make us buffer that much during a handshake.
 [patch.crates-io.rustls]
 branch = "v/0.23.27-patched"
 git = "https://github.com/inclavare-containers/rustls.git"
@@ -161,18 +172,10 @@ git = "https://github.com/inclavare-containers/rustls.git"
 branch = "v/0.103.3-patched"
 git = "https://github.com/inclavare-containers/webpki.git"
 
-[patch.crates-io.reqwest]
-git = "https://github.com/inclavare-containers/reqwest.git"
-rev = "edd4658e698a030ff04bbb62e954f363b31a25c8"
-
-[patch.crates-io.tokio-graceful]
-branch = "wasm"
-git = "https://github.com/inclavare-containers/tokio-graceful.git"
-
-[patch.crates-io.hyper]
-git = "https://github.com/inclavare-containers/hyper.git"
-rev = "59b43a6315a8f48ebfa4d12bbcd80cc0b1969a26"
-
-[patch.crates-io]
-hyper-util = {path = "./deps/hyper-util-shim"}
-
+# The native build uses stock reqwest and hyper-util. The inclavare reqwest fork adds
+# set_mark() (see the netfilter note in tng/src/config/ingress.rs) plus wasm stream
+# support; only the latter is still needed, so the fork is patched in by the tng-wasm
+# workspace alone. Keeping hyper-util unpinned here is what lets tonic float and what
+# makes the upstream attestation-service resolvable.
+# tokio-graceful's fork carries only wasm-gated changes, so the native build uses the
+# released crate and the fork is patched in by the tng-wasm workspace alone.

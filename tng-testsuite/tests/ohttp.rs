@@ -182,7 +182,7 @@ async fn test_ingress_mapping_forward_headers_for_multi_route_routing() -> Resul
 
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-async fn test_ingress_netfilter() -> Result<()> {
+async fn test_ingress_mapping_direct() -> Result<()> {
     run_test(vec![
         TngInstance::TngServer(
             r#"
@@ -213,8 +213,12 @@ async fn test_ingress_netfilter() -> Result<()> {
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.1",
                                 "port": 30001
                             }
                         },
@@ -237,8 +241,8 @@ async fn test_ingress_netfilter() -> Result<()> {
             expected_path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
         AppType::HttpClient {
-            host: "192.168.1.1",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
@@ -250,7 +254,7 @@ async fn test_ingress_netfilter() -> Result<()> {
 
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-async fn test_ingress_netfilter_server_attest_client_no_ra() -> Result<()> {
+async fn test_ingress_mapping_server_attest_client_no_ra() -> Result<()> {
     run_test(vec![
         TngInstance::TngServer(
             r#"
@@ -277,8 +281,12 @@ async fn test_ingress_netfilter_server_attest_client_no_ra() -> Result<()> {
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.1",
                                 "port": 30001
                             }
                         },
@@ -295,8 +303,8 @@ async fn test_ingress_netfilter_server_attest_client_no_ra() -> Result<()> {
             expected_path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
         AppType::HttpClient {
-            host: "192.168.1.1",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
@@ -308,7 +316,7 @@ async fn test_ingress_netfilter_server_attest_client_no_ra() -> Result<()> {
 
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-async fn test_ingress_netfilter_with_load_balancer() -> Result<()> {
+async fn test_ingress_mapping_with_load_balancer() -> Result<()> {
     run_test(vec![
         TngInstance::TngServer(
             r#"
@@ -339,8 +347,12 @@ async fn test_ingress_netfilter_with_load_balancer() -> Result<()> {
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
                                 "port": 30001
                             }
                         },
@@ -378,8 +390,8 @@ async fn test_ingress_netfilter_with_load_balancer() -> Result<()> {
             expected_path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
         AppType::HttpClient {
-            host: "192.168.1.252",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
@@ -422,8 +434,12 @@ async fn test_ra_model_matrix_server_attest_with_passport() -> Result<()> {
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
                                 "port": 30001
                             }
                         },
@@ -461,8 +477,8 @@ async fn test_ra_model_matrix_server_attest_with_passport() -> Result<()> {
             expected_path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
         AppType::HttpClient {
-            host: "192.168.1.252",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
@@ -501,8 +517,12 @@ async fn test_ra_model_matrix_server_attest_with_background_check() -> Result<()
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
                                 "port": 30001
                             }
                         },
@@ -540,8 +560,8 @@ async fn test_ra_model_matrix_server_attest_with_background_check() -> Result<()
             expected_path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
         AppType::HttpClient {
-            host: "192.168.1.252",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
@@ -582,8 +602,12 @@ async fn test_ra_model_matrix_client_attest_with_passport() -> Result<()> {
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
                                 "port": 30001
                             }
                         },
@@ -622,8 +646,8 @@ async fn test_ra_model_matrix_client_attest_with_passport() -> Result<()> {
             expected_path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
         AppType::HttpClient {
-            host: "192.168.1.252",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
@@ -665,8 +689,12 @@ async fn test_ra_model_matrix_client_attest_with_background_check() -> Result<()
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
                                 "port": 30001
                             }
                         },
@@ -701,8 +729,8 @@ async fn test_ra_model_matrix_client_attest_with_background_check() -> Result<()
             expected_path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
         AppType::HttpClient {
-            host: "192.168.1.252",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
@@ -1206,8 +1234,12 @@ MC4CAQAwBQYDK2VuBCIEIOixlJE0Ykdc4ePwmaf2LLAea8Lfkfb+SARsKYmCBRpR
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.1",
                                 "port": 30001
                             }
                         },
@@ -1230,8 +1262,8 @@ MC4CAQAwBQYDK2VuBCIEIOixlJE0Ykdc4ePwmaf2LLAea8Lfkfb+SARsKYmCBRpR
             expected_path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
         AppType::HttpClient {
-            host: "192.168.1.1",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }.boxed(),
@@ -1697,8 +1729,12 @@ async fn test_peer_shared_retry_join_on_delayed_peer_startup() -> Result<()> {
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
                                 "port": 30001
                             }
                         },
@@ -1718,8 +1754,8 @@ async fn test_peer_shared_retry_join_on_delayed_peer_startup() -> Result<()> {
         )
         .boxed(),
         AppType::HttpClient {
-            host: "192.168.1.252",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }

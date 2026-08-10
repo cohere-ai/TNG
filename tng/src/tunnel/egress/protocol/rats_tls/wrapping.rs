@@ -90,10 +90,7 @@ impl RatsTlsWrappingLayer {
                     Ok(upgraded) => {
                         tracing::debug!("Trusted tunnel established");
 
-                        let Ok(io) = utils::hyper::downcast_h2upgraded(upgraded) else {
-                            tracing::error!("failed to downcast to inner stream");
-                            return;
-                        };
+                        let io = utils::hyper::upgraded_to_sync_stream(upgraded);
 
                         if let Err(e) = channel.send((Box::new(io), attestation_result)) {
                             tracing::error!("Failed to send stream via channel: {e:#}");

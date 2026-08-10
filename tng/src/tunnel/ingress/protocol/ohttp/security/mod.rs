@@ -75,6 +75,17 @@ impl OHttpSecurityLayer {
         ra_context: Arc<RaContext>,
         runtime: TokioRuntime,
     ) -> Result<Self> {
+        // The HTTP client cannot set SO_MARK on its own sockets, so an ingress that relies on a
+        // mark to keep its iptables rules from capturing TNG's own egress traffic would send this
+        // client's requests back into the tunnel. Refuse the combination instead of looping.
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        if transport_so_mark.is_some() {
+            anyhow::bail!(
+                "The `ohttp` protocol is not supported on an ingress that requires SO_MARK (such as `netfilter`). \
+                 Use the `rats_tls` protocol with a `netfilter` ingress, or switch the ingress to `mapping`, `http_proxy` or `socks5`."
+            );
+        }
+
         let http_client = {
             let mut builder = reqwest::Client::builder();
             builder = builder.default_headers({
@@ -97,11 +108,6 @@ impl OHttpSecurityLayer {
                 builder = builder.tcp_keepalive_retries(TCP_KEEPALIVE_PROBE_COUNT);
                 // TODO: update reqwest and hyper-util version to support tcp_user_timeout()
                 // builder = builder.tcp_user_timeout(Duration::from_secs(TCP_USER_TIMEOUT_SECS as u64));
-            }
-
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            {
-                builder = builder.tcp_mark(transport_so_mark);
             }
 
             // On wasm32 the browser owns the trust store: reqwest exposes neither

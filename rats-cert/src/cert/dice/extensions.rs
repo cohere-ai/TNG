@@ -12,7 +12,9 @@ impl<T: AsRef<[u8]>> AssociatedOid for DiceEvidenceExtension<T> {
 
 impl<T: AsRef<[u8]>> x509_cert::der::Encode for DiceEvidenceExtension<T> {
     fn encoded_len(&self) -> x509_cert::der::Result<x509_cert::der::Length> {
-        Ok(x509_cert::der::Length::new(self.0.as_ref().len() as u16))
+        // Evidence routinely exceeds u16::MAX (a TDX quote with event logs is ~70 KiB), so the
+        // length must not be narrowed to u16.
+        x509_cert::der::Length::try_from(self.0.as_ref().len())
     }
 
     fn encode(&self, encoder: &mut impl x509_cert::der::Writer) -> x509_cert::der::Result<()> {
@@ -55,7 +57,7 @@ impl<T: AsRef<[u8]>> AssociatedOid for DiceEndorsementExtension<T> {
 
 impl<T: AsRef<[u8]>> x509_cert::der::Encode for DiceEndorsementExtension<T> {
     fn encoded_len(&self) -> x509_cert::der::Result<x509_cert::der::Length> {
-        Ok(x509_cert::der::Length::new(self.0.as_ref().len() as u16))
+        x509_cert::der::Length::try_from(self.0.as_ref().len())
     }
 
     fn encode(&self, encoder: &mut impl x509_cert::der::Writer) -> x509_cert::der::Result<()> {
