@@ -22,9 +22,6 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
     match config {
         AttesterArgs::Coco(coco) => match coco {
             CocoAttesterArgs::Uds { aa_addr } => Ok(TngAttester::Coco(CocoAttester::new(aa_addr)?)),
-            CocoAttesterArgs::Builtin => {
-                anyhow::bail!("Builtin AA is not yet implemented")
-            }
         },
         AttesterArgs::Ita(args) => Ok(TngAttester::Ita(args.to_attester()?)),
         AttesterArgs::CocoAsr(args) => Ok(TngAttester::CocoAsr(args.to_attester()?)),
@@ -33,7 +30,6 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
 }
 
 /// Instantiate a `TngConverter` from config. Dispatches on provider, then sub-type.
-/// Note: Builtin AS converter creation via factory is not supported.
 pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
     match config {
         ConverterArgs::Coco(coco) => match coco {
@@ -52,17 +48,12 @@ pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
             } => Ok(TngConverter::Coco(CocoConverter::Grpc(
                 CocoGrpcConverter::new(as_addr, policy_ids, as_headers)?,
             ))),
-            #[cfg(feature = "__builtin-as")]
-            CocoConverterArgs::Builtin { .. } => {
-                anyhow::bail!("Builtin AS converter creation via factory is not supported")
-            }
         },
         ConverterArgs::Ita(args) => Ok(TngConverter::Ita(args.to_converter()?)),
     }
 }
 
 /// Instantiate a `TngVerifier` from config. Dispatches on provider, then sub-type.
-/// Note: Builtin AS verifier creation via factory is not supported.
 pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
     match config {
         VerifierArgs::Coco(coco) => match coco {
@@ -101,10 +92,6 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
                     CocoRemoteVerifier::new(&as_addr_config, trusted_certs_paths, policy_ids)
                         .await?,
                 )))
-            }
-            #[cfg(feature = "__builtin-as")]
-            CocoVerifierArgs::Builtin => {
-                anyhow::bail!("Builtin AS verifier creation via factory is not supported")
             }
         },
         VerifierArgs::Ita(args) => Ok(TngVerifier::Ita(args.to_verifier()?)),

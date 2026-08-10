@@ -155,10 +155,6 @@ impl RaArgsUnchecked {
                                 )));
                             }
                         }
-                        // Builtin AA doesn't need socket file check
-                        CocoAttesterArgs::Builtin => {
-                            // TODO: Builtin AA not implemented yet
-                        }
                     },
                     AttesterArgs::Ita(ita) => {
                         let aa_sock_file = ita
@@ -252,8 +248,6 @@ impl RaArgsUnchecked {
                                     }
                                 }
                             }
-                            #[cfg(feature = "__builtin-as")]
-                            CocoVerifierArgs::Builtin => {}
                         },
                         VerifierArgs::Ita(_) => {
                             // ITA verifier fetches JWKS from the portal URL; no additional checks needed here
@@ -263,7 +257,6 @@ impl RaArgsUnchecked {
             };
 
             // Check if as_addr is a valid URL (for Restful/Grpc types)
-            // or validate builtin configuration
             if let VerifyArgs::BackgroundCheck { converter, .. } = verify_args {
                 match converter {
                     ConverterArgs::Coco(coco_converter) => match coco_converter {
@@ -274,40 +267,6 @@ impl RaArgsUnchecked {
                                     format!("Invalid attestation service address: {}", as_addr)
                                 })
                                 .map_err(TngError::InvalidParameter)?;
-                        }
-                        // Validate builtin configuration
-                        #[cfg(feature = "__builtin-as")]
-                        CocoConverterArgs::Builtin {
-                            policy,
-                            reference_values,
-                        } => {
-                            use rats_cert::cert::verify::{
-                                PolicyConfig, ReferenceValueConfig, SampleProvenancePayloadConfig,
-                            };
-                            // Check policy path exists if using Path variant
-                            if let PolicyConfig::Path { path } = policy {
-                                if !Path::new(path).exists() {
-                                    return Err(TngError::InvalidParameter(anyhow!(
-                                        "Policy file path does not exist: {}",
-                                        path
-                                    )));
-                                }
-                            }
-
-                            // Check reference value payload paths
-                            for rv in reference_values {
-                                if let ReferenceValueConfig::Sample {
-                                    payload: SampleProvenancePayloadConfig::Path { path },
-                                } = rv
-                                {
-                                    if !Path::new(path).exists() {
-                                        return Err(TngError::InvalidParameter(anyhow!(
-                                            "Reference value payload file path does not exist: {}",
-                                            path
-                                        )));
-                                    }
-                                }
-                            }
                         }
                     },
                     ConverterArgs::Ita(ita) => {
@@ -395,8 +354,6 @@ pub enum CocoAttesterArgs {
         /// Attestation agent address (unix socket path)
         aa_addr: String,
     },
-    /// Builtin AA (embedded) - not implemented yet
-    Builtin,
 }
 
 const DEFAULT_ITA_API_URL: &str = "https://api.trustauthority.intel.com";
@@ -507,15 +464,6 @@ pub enum CocoConverterArgs {
         #[serde(default)]
         as_headers: HashMap<String, String>,
     },
-    /// Builtin AS (embedded)
-    #[cfg(feature = "__builtin-as")]
-    Builtin {
-        /// OPA policy configuration
-        policy: rats_cert::cert::verify::PolicyConfig,
-        /// Reference value configurations
-        #[serde(default)]
-        reference_values: Vec<rats_cert::cert::verify::ReferenceValueConfig>,
-    },
 }
 
 /// Provider-tagged verifier config. Serde reads "as_provider" from flat JSON.
@@ -576,9 +524,6 @@ pub enum CocoVerifierArgs {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trusted_certs_paths: Option<Vec<String>>,
     },
-    /// Builtin AS (embedded)
-    #[cfg(feature = "__builtin-as")]
-    Builtin,
 }
 
 // ---------------------------------------------------------------------------
@@ -706,17 +651,6 @@ fn inject_ita_api_key_default(obj: &mut serde_json::Map<String, serde_json::Valu
         }
     }
 }
-
-// ============================================================================
-// Builtin AS/AA Configuration Types
-// ============================================================================
-
-// Re-export config types from rats-cert to ensure consistency
-#[cfg(feature = "__builtin-as")]
-pub use rats_cert::cert::verify::{
-    PolicyConfig, ReferenceValueConfig, SampleProvenancePayloadConfig,
-    SlsaReferenceValuePayloadConfig,
-};
 
 #[cfg(test)]
 mod tests {
@@ -1095,308 +1029,6 @@ mod tests {
         );
     }
 
-    // =====================================================================
-    // Builtin mode tests
-    // =====================================================================
-
-    #[cfg(feature = "__builtin-as")]
-    #[test]
-    fn test_builtin_verify_with_inline_policy() {
-        let json = json!(
-            {
-                "verify": {
-                    "model": "background_check",
-                    "as_type": "builtin",
-                    "policy": {
-                        "type": "inline",
-                        "content": "cGFja2FnZSBwb2xpY3kKZGVmYXVsdCBhbGxvdyA9IHRydWU="
-                    },
-                    "reference_values": []
-                }
-            }
-        );
-
-        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
-
-        match &ra_args.verify {
-            Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
-                ConverterArgs::Coco(CocoConverterArgs::Builtin {
-                    policy,
-                    reference_values,
-                }) => {
-                    match policy {
-                        PolicyConfig::Inline { content } => {
-                            assert_eq!(content, "cGFja2FnZSBwb2xpY3kKZGVmYXVsdCBhbGxvdyA9IHRydWU=");
-                        }
-                        _ => panic!("Expected Inline policy"),
-                    }
-                    assert!(reference_values.is_empty());
-                }
-                _ => panic!("Expected Coco/Builtin converter"),
-            },
-            _ => panic!("Expected BackgroundCheck variant"),
-        }
-
-        // Test serialization
-        let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
-        assert!(serialized.contains(r#""model":"background_check""#));
-        assert!(serialized.contains(r#""as_type":"builtin""#));
-    }
-
-    #[cfg(feature = "__builtin-as")]
-    #[test]
-    fn test_builtin_verify_with_path_policy() {
-        let json = json!(
-            {
-                "verify": {
-                    "model": "background_check",
-                    "as_type": "builtin",
-                    "policy": {
-                        "type": "path",
-                        "path": "/path/to/policy.rego"
-                    },
-                    "reference_values": []
-                }
-            }
-        );
-
-        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
-
-        match &ra_args.verify {
-            Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
-                ConverterArgs::Coco(CocoConverterArgs::Builtin { policy, .. }) => match policy {
-                    PolicyConfig::Path { path } => {
-                        assert_eq!(path, "/path/to/policy.rego");
-                    }
-                    _ => panic!("Expected Path policy"),
-                },
-                _ => panic!("Expected Coco/Builtin converter"),
-            },
-            _ => panic!("Expected BackgroundCheck variant"),
-        }
-    }
-
-    #[cfg(feature = "__builtin-as")]
-    #[test]
-    fn test_builtin_verify_with_sample_reference() {
-        let json = json!(
-            {
-                "verify": {
-                    "model": "background_check",
-                    "as_type": "builtin",
-                    "policy": {
-                        "type": "inline",
-                        "content": "cGFja2FnZQ=="
-                    },
-                    "reference_values": [
-                        {
-                            "type": "sample",
-                            "payload": {
-                                "type": "path",
-                                "path": "/path/to/payload.json"
-                            }
-                        }
-                    ]
-                }
-            }
-        );
-
-        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
-
-        match &ra_args.verify {
-            Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
-                ConverterArgs::Coco(CocoConverterArgs::Builtin {
-                    reference_values, ..
-                }) => {
-                    assert_eq!(reference_values.len(), 1);
-                    match &reference_values[0] {
-                        ReferenceValueConfig::Sample { payload } => match payload {
-                            SampleProvenancePayloadConfig::Path { path } => {
-                                assert_eq!(path, "/path/to/payload.json");
-                            }
-                            _ => panic!("Expected Path payload"),
-                        },
-                        _ => panic!("Expected Sample reference value"),
-                    }
-                }
-                _ => panic!("Expected Coco/Builtin converter"),
-            },
-            _ => panic!("Expected BackgroundCheck variant"),
-        }
-    }
-
-    #[cfg(feature = "__builtin-as")]
-    #[test]
-    fn test_builtin_verify_with_slsa_reference() {
-        let json = json!(
-            {
-                "verify": {
-                    "model": "background_check",
-                    "as_type": "builtin",
-                    "policy": {
-                        "type": "inline",
-                        "content": "cGFja2FnZQ=="
-                    },
-                    "reference_values": [
-                        {
-                            "type": "slsa",
-                            "payload": {
-                                "type": "inline",
-                                "content": {
-                                    "rv_list": [{
-                                        "id": "test-artifact",
-                                        "version": "1.0.0",
-                                        "type": "binary",
-                                        "provenance_info": {
-                                            "type": "slsa-intoto-statements",
-                                            "rekor_url": "https://log2025-1.rekor.sigstore.dev",
-                                            "rekor_api_version": 2
-                                        },
-                                        "provenance_source": {
-                                            "protocol": "oci",
-                                            "uri": "oci://127.0.0.1:5000/trustee/provenance:test-artifact-1.0.0",
-                                            "artifact": "bundle"
-                                        },
-                                        "operation_type": "refresh"
-                                    }]
-                                }
-                            }
-                        }
-                    ]
-                }
-            }
-        );
-
-        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
-
-        match &ra_args.verify {
-            Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
-                ConverterArgs::Coco(CocoConverterArgs::Builtin {
-                    reference_values, ..
-                }) => {
-                    assert_eq!(reference_values.len(), 1);
-                    match &reference_values[0] {
-                        ReferenceValueConfig::Slsa { payload } => {
-                            // Verify payload is inline with ReferenceValueListPayload content
-                            match payload {
-                                SlsaReferenceValuePayloadConfig::Inline { content } => {
-                                    assert_eq!(content.rv_list.len(), 1);
-                                    let rv = &content.rv_list[0];
-                                    assert_eq!(rv.id, "test-artifact");
-                                    assert_eq!(rv.version, "1.0.0");
-                                    assert_eq!(rv.rv_type, "binary");
-                                    assert_eq!(
-                                        rv.provenance_info.provenance_type,
-                                        "slsa-intoto-statements"
-                                    );
-                                    assert_eq!(
-                                        rv.provenance_info.rekor_url,
-                                        "https://log2025-1.rekor.sigstore.dev"
-                                    );
-                                    assert_eq!(rv.provenance_info.rekor_api_version, Some(2));
-                                    assert!(rv.provenance_source.is_some());
-                                    let ps = rv.provenance_source.as_ref().unwrap();
-                                    assert_eq!(ps.protocol, "oci");
-                                    assert_eq!(
-                                        ps.uri,
-                                        "oci://127.0.0.1:5000/trustee/provenance:test-artifact-1.0.0"
-                                    );
-                                    assert_eq!(ps.artifact, Some("bundle".to_string()));
-                                }
-                                _ => panic!("Expected Inline payload"),
-                            }
-                        }
-                        _ => panic!("Expected Slsa reference value"),
-                    }
-                }
-                _ => panic!("Expected Coco/Builtin converter"),
-            },
-            _ => panic!("Expected BackgroundCheck variant"),
-        }
-    }
-
-    #[cfg(feature = "__builtin-as")]
-    #[test]
-    fn test_attest_passport_builtin() {
-        let json = json!(
-            {
-                "attest": {
-                    "model": "passport",
-                    "aa_type": "builtin",
-                    "refresh_interval": 600,
-                    "as_type": "restful",
-                    "as_addr": "http://as-server:8080",
-                    "policy_ids": ["default"]
-                }
-            }
-        );
-
-        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
-
-        match &ra_args.attest {
-            Some(AttestArgs::Passport {
-                attester,
-                converter,
-                refresh_interval,
-                ..
-            }) => {
-                assert!(matches!(
-                    attester,
-                    AttesterArgs::Coco(CocoAttesterArgs::Builtin)
-                ));
-                assert_eq!(*refresh_interval, Some(600));
-                match converter {
-                    ConverterArgs::Coco(CocoConverterArgs::Restful { as_addr, .. }) => {
-                        assert_eq!(as_addr, "http://as-server:8080");
-                    }
-                    _ => panic!("Expected Coco/Restful converter"),
-                }
-            }
-            _ => panic!("Expected Passport variant with builtin AA"),
-        }
-
-        // Test serialization
-        let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
-        assert!(serialized.contains(r#""model":"passport""#));
-        assert!(serialized.contains(r#""aa_type":"builtin""#));
-    }
-
-    #[cfg(feature = "__builtin-as")]
-    #[test]
-    fn test_attest_builtin() {
-        let json = json!(
-            {
-                "attest": {
-                    "model": "background_check",
-                    "aa_type": "builtin",
-                    "refresh_interval": 300
-                }
-            }
-        );
-
-        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
-
-        match &ra_args.attest {
-            Some(AttestArgs::BackgroundCheck {
-                attester,
-                refresh_interval,
-                ..
-            }) => {
-                assert!(matches!(
-                    attester,
-                    AttesterArgs::Coco(CocoAttesterArgs::Builtin)
-                ));
-                assert_eq!(*refresh_interval, Some(300));
-            }
-            _ => panic!("Expected BackgroundCheck variant with builtin AA"),
-        }
-
-        // Test serialization
-        let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
-        assert!(serialized.contains(r#""model":"background_check""#));
-        assert!(serialized.contains(r#""aa_type":"builtin""#));
-    }
-
     #[test]
     fn test_new_format_attest_with_aa_type_uds() {
         // New format: explicit aa_type="uds"
@@ -1500,44 +1132,6 @@ mod tests {
         // Test serialization
         let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
         assert!(serialized.contains(r#""as_type":"grpc""#));
-    }
-
-    #[cfg(feature = "__builtin-as")]
-    #[test]
-    fn test_new_format_verify_with_as_type_builtin() {
-        // New format: explicit as_type="builtin"
-        let json = json!(
-            {
-                "verify": {
-                    "as_type": "builtin",
-                    "policy": {
-                        "type": "default"
-                    },
-                    "reference_values": [],
-                    "policy_ids": ["default"]
-                }
-            }
-        );
-
-        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
-
-        match &ra_args.verify {
-            Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
-                ConverterArgs::Coco(CocoConverterArgs::Builtin {
-                    policy,
-                    reference_values,
-                }) => {
-                    assert!(matches!(policy, PolicyConfig::Default));
-                    assert!(reference_values.is_empty());
-                }
-                _ => panic!("Expected Coco/Builtin converter"),
-            },
-            _ => panic!("Expected BackgroundCheck variant"),
-        }
-
-        // Test serialization
-        let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
-        assert!(serialized.contains(r#""as_type":"builtin""#));
     }
 
     // =====================================================================

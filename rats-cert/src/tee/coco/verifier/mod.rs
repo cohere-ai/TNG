@@ -1,5 +1,3 @@
-#[cfg(feature = "__builtin-as")]
-pub mod builtin;
 mod common;
 pub mod remote;
 pub mod token;
@@ -11,8 +9,6 @@ use crate::tee::{GenericVerifier, ReportData};
 /// Unified CocoVerifier enum
 pub enum CocoVerifier {
     Remote(remote::CocoRemoteVerifier),
-    #[cfg(feature = "__builtin-as")]
-    Builtin(builtin::BuiltinCocoVerifier),
 }
 
 #[async_trait::async_trait]
@@ -26,8 +22,6 @@ impl GenericVerifier for CocoVerifier {
     ) -> Result<()> {
         match self {
             Self::Remote(verifier) => verifier.verify_evidence(evidence, report_data).await,
-            #[cfg(feature = "__builtin-as")]
-            Self::Builtin(verifier) => verifier.verify_evidence(evidence, report_data).await,
         }
     }
 }
