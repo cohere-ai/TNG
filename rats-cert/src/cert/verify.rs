@@ -21,24 +21,6 @@ use serde::{Deserialize, Serialize};
 use signature::Verifier;
 use x509_cert::Certificate;
 
-// Re-export builtin config types for external use
-#[cfg(feature = "__builtin-as")]
-pub use crate::tee::coco::converter::builtin::{
-    PolicyConfig, ReferenceValueConfig, SampleProvenancePayloadConfig,
-    SlsaReferenceValuePayloadConfig, DEFAULT_POLICY_ID,
-};
-
-// Re-export reference value list types from RVPS
-#[cfg(feature = "__builtin-as")]
-pub use reference_value_provider_service::rv_list::{
-    ReferenceValueListItem, ReferenceValueListPayload, ReferenceValueProvenanceInfo,
-    ReferenceValueProvenanceSource,
-};
-
-// Re-export Provenance type from RVPS
-#[cfg(feature = "__builtin-as")]
-pub use reference_value_provider_service::extractors::extractor_modules::sample::Provenance;
-
 /// Provider-agnostic pending result from certificate verification.
 ///
 /// Contains the raw CBOR tag, raw evidence bytes, and expected report data.
@@ -72,7 +54,7 @@ pub struct AttestationServiceAddrArgs {
 ///
 /// This struct only handles certificate parsing and evidence extraction.
 /// The actual evidence verification should be done by the caller using
-/// the appropriate verifier (CocoVerifier, BuiltinCocoConverter, etc.).
+/// the appropriate verifier (e.g. `CocoVerifier`).
 pub struct CertVerifier;
 
 impl Default for CertVerifier {

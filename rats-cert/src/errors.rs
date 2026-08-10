@@ -106,7 +106,6 @@ pub enum Error {
     #[error("Coco token verifier error")]
     CocoTokenVerifierError(#[source] crate::tee::coco::verifier::token::Error),
 
-    // Built-in AS related
     // Certificate generation related errors
     #[error("Failed to generate certificate validity period")]
     CertValidityGenerationFailed(#[source] pkcs8::der::Error),
@@ -126,65 +125,8 @@ pub enum Error {
     #[error("Failed to encode certificate")]
     CertEncodeFailed(#[source] pkcs8::der::Error),
 
-    #[cfg(feature = "__builtin-as")]
-    #[error("Failed to generate CA certificate")]
-    CaCertGenerationFailed(#[source] rcgen::Error),
-
-    #[cfg(feature = "__builtin-as")]
-    #[error("Failed to generate AS certificate")]
-    AsCertGenerationFailed(#[source] rcgen::Error),
-
-    #[cfg(feature = "__builtin-as")]
-    #[error("Failed to create builtin attestation service working directory")]
-    BuilinAttestationServiceCreateWorkDirFailed(#[source] std::io::Error),
-
-    #[error("Failed to write AS private key to {path}")]
-    WriteAsPrivateKeyFailed {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("Failed to write certificate chain to {path}")]
-    WriteCertChainFailed {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("Failed to read policy file from {path}")]
-    ReadPolicyFileFailed {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
-    #[error("Failed to read reference value file from {path}")]
-    ReadReferenceValueFileFailed {
-        path: String,
-        #[source]
-        source: std::io::Error,
-    },
-
     #[error("Base64 decode failed")]
     Base64DecodeFailed(#[source] base64::DecodeError),
-
-    // Reference value errors (specific scenarios)
-    #[error("Failed to parse reference value payload from {path}")]
-    ParseReferenceValuePayloadFailed {
-        path: String,
-        #[source]
-        source: serde_json::Error,
-    },
-
-    #[error("Failed to serialize reference value message")]
-    SerializeReferenceValueMessageFailed(#[source] serde_json::Error),
-
-    #[error("Failed to register sample reference value")]
-    RegisterSampleReferenceValueFailed(#[source] anyhow::Error),
-
-    #[error("Failed to set SLSA reference value list")]
-    SetSlsaReferenceValueListFailed(#[source] anyhow::Error),
 
     // RSA key generation
     #[error("RSA key generation failed")]
@@ -214,23 +156,6 @@ pub enum Error {
 
     #[error("Invalid gRPC metadata value")]
     InvalidGrpcMetadataValue(#[source] tonic::metadata::errors::InvalidMetadataValue),
-
-    // Attestation service operations
-    #[cfg(feature = "__builtin-as")]
-    #[error("Failed to create attestation service")]
-    AttestationServiceCreateFailed(#[source] attestation_service::ServiceError),
-
-    #[cfg(feature = "__builtin-as")]
-    #[error("Failed to set attestation policy")]
-    AttestationServiceSetPolicyFailed(#[source] anyhow::Error),
-
-    #[cfg(feature = "__builtin-as")]
-    #[error("Failed to generate attestation challenge")]
-    AttestationServiceGenerateChallengeFailed(#[source] anyhow::Error),
-
-    #[cfg(feature = "__builtin-as")]
-    #[error("Attestation evidence verification failed")]
-    AttestationServiceVerifyFailed(#[source] anyhow::Error),
 
     // HTTP client building
     #[error("Failed to build HTTP client")]
@@ -363,12 +288,6 @@ pub enum Error {
 
     #[error("Failed to parse JWT claims")]
     ParseJwtClaimsFailed(#[source] serde_json::Error),
-
-    #[error("Failed to serialize provenance")]
-    SerializeProvenanceFailed(#[source] serde_json::Error),
-
-    #[error("Failed to serialize SLSA reference value list")]
-    SerializeSlsaReferenceValueListFailed(#[source] serde_json::Error),
 
     #[error("Failed to parse runtime data JSON")]
     ParseRuntimeDataJsonFailed(#[source] serde_json::Error),
