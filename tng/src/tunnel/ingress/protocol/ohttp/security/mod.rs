@@ -78,6 +78,9 @@ impl OHttpSecurityLayer {
                 builder = builder.tcp_mark(transport_so_mark);
             }
 
+            // On wasm32 the browser owns the trust store: reqwest exposes neither
+            // `Certificate` nor `add_root_certificate`, and there is no filesystem to read from.
+            #[cfg(not(wasm))]
             for path in &ohttp_args.tls_ca_certs {
                 let pem = std::fs::read(path)
                     .with_context(|| format!("Failed to read TLS CA cert: {path}"))?;
