@@ -41,6 +41,33 @@ pub enum Error {
     #[error("Policy evaluation failed for policy_id `{policy_id}`")]
     PolicyEvaluationFailed { policy_id: String },
 
+    // Builtin (in-process, upstream CoCo) AS related.
+    // The sources are wrapped in `Arc` because this enum is `Clone` while the upstream error
+    // types are not.
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Failed to create the builtin attestation service")]
+    CocoBuiltinAsCreateFailed(#[source] std::sync::Arc<attestation_service::ServiceError>),
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Failed to set builtin attestation service policy `{policy_id}`")]
+    CocoBuiltinAsSetPolicyFailed {
+        policy_id: String,
+        #[source]
+        source: std::sync::Arc<anyhow::Error>,
+    },
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("The builtin attestation service failed to evaluate the evidence")]
+    CocoBuiltinAsEvaluateFailed(#[source] std::sync::Arc<anyhow::Error>),
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Failed to parse the builtin attestation service verifier config")]
+    CocoBuiltinAsParseVerifierConfigFailed(#[source] serde_json::Error),
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Failed to parse evidence as JSON")]
+    CocoBuiltinAsParseEvidenceJsonFailed(#[source] serde_json::Error),
+
     // Remote AS related
     #[error("Remote AS gRPC is not supported")]
     RemoteAsGrpcNotSupported,

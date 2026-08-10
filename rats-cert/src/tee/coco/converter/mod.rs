@@ -8,10 +8,14 @@ use super::evidence::{AttestationServiceHashAlgo, CocoAsToken, CocoEvidence};
 use crate::errors::*;
 use crate::tee::GenericConverter;
 
+#[cfg(feature = "__coco-builtin-as")]
+pub mod coco_builtin;
 pub mod grpc;
 pub mod restful;
 
 pub enum CocoConverter {
+    #[cfg(feature = "__coco-builtin-as")]
+    CocoBuiltin(coco_builtin::CocoBuiltinConverter),
     Grpc(CocoGrpcConverter),
     Restful(CocoRestfulConverter),
 }
@@ -29,6 +33,8 @@ impl GenericConverter for CocoConverter {
 
     async fn convert(&self, in_evidence: &Self::InEvidence) -> Result<Self::OutEvidence> {
         match self {
+            #[cfg(feature = "__coco-builtin-as")]
+            CocoConverter::CocoBuiltin(converter) => converter.convert(in_evidence).await,
             CocoConverter::Grpc(converter) => converter.convert(in_evidence).await,
             CocoConverter::Restful(converter) => converter.convert(in_evidence).await,
         }
@@ -36,6 +42,8 @@ impl GenericConverter for CocoConverter {
 
     async fn get_nonce(&self) -> Result<Self::Nonce> {
         match self {
+            #[cfg(feature = "__coco-builtin-as")]
+            CocoConverter::CocoBuiltin(converter) => converter.get_nonce().await,
             CocoConverter::Grpc(converter) => converter.get_nonce().await,
             CocoConverter::Restful(converter) => converter.get_nonce().await,
         }

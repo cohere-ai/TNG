@@ -9,10 +9,11 @@ version.workspace = true
 anyhow = {workspace = true}
 as-any = {workspace = true}
 async-trait = {workspace = true}
+attestation-service = {workspace = true, optional = true}
 base64 = {workspace = true}
 bitflags = {workspace = true}
 bytes = {workspace = true}
-canon-json = {workspace = true, optional = true}
+serde_json_canonicalizer = {workspace = true, optional = true}
 ciborium = {workspace = true}
 const-oid = {workspace = true, optional = true}
 flatten-json-object = {workspace = true, optional = true}
@@ -21,6 +22,7 @@ hex = {workspace = true}
 itertools = {workspace = true}
 jsonwebtoken = {workspace = true}
 kbs-types = {workspace = true}
+key-value-storage = {workspace = true, optional = true}
 p256 = {workspace = true, optional = true}
 pkcs8 = {workspace = true, optional = true}
 prost = {workspace = true, optional = true}
@@ -69,7 +71,7 @@ attester-coco = [
   "dep:rustls-pki-types",
   "dep:reqwest",
   "dep:flatten-json-object",
-  "dep:canon-json",
+  "dep:serde_json_canonicalizer",
 ]
 verifier-coco = [
   "dep:tonic-prost-build",
@@ -103,6 +105,27 @@ crypto-rustcrypto = [
   "dep:rustls-pki-types",
 ]
 
+# In-process attestation service backed by upstream CoCo Trustee. Deliberately kept out of
+# `default`, the same way `tng` opts in explicitly with `default-features = false`.
+# `__coco-builtin-as` alone builds the service with no verifiers, which is only useful for
+# checking the wiring; each TEE has to be enabled on its own because the verifiers carry
+# native dependencies (openssl, tss-esapi, DCAP).
+__coco-builtin-as = ["dep:attestation-service", "dep:key-value-storage"]
+coco-builtin-as-azsnp = ["__coco-builtin-as", "attestation-service/az-snp-vtpm-verifier"]
+coco-builtin-as-aztdx = ["__coco-builtin-as", "attestation-service/az-tdx-vtpm-verifier"]
+coco-builtin-as-nvidia = ["__coco-builtin-as", "attestation-service/nvidia-verifier"]
+coco-builtin-as-sgx = ["__coco-builtin-as", "attestation-service/sgx-verifier"]
+coco-builtin-as-snp = ["__coco-builtin-as", "attestation-service/snp-verifier"]
+coco-builtin-as-tdx = ["__coco-builtin-as", "attestation-service/tdx-verifier"]
+coco-builtin-as-all = [
+  "coco-builtin-as-azsnp",
+  "coco-builtin-as-aztdx",
+  "coco-builtin-as-nvidia",
+  "coco-builtin-as-sgx",
+  "coco-builtin-as-snp",
+  "coco-builtin-as-tdx",
+]
+
 default = ["crypto-rustcrypto", "attester-coco", "verifier-coco", "attester-ita", "verifier-ita"]
 
 [dev-dependencies]
@@ -114,6 +137,7 @@ rsa = {workspace = true}
 rstest = {workspace = true}
 serial_test = {workspace = true}
 tempfile = {workspace = true}
+# Held at 0.16.1 in the lockfile: 0.16.4 raises its MSRV to rustc 1.95, past this repo's 1.89.
 test-with = {version = "0.16.1", default-features = false}
 tokio = {workspace = true, features = ["rt", "rt-multi-thread", "macros"]}
 tracing-subscriber = {workspace = true}
