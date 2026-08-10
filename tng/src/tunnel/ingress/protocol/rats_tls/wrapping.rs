@@ -61,9 +61,7 @@ impl RatsTlsWrappingLayer {
             .await
             .context("Failed to establish HTTP/2 CONNECT tunnel")?;
 
-        let Ok(stream) = utils::hyper::downcast_h2upgraded(upgraded) else {
-            bail!("failed to downcast to inner stream");
-        };
+        let stream = utils::hyper::upgraded_to_sync_stream(upgraded);
 
         tracing::debug!("Trusted tunnel established");
 
