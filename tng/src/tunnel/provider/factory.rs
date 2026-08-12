@@ -1,6 +1,11 @@
+#[cfg(feature = "__coco-builtin-as")]
+use std::path::Path;
+
 use anyhow::Result;
 #[cfg(unix)]
 use rats_cert::tee::coco::attester::CocoAttester;
+#[cfg(feature = "__coco-builtin-as")]
+use rats_cert::tee::coco::converter::coco_builtin::CocoBuiltinConverter;
 use rats_cert::tee::coco::converter::grpc::CocoGrpcConverter;
 use rats_cert::tee::coco::converter::restful::CocoRestfulConverter;
 use rats_cert::tee::coco::converter::CocoConverter;
@@ -30,8 +35,23 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
 }
 
 /// Instantiate a `TngConverter` from config. Dispatches on provider, then sub-type.
-pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
+pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
     match config {
+        #[cfg(feature = "__coco-builtin-as")]
+        ConverterArgs::CocoBuiltin {
+            policy_dir,
+            verifier_config,
+        } => {
+            // Read here rather than lazily: an ingress with no usable policy can verify nothing,
+            // so failing now surfaces the problem at startup instead of on the first handshake.
+            let policies =
+                rats_cert::tee::coco::converter::policy::load_from_dir(Path::new(policy_dir))
+                    .await?;
+
+            Ok(TngConverter::Coco(CocoConverter::CocoBuiltin(
+                CocoBuiltinConverter::new(&policies, verifier_config.clone()).await?,
+            )))
+        }
         ConverterArgs::Coco(coco) => match coco {
             CocoConverterArgs::Restful {
                 as_addr,
@@ -56,6 +76,12 @@ pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
 /// Instantiate a `TngVerifier` from config. Dispatches on provider, then sub-type.
 pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
     match config {
+        // Built by `VerifyContext::from_verify_args` from the converter that owns the in-process
+        // service, since the signing key and policy id it needs exist only there.
+        #[cfg(feature = "__coco-builtin-as")]
+        VerifierArgs::CocoBuiltin => anyhow::bail!(
+            "The `coco_builtin` verifier requires a `coco_builtin` converter in the same background_check verifier"
+        ),
         VerifierArgs::Coco(coco) => match coco {
             CocoVerifierArgs::Restful {
                 as_addr,

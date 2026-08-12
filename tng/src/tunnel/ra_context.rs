@@ -10,6 +10,8 @@ use anyhow::Result;
 
 #[cfg(unix)]
 use crate::config::ra::AttestArgs;
+#[cfg(feature = "__coco-builtin-as")]
+use crate::config::ra::VerifierArgs;
 use crate::config::ra::{RaArgs, VerifyArgs};
 #[cfg(unix)]
 use crate::tunnel::utils::maybe_cached::RefreshStrategy;
@@ -51,11 +53,11 @@ impl RaContext {
             ))),
             #[cfg(unix)]
             RaArgs::AttestOnly(attest_args) => Ok(Self::AttestOnly(Arc::new(
-                AttestContext::from_attest_args(attest_args)?,
+                AttestContext::from_attest_args(attest_args).await?,
             ))),
             #[cfg(unix)]
             RaArgs::AttestAndVerify(attest_args, verify_args) => Ok(Self::AttestAndVerify {
-                attest: Arc::new(AttestContext::from_attest_args(attest_args)?),
+                attest: Arc::new(AttestContext::from_attest_args(attest_args).await?),
                 verify: Arc::new(VerifyContext::from_verify_args(verify_args).await?),
             }),
         }
@@ -106,7 +108,7 @@ pub enum AttestContext {
 #[cfg(unix)]
 impl AttestContext {
     /// Create attestation context from AttestArgs configuration
-    pub fn from_attest_args(attest_args: &AttestArgs) -> Result<Self> {
+    pub async fn from_attest_args(attest_args: &AttestArgs) -> Result<Self> {
         match attest_args {
             AttestArgs::Passport {
                 attester: attester_args,
@@ -114,7 +116,7 @@ impl AttestContext {
                 ..
             } => {
                 let attester = create_attester(attester_args)?;
-                let converter = create_converter(converter_args)?;
+                let converter = create_converter(converter_args).await?;
                 Ok(Self::Passport {
                     attester,
                     converter,
@@ -204,7 +206,33 @@ impl VerifyContext {
                 converter: converter_args,
                 verifier: verifier_args,
             } => {
-                let converter = create_converter(converter_args)?;
+                let converter = create_converter(converter_args).await?;
+
+                // The builtin service signs each token with an ephemeral key it generated and
+                // appraises it under an id derived from the policy contents. Neither is nameable in
+                // configuration, so this verifier is built from the converter that holds them
+                // instead of from its own args.
+                #[cfg(feature = "__coco-builtin-as")]
+                if matches!(verifier_args, VerifierArgs::CocoBuiltin) {
+                    let TngConverter::Coco(
+                        rats_cert::tee::coco::converter::CocoConverter::CocoBuiltin(builtin),
+                    ) = &converter
+                    else {
+                        anyhow::bail!(
+                            "The `coco_builtin` verifier requires a `coco_builtin` converter, but the configured converter is a different type"
+                        );
+                    };
+
+                    return Ok(Self::BackgroundCheck {
+                        verifier: TngVerifier::Coco(
+                            rats_cert::tee::coco::verifier::CocoVerifier::CocoBuiltin(
+                                builtin.new_verifier().await?,
+                            ),
+                        ),
+                        converter,
+                    });
+                }
+
                 let verifier = create_verifier(verifier_args).await?;
                 Ok(Self::BackgroundCheck {
                     converter,
@@ -421,7 +449,7 @@ mod tests {
                 refresh_interval: Some(600),
                 max_retries: None,
             };
-            let result = AttestContext::from_attest_args(&attest_args);
+            let result = AttestContext::from_attest_args(&attest_args).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
@@ -440,7 +468,7 @@ mod tests {
                 refresh_interval: Some(0),
                 max_retries: None,
             };
-            let result = AttestContext::from_attest_args(&attest_args);
+            let result = AttestContext::from_attest_args(&attest_args).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(

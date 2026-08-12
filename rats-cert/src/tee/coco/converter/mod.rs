@@ -11,6 +11,8 @@ use crate::tee::GenericConverter;
 #[cfg(feature = "__coco-builtin-as")]
 pub mod coco_builtin;
 pub mod grpc;
+#[cfg(feature = "__coco-builtin-as")]
+pub mod policy;
 pub mod restful;
 
 pub enum CocoConverter {

@@ -1449,8 +1449,12 @@ EOF
             r#"{
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
                                 "port": 30001
                             }
                         },
@@ -1475,8 +1479,8 @@ EOF
         )
         .boxed(),
         AppType::HttpClient {
-            host: "192.168.1.252",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }
@@ -1579,8 +1583,12 @@ async fn test_egress_key_from_peer_shared() -> Result<()> {
             {
                 "add_ingress": [
                     {
-                        "netfilter": {
-                            "capture_dst": {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
                                 "port": 30001
                             }
                         },
@@ -1606,8 +1614,8 @@ async fn test_egress_key_from_peer_shared() -> Result<()> {
         )
         .boxed(),
         AppType::HttpClient {
-            host: "192.168.1.252",
-            port: 30001,
+            host: "127.0.0.1",
+            port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
         }
