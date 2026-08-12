@@ -442,6 +442,14 @@ pub enum ConverterArgs {
         /// Directory the Rego policies are read from
         #[serde(default = "default_policy_dir")]
         policy_dir: String,
+        /// TEE classes a peer must attest, such as `gpu`, rejecting it if any is absent
+        ///
+        /// A policy cannot express this, because policies are only evaluated against the evidence
+        /// that arrived: a peer that never offers its GPU is appraised on its CPU alone, and the
+        /// `gpu` policy is never consulted no matter how strict it is. Empty by default, which
+        /// accepts whatever the peer chooses to present.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        required_tee_classes: Vec<String>,
         /// Passed through to the attestation service's per-TEE verifier configuration
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verifier_config: Option<serde_json::Value>,

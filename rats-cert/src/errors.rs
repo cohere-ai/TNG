@@ -32,6 +32,17 @@ pub enum Error {
         trustworthiness: String,
     },
 
+    #[error(
+        "Required TEE class `{tee_class}` was not attested; the token only covers {present:?}"
+    )]
+    MissingRequiredTeeClass {
+        tee_class: String,
+        present: Vec<String>,
+    },
+
+    #[error("Required TEE classes {required:?} cannot be checked: the token is not an EAR token, which is the only format carrying a per-class appraisal")]
+    RequiredTeeClassesUnsupported { required: Vec<String> },
+
     #[error("Multiple policy IDs found in EAR token")]
     MultiplePolicyIds,
 
