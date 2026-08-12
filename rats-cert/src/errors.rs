@@ -68,6 +68,26 @@ pub enum Error {
     #[error("Failed to parse evidence as JSON")]
     CocoBuiltinAsParseEvidenceJsonFailed(#[source] serde_json::Error),
 
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Failed to read the builtin attestation service policy `{path}`")]
+    CocoBuiltinAsReadPolicyFailed {
+        path: String,
+        #[source]
+        source: std::sync::Arc<std::io::Error>,
+    },
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("The `{tee_class}` policy is not a valid Rego policy producing trust claims")]
+    CocoBuiltinAsPolicyInvalid {
+        tee_class: String,
+        #[source]
+        source: std::sync::Arc<anyhow::Error>,
+    },
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("The `{tee_class}` policy does not set the `{claim}` trust claim")]
+    CocoBuiltinAsPolicyMissingClaim { tee_class: String, claim: String },
+
     // Remote AS related
     #[error("Remote AS gRPC is not supported")]
     RemoteAsGrpcNotSupported,

@@ -28,6 +28,7 @@ pkcs8 = {workspace = true, optional = true}
 prost = {workspace = true, optional = true}
 protobuf = {workspace = true, optional = true}
 rand = "0.8.5"
+regorus = {workspace = true, optional = true}
 reqwest = {workspace = true, optional = true}
 ring = {workspace = true, optional = true}
 rsa = {workspace = true, optional = true}
@@ -110,7 +111,7 @@ crypto-rustcrypto = [
 # `__coco-builtin-as` alone builds the service with no verifiers, which is only useful for
 # checking the wiring; each TEE has to be enabled on its own because the verifiers carry
 # native dependencies (openssl, tss-esapi, DCAP).
-__coco-builtin-as = ["dep:attestation-service", "dep:key-value-storage"]
+__coco-builtin-as = ["dep:attestation-service", "dep:key-value-storage", "dep:regorus", "dep:sha2"]
 coco-builtin-as-azsnp = ["__coco-builtin-as", "attestation-service/az-snp-vtpm-verifier"]
 coco-builtin-as-aztdx = ["__coco-builtin-as", "attestation-service/az-tdx-vtpm-verifier"]
 coco-builtin-as-nvidia = ["__coco-builtin-as", "attestation-service/nvidia-verifier"]

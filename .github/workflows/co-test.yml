@@ -189,6 +189,7 @@ jobs:
               --workspace \
               --bins \
               --lib \
+              --features tng/coco-builtin-as-tdx \
               -- --nocapture '"$SKIP_FLAGS"''
           REMOTE
 

@@ -162,6 +162,25 @@ ingress-mapping = ["__ingress-common"]
 ingress-netfilter = ["__ingress-common", "dep:portpicker", "dep:which"]
 ingress-socks5 = ["__ingress-common", "dep:fast-socks5"]
 
+# In-process attestation service backed by upstream CoCo Trustee. Kept out of `default` because
+# each verifier drags in native dependencies (openssl, tss-esapi, DCAP), so a TEE is opted into
+# rather than assumed.
+__coco-builtin-as = ["rats-cert/__coco-builtin-as"]
+coco-builtin-as-all = [
+  "coco-builtin-as-azsnp",
+  "coco-builtin-as-aztdx",
+  "coco-builtin-as-nvidia",
+  "coco-builtin-as-sgx",
+  "coco-builtin-as-snp",
+  "coco-builtin-as-tdx",
+]
+coco-builtin-as-azsnp = ["__coco-builtin-as", "rats-cert/coco-builtin-as-azsnp"]
+coco-builtin-as-aztdx = ["__coco-builtin-as", "rats-cert/coco-builtin-as-aztdx"]
+coco-builtin-as-nvidia = ["__coco-builtin-as", "rats-cert/coco-builtin-as-nvidia"]
+coco-builtin-as-sgx = ["__coco-builtin-as", "rats-cert/coco-builtin-as-sgx"]
+coco-builtin-as-snp = ["__coco-builtin-as", "rats-cert/coco-builtin-as-snp"]
+coco-builtin-as-tdx = ["__coco-builtin-as", "rats-cert/coco-builtin-as-tdx"]
+
 tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 
 metric = ["dep:tonic", "dep:opentelemetry", "dep:opentelemetry-otlp", "dep:opentelemetry-stdout", "dep:opentelemetry_sdk", "dep:tracing-opentelemetry"]
