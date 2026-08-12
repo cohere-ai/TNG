@@ -12,7 +12,7 @@ pub struct CocoBuiltinVerifier {
 }
 
 impl CocoBuiltinVerifier {
-    pub async fn new(policy_ids: &[String]) -> Result<Self> {
+    pub async fn new(policy_ids: &[String], required_tee_classes: &[String]) -> Result<Self> {
         // `insecure_key` skips endorsement of the token's signing key, which is sound *only*
         // because the token never leaves this process: the in-process AS signs it with an
         // ephemeral key and it is consumed in the same call chain, so the key is not
@@ -37,6 +37,7 @@ impl CocoBuiltinVerifier {
             inner: CommonCocoVerifier {
                 token_verifier,
                 policy_ids: policy_ids.to_owned(),
+                required_tee_classes: required_tee_classes.to_owned(),
             },
         })
     }

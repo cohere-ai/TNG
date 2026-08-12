@@ -10,13 +10,20 @@ FROM ubuntu:24.04 AS builder
 # clang is for bindgen in intel-tee-quote-verification-sys. The attestation service pulls in
 # OpenSSL, which builds from vendored source and so needs perl and a C toolchain rather than
 # libssl-dev; nothing here links libssl at runtime.
+#
+# libtss2-dev is for the Azure SEV-SNP verifier. Verifying an Azure CVM is entirely offline, since
+# the attester ships the VCEK inside the evidence, but the verifier still reaches tss-esapi through
+# az-cvm-vtpm and so needs the TPM libraries at build time. tss-esapi-sys locates them with
+# pkg-config, which is not part of build-essential.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     clang \
     curl \
     libprotobuf-dev \
+    libtss2-dev \
     perl \
+    pkg-config \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
@@ -49,17 +56,38 @@ RUN rustup show
 
 COPY . .
 
+# Each verifier is its own feature because each brings its own dependencies: TDX needs the Intel
+# DCAP library above, Azure SEV-SNP needs the TPM libraries, and NVIDIA needs neither, being pure
+# Rust that checks the GPU's SPDM report against the certificate chain in the evidence.
+#
+# Azure SEV-SNP subsumes the plain SEV-SNP verifier upstream, so a peer reporting through
+# /dev/sev-guest rather than a paravisor's vTPM is covered as well, without naming that feature.
+#
+# These decide what a peer's evidence can be appraised against, not what this image can prove about
+# itself, and they are only reachable through `as_provider: coco_builtin` in background-check mode.
+#
+# Compiling the NVIDIA verifier has a configuration consequence: a peer that presents GPU evidence
+# is appraised under a `gpu` class policy, and if the policy directory has none, the handshake fails
+# closed rather than ignoring the GPU. Deployments attesting GPU peers must ship a GPU policy.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     env RUSTFLAGS="--cfg tokio_unstable" \
-    cargo install --locked --features 'coco-builtin-as-tdx' --path ./tng/ --root /out
+    cargo install --locked \
+    --features 'coco-builtin-as-tdx,coco-builtin-as-azsnp,coco-builtin-as-nvidia' \
+    --path ./tng/ --root /out
 
 FROM ubuntu:24.04 AS runtime-base
 
+# The tss2 libraries are the runtime half of libtss2-dev above. As with DCAP, both images need
+# them: the binary is linked against them regardless of which side it runs on, so it would fail to
+# load without them even on egress, which only attests.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     jq \
+    libtss2-esys-3.0.2-0t64 \
+    libtss2-mu-4.0.1-0t64 \
+    libtss2-tctildr0t64 \
     python3-minimal \
     && rm -rf /var/lib/apt/lists/*
 

@@ -40,6 +40,7 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
         #[cfg(feature = "__coco-builtin-as")]
         ConverterArgs::CocoBuiltin {
             policy_dir,
+            required_tee_classes,
             verifier_config,
         } => {
             // Read here rather than lazily: an ingress with no usable policy can verify nothing,
@@ -49,7 +50,8 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
                     .await?;
 
             Ok(TngConverter::Coco(CocoConverter::CocoBuiltin(
-                CocoBuiltinConverter::new(&policies, verifier_config.clone()).await?,
+                CocoBuiltinConverter::new(&policies, verifier_config.clone(), required_tee_classes)
+                    .await?,
             )))
         }
         ConverterArgs::Coco(coco) => match coco {
