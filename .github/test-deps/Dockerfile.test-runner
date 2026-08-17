@@ -13,10 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Intel DCAP quote verification library, required to build and run the TDX verifier that the
-# in-process attestation service uses (rats-cert's coco-builtin-as-tdx feature). The armored key
-# is dropped in as-is so this stays free of a gnupg dependency.
-#
-# Only the quote verification library is needed, not the quote provider: this revision of the
+# in-process attestation service uses (rats-cert's coco-builtin-as-tdx feature). Only the quote verification library is needed, not the quote provider: this revision of the
 # verifier fetches DCAP collateral itself over HTTPS from Intel's PCS and hands it to the library,
 # so nothing here consults a quote provider config.
 RUN curl --proto '=https' --tlsv1.2 -fsSL https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key \

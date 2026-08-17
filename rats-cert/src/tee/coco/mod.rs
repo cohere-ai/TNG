@@ -19,7 +19,6 @@ mod tests {
     use crate::tee::coco::converter::restful::CocoRestfulConverter;
     use crate::tee::coco::converter::CocoConverter;
     use crate::tee::coco::verifier::remote::CocoRemoteVerifier;
-    use crate::tee::coco::verifier::CocoVerifier;
     use crate::tee::GenericAttester;
     use crate::tee::GenericConverter;
     use crate::tee::GenericVerifier;
@@ -41,7 +40,7 @@ mod tests {
     }
 
     /// E2E test: BackgroundCheck model
-    /// Flow: CocoAttester::get_evidence -> CocoConverter::convert -> CocoVerifier::verify_evidence
+    /// Flow: CocoAttester::get_evidence -> CocoConverter::convert -> CocoRemoteVerifier::verify_evidence
     /// The converter sends evidence to remote AS for evaluation, then the verifier validates the resulting token.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_e2e_background_check_flow() {
@@ -85,7 +84,7 @@ mod tests {
     }
 
     /// E2E test: Passport model
-    /// Flow: CocoAttester::get_evidence -> CocoConverter::convert (attester side) -> CocoVerifier::verify_evidence (verifier side)
+    /// Flow: CocoAttester::get_evidence -> CocoConverter::convert (attester side) -> CocoRemoteVerifier::verify_evidence (verifier side)
     /// In passport model, the attester obtains a token from AS, then presents it to the verifier.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_e2e_passport_flow() {
@@ -133,7 +132,7 @@ mod tests {
     }
 
     /// E2E test: ASR variant
-    /// Flow: CocoAsrAttester::get_evidence -> CocoConverter::convert -> CocoVerifier::verify_evidence
+    /// Flow: CocoAsrAttester::get_evidence -> CocoConverter::convert -> CocoRemoteVerifier::verify_evidence
     /// Same as the AA-based e2e but collects evidence via the ASR HTTP proxy.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_e2e_asr_flow() {

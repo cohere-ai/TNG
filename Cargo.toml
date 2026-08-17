@@ -28,8 +28,7 @@ as-any = "0.3.2"
 async-http-proxy = {version = "1.2.5", features = ["runtime-tokio"]}
 async-stream = "0.3.6"
 async-trait = "0.1.88"
-# Upstream CoCo Trustee, pinned by rev because it has no stable release. `default-features`
-# would pull the gRPC server binary's dependencies (axum, clap, tonic-health).
+# `default-features` false to avoid pulling gRPC server's dependencies (clap, tonic-health...).
 attestation-service = {git = "https://github.com/confidential-containers/trustee.git", rev = "50b94a5f0bbadef7d04a8e597234eb46de3782c5", default-features = false}
 atty = "0.2.14"
 auto_enums = {version = "0.8", features = ["std", "tokio1"]}

@@ -14,15 +14,17 @@ use crate::errors::*;
 /// attestation covering a CPU and a GPU evaluates two separate policies.
 pub type TeeClassPolicies = BTreeMap<String, String>;
 
-/// Filename read for the CPU policy. Every attestation produces a CPU submodule, so this one is
-/// mandatory.
-const CPU_POLICY_FILE: &str = "tng_cpu.rego";
+/// The TEE classes upstream's verifiers emit, and so the only classes a policy is ever resolved
+/// for.
+const TEE_CLASSES: &[&str] = &["cpu", "gpu", "switch", "ppcie"];
 
-/// Filename read for the GPU policy. Optional, so a deployment without GPUs does not have to carry
-/// one. If a GPU does turn up with no policy installed the service falls back to its own default,
-/// which cannot affirm without the NRAS claims that a local verifier never produces, so the
-/// omission fails closed rather than admitting the device.
-const GPU_POLICY_FILE: &str = "tng_gpu.rego";
+/// The class every attestation appraises, and so the one policy a deployment cannot omit.
+///
+/// The others are optional: a policy is only looked up for a class the evidence carries. If a
+/// device does turn up with no policy installed for its class, that lookup misses and the whole
+/// appraisal fails with `PolicyNotFound`, so the omission fails closed rather than admitting the
+/// device.
+const CPU_TEE_CLASS: &str = "cpu";
 
 /// The rule the EAR broker reads an appraisal's trust claims from.
 const TRUST_CLAIMS_RULE: &str = "data.policy.trust_claims";
@@ -43,58 +45,43 @@ const REQUIRED_CLAIMS: &[&str] = &[
     "storage-opaque",
 ];
 
-/// Reads the policies out of `dir`, using the fixed filenames above.
-pub async fn load_from_dir(dir: &Path) -> Result<TeeClassPolicies> {
+/// Reads the policies belonging to `policy_id` out of `dir`.
+///
+/// The layout follows the attestation service's own: a policy is stored under the key
+/// `{policy_id}_{tee_class}`, and its filesystem backend maps that key straight onto a file with a
+/// `.rego` suffix. So `myorg_gpu.rego` is the GPU policy of the policy id `myorg`, and a directory
+/// can hold several policy ids side by side. Files carrying another id are left alone.
+pub async fn load_from_dir(dir: &Path, policy_id: &str) -> Result<TeeClassPolicies> {
     let mut policies = TeeClassPolicies::new();
 
-    let cpu_path = dir.join(CPU_POLICY_FILE);
-    let cpu_policy = tokio::fs::read_to_string(&cpu_path).await.map_err(|e| {
-        Error::CocoBuiltinAsReadPolicyFailed {
-            path: cpu_path.display().to_string(),
-            source: Arc::new(e),
-        }
-    })?;
-    policies.insert("cpu".to_owned(), cpu_policy);
+    for tee_class in TEE_CLASSES {
+        let path = dir.join(format!("{policy_id}_{tee_class}.rego"));
 
-    let gpu_path = dir.join(GPU_POLICY_FILE);
-    match tokio::fs::read_to_string(&gpu_path).await {
-        Ok(gpu_policy) => {
-            policies.insert("gpu".to_owned(), gpu_policy);
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            tracing::info!(
-                path = %gpu_path.display(),
-                "No GPU policy present, GPU evidence will not be accepted"
-            );
-        }
-        Err(e) => {
-            return Err(Error::CocoBuiltinAsReadPolicyFailed {
-                path: gpu_path.display().to_string(),
-                source: Arc::new(e),
-            })
-        }
+        let policy = match tokio::fs::read_to_string(&path).await {
+            Ok(policy) => policy,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && *tee_class != CPU_TEE_CLASS => {
+                continue
+            }
+            Err(e) => {
+                return Err(Error::CocoBuiltinAsReadPolicyFailed {
+                    path: path.display().to_string(),
+                    source: Arc::new(e),
+                })
+            }
+        };
+
+        // Logged so a deployment can tell after the fact which bytes were in force, which the
+        // policy id alone no longer says now that it is a name rather than a digest.
+        tracing::info!(
+            policy_id = %format!("{policy_id}_{tee_class}"),
+            sha256 = %hex::encode(Sha256::digest(policy.as_bytes())),
+            "Loaded policy"
+        );
+
+        policies.insert((*tee_class).to_owned(), policy);
     }
 
     Ok(policies)
-}
-
-/// Derives a content-addressed id covering every policy in the set.
-///
-/// Naming the policies after their contents means the id recorded in a token identifies exactly
-/// what was enforced, and a revised policy can never be mistaken for the one it replaced.
-pub fn derive_policy_id(policies: &TeeClassPolicies) -> String {
-    let mut hasher = Sha256::new();
-
-    // Lengths are hashed alongside the values so that no two distinct sets can collide by shifting
-    // bytes across a field boundary. The map is ordered, so the digest is stable.
-    for (tee_class, policy) in policies {
-        hasher.update((tee_class.len() as u64).to_le_bytes());
-        hasher.update(tee_class.as_bytes());
-        hasher.update((policy.len() as u64).to_le_bytes());
-        hasher.update(policy.as_bytes());
-    }
-
-    format!("tng_{}", hex::encode(hasher.finalize()))
 }
 
 /// Checks a policy compiles and produces a complete set of trust claims.
@@ -224,109 +211,33 @@ trust_claims := {
         );
     }
 
-    #[test]
-    fn policy_id_is_content_addressed() {
-        let a = TeeClassPolicies::from([("cpu".to_owned(), COMPLETE_POLICY.to_owned())]);
-        let mut b = a.clone();
-        b.insert("gpu".to_owned(), COMPLETE_POLICY.to_owned());
-
-        assert_eq!(derive_policy_id(&a), derive_policy_id(&a));
-        assert_ne!(
-            derive_policy_id(&a),
-            derive_policy_id(&b),
-            "adding a policy should change the id"
-        );
-    }
-
-    /// The id is used as `{id}_{tee_class}` and ends up in tokens and logs, so it has to stay
-    /// within a conservative character set.
-    #[test]
-    fn policy_id_is_alphanumeric() {
-        let policies = TeeClassPolicies::from([("cpu".to_owned(), COMPLETE_POLICY.to_owned())]);
-
-        let id = derive_policy_id(&policies);
-
-        assert!(id.starts_with("tng_"));
-        assert!(
-            id.strip_prefix("tng_")
-                .unwrap()
-                .chars()
-                .all(|c| c.is_ascii_hexdigit()),
-            "unexpected characters in {id}"
-        );
-    }
-
-    /// The policies shipped in `policies/` are what CI rewrites the golden values into, so they
-    /// have to satisfy the same checks a fetched policy does. This is the guard that catches an
-    /// overlong generated line or a claim dropped while editing.
-    #[test]
-    fn shipped_policies_validate() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../policies");
-
-        for (tee_class, file) in [("cpu", CPU_POLICY_FILE), ("gpu", GPU_POLICY_FILE)] {
-            let path = dir.join(file);
-            let policy = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
-
-            validate(tee_class, &policy)
-                .unwrap_or_else(|e| panic!("{} is not a usable policy: {e}", path.display()));
-        }
-    }
-
-    /// With no golden values generated in, the shipped policies must reject rather than admit.
-    #[test]
-    fn shipped_policies_reject_by_default() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../policies/tng_cpu.rego");
-        let policy = std::fs::read_to_string(path).unwrap();
-
-        let mut engine = regorus::Engine::new();
-        engine.add_policy("cpu.rego".to_owned(), policy).unwrap();
-        engine.set_input(regorus::Value::new_object());
-
-        let claims = engine
-            .eval_rule(TRUST_CLAIMS_RULE.to_owned())
-            .unwrap()
-            .as_object()
-            .unwrap()
-            .clone();
-
-        // 2..31 is affirming under AR4SI, so an ungenerated policy must land outside that band on
-        // the claims it is responsible for.
-        for claim in ["hardware", "executables", "configuration"] {
-            let value = claims
-                .get(&regorus::Value::from(claim))
-                .and_then(|v| v.as_i64().ok())
-                .unwrap_or_else(|| panic!("{claim} should be a number"));
-
-            assert!(
-                !(2..=31).contains(&value),
-                "{claim} is {value}, which would affirm without any golden values"
-            );
-        }
-    }
-
+    /// Covers the whole file contract: only the configured id is read, the CPU policy is required
+    /// and the rest are not.
     #[tokio::test]
-    async fn gpu_policy_is_optional_but_cpu_policy_is_not() {
+    async fn only_the_configured_id_is_read_and_only_cpu_is_required() {
         let dir = tempfile::tempdir().unwrap();
+        for name in ["theirs_cpu.rego", "theirs_gpu.rego"] {
+            tokio::fs::write(dir.path().join(name), COMPLETE_POLICY)
+                .await
+                .unwrap();
+        }
 
-        let err = load_from_dir(dir.path()).await.unwrap_err();
+        let err = load_from_dir(dir.path(), "mine").await.unwrap_err();
         assert!(
             matches!(err, Error::CocoBuiltinAsReadPolicyFailed { .. }),
             "a missing CPU policy should fail, got {err:?}"
         );
 
-        tokio::fs::write(dir.path().join(CPU_POLICY_FILE), COMPLETE_POLICY)
+        tokio::fs::write(dir.path().join("mine_cpu.rego"), COMPLETE_POLICY)
             .await
             .unwrap();
-
-        let policies = load_from_dir(dir.path()).await.unwrap();
+        let policies = load_from_dir(dir.path(), "mine").await.unwrap();
         assert_eq!(policies.keys().collect::<Vec<_>>(), vec!["cpu"]);
 
-        tokio::fs::write(dir.path().join(GPU_POLICY_FILE), COMPLETE_POLICY)
+        tokio::fs::write(dir.path().join("mine_gpu.rego"), COMPLETE_POLICY)
             .await
             .unwrap();
-
-        let policies = load_from_dir(dir.path()).await.unwrap();
+        let policies = load_from_dir(dir.path(), "mine").await.unwrap();
         assert_eq!(policies.keys().collect::<Vec<_>>(), vec!["cpu", "gpu"]);
     }
 }

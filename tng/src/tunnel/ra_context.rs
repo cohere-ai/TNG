@@ -208,27 +208,19 @@ impl VerifyContext {
             } => {
                 let converter = create_converter(converter_args).await?;
 
-                // The builtin service signs each token with an ephemeral key it generated and
-                // appraises it under an id derived from the policy contents. Neither is nameable in
-                // configuration, so this verifier is built from the converter that holds them
-                // instead of from its own args.
+                // The builtin service signs each token with an ephemeral key it generated, which is
+                // not nameable in configuration, so this verifier is built from the converter that
+                // holds it instead of from its own args.
                 #[cfg(feature = "__coco-builtin-as")]
                 if matches!(verifier_args, VerifierArgs::CocoBuiltin) {
-                    let TngConverter::Coco(
-                        rats_cert::tee::coco::converter::CocoConverter::CocoBuiltin(builtin),
-                    ) = &converter
-                    else {
+                    let TngConverter::CocoBuiltin(builtin) = &converter else {
                         anyhow::bail!(
                             "The `coco_builtin` verifier requires a `coco_builtin` converter, but the configured converter is a different type"
                         );
                     };
 
                     return Ok(Self::BackgroundCheck {
-                        verifier: TngVerifier::Coco(
-                            rats_cert::tee::coco::verifier::CocoVerifier::CocoBuiltin(
-                                builtin.new_verifier().await?,
-                            ),
-                        ),
+                        verifier: TngVerifier::CocoBuiltin(builtin.new_verifier().await?),
                         converter,
                     });
                 }

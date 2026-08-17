@@ -78,9 +78,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 FROM ubuntu:24.04 AS runtime-base
 
-# The tss2 libraries are the runtime half of libtss2-dev above. As with DCAP, both images need
-# them: the binary is linked against them regardless of which side it runs on, so it would fail to
-# load without them even on egress, which only attests.
+# The tss2 libraries are the runtime half of libtss2-dev above.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -91,9 +89,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-minimal \
     && rm -rf /var/lib/apt/lists/*
 
-# Runtime half of the DCAP dependency above: the binary links libsgx_dcap_quoteverify.so.1. Both
-# images need it, because the single binary is built with the verifier compiled in and would fail
-# to load without it, even on the egress side that only attests.
+# Runtime half of the DCAP dependency above: the binary links libsgx_dcap_quoteverify.so.1.
 RUN curl --proto '=https' --tlsv1.2 -fsSL https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key \
         -o /etc/apt/keyrings/intel-sgx.asc \
     && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/intel-sgx.asc] https://download.01.org/intel-sgx/sgx_repo/ubuntu noble main" \

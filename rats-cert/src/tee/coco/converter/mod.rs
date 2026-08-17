@@ -15,9 +15,13 @@ pub mod grpc;
 pub mod policy;
 pub mod restful;
 
+/// The interfaces a CoCo attestation service exposes, which is to say the two ways of reaching one
+/// over the network.
+///
+/// [`coco_builtin::CocoBuiltinConverter`] is deliberately not a variant. It runs the service in
+/// this process rather than talking to one, so it is a peer of this type rather than a member of
+/// it, and callers select between them the way the configuration does.
 pub enum CocoConverter {
-    #[cfg(feature = "__coco-builtin-as")]
-    CocoBuiltin(coco_builtin::CocoBuiltinConverter),
     Grpc(CocoGrpcConverter),
     Restful(CocoRestfulConverter),
 }
@@ -35,8 +39,6 @@ impl GenericConverter for CocoConverter {
 
     async fn convert(&self, in_evidence: &Self::InEvidence) -> Result<Self::OutEvidence> {
         match self {
-            #[cfg(feature = "__coco-builtin-as")]
-            CocoConverter::CocoBuiltin(converter) => converter.convert(in_evidence).await,
             CocoConverter::Grpc(converter) => converter.convert(in_evidence).await,
             CocoConverter::Restful(converter) => converter.convert(in_evidence).await,
         }
@@ -44,8 +46,6 @@ impl GenericConverter for CocoConverter {
 
     async fn get_nonce(&self) -> Result<Self::Nonce> {
         match self {
-            #[cfg(feature = "__coco-builtin-as")]
-            CocoConverter::CocoBuiltin(converter) => converter.get_nonce().await,
             CocoConverter::Grpc(converter) => converter.get_nonce().await,
             CocoConverter::Restful(converter) => converter.get_nonce().await,
         }
