@@ -29,6 +29,8 @@ pub struct CocoBuiltinConverter {
     attestation_service: Box<AttestationService>,
 
     /// Passed to `evaluate` unsuffixed; the broker appends the TEE class per device.
+    ///
+    /// Names the policy set an operator chose, matching the filenames it was loaded from.
     policy_id: String,
 
     /// Handed to the verifier this converter derives; see [`CommonCocoVerifier`].
@@ -39,15 +41,11 @@ pub struct CocoBuiltinConverter {
 
 impl CocoBuiltinConverter {
     pub async fn new(
+        policy_id: &str,
         policies: &TeeClassPolicies,
         verifier_config: Option<serde_json::Value>,
         required_tee_classes: &[String],
     ) -> Result<Self> {
-        // Derived from the policy contents rather than configured, so the id recorded in every
-        // token names exactly what was enforced, and the verifier can arrive at the same id from
-        // the same policies without either side having to agree on a label.
-        let policy_id = policy::derive_policy_id(policies);
-
         // `VerifierConfig` has private fields and only derives `Deserialize`, so pass-through
         // JSON is the only way to construct it.
         let verifier_config = verifier_config
@@ -82,7 +80,8 @@ impl CocoBuiltinConverter {
             policy::validate(tee_class, policy)?;
 
             let policy_id = format!("{policy_id}_{tee_class}");
-            // `set_policy` decodes with URL_SAFE_NO_PAD; standard base64 fails here.
+            // `set_policy` decodes with URL_SAFE_NO_PAD, which rejects both the `+` and `/` of the
+            // standard alphabet and its `=` padding, so encoding with the standard engine fails.
             attestation_service
                 .set_policy(policy_id.clone(), URL_SAFE_NO_PAD.encode(policy))
                 .await
@@ -94,12 +93,12 @@ impl CocoBuiltinConverter {
 
         Ok(Self {
             attestation_service,
-            policy_id,
+            policy_id: policy_id.to_owned(),
             required_tee_classes: required_tee_classes.to_owned(),
         })
     }
 
-    /// The content-addressed id the installed policies were registered under.
+    /// The id the installed policies were registered under.
     pub fn policy_id(&self) -> &str {
         &self.policy_id
     }
@@ -180,17 +179,28 @@ impl GenericConverter for CocoBuiltinConverter {
     }
 }
 
+/// Wraps `rules` in the envelope every policy needs, so only the rules differ below.
+///
+/// The claims a rule affirms with are AR4SI tiers: 2 to 31 affirm, and the defaults here do not.
+/// A policy with no rules is therefore complete but affirms nothing, which is what the diagnostics
+/// want.
+///
+/// Rules have to compare against values written into the policy itself. The builtin service runs
+/// with an empty reference value store, so `query_reference_value` resolves to nothing and any
+/// rule built on one fails.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Complete enough to pass validation, while affirming nothing.
-    const TRIVIAL_POLICY: &str = r#"package policy
+fn policy(rules: &str) -> String {
+    format!(
+        r#"package policy
 import rego.v1
+
 default hardware := 97
 default executables := 33
 default configuration := 36
-trust_claims := {
+
+{rules}
+
+trust_claims := {{
 	"executables": executables,
 	"hardware": hardware,
 	"configuration": configuration,
@@ -199,24 +209,35 @@ trust_claims := {
 	"runtime-opaque": 0,
 	"storage-opaque": 0,
 	"sourced-data": 0,
+}}
+"#
+    )
 }
-"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Stands in for the id an operator configures; the value is arbitrary.
+    const TEST_POLICY_ID: &str = "test";
 
     fn policies() -> TeeClassPolicies {
         BTreeMap::from([
-            ("cpu".to_string(), TRIVIAL_POLICY.to_string()),
-            ("gpu".to_string(), TRIVIAL_POLICY.to_string()),
+            ("cpu".to_string(), policy("")),
+            ("gpu".to_string(), policy("")),
         ])
     }
 
     async fn converter() -> CocoBuiltinConverter {
-        CocoBuiltinConverter::new(&policies(), None, &[])
+        CocoBuiltinConverter::new(TEST_POLICY_ID, &policies(), None, &[])
             .await
             .expect("builtin converter should construct with in-memory storage")
     }
 
-    /// The broker looks a policy up as `{policy_id}_{tee_class}`, so installing it under the
-    /// bare id would silently fall through to the built-in default.
+    /// The broker looks a policy up as `{policy_id}_{tee_class}`, so installing under the bare id
+    /// would leave that lookup with nothing to find. Reading one back also covers the encoding:
+    /// `set_policy` decodes with URL_SAFE_NO_PAD, and a policy encoded with the standard alphabet
+    /// is rejected on its padding rather than stored.
     #[tokio::test]
     async fn policies_are_installed_per_tee_class() {
         let converter = converter().await;
@@ -231,37 +252,14 @@ trust_claims := {
         assert!(installed.contains(&format!("{policy_id}_cpu")));
         assert!(installed.contains(&format!("{policy_id}_gpu")));
         assert!(!installed.contains(&policy_id.to_string()));
-    }
-
-    /// `set_policy` decodes with URL_SAFE_NO_PAD; encoding with the standard alphabet would
-    /// either fail or store the wrong bytes.
-    #[tokio::test]
-    async fn installed_policy_round_trips() {
-        let converter = converter().await;
 
         let stored = converter
             .attestation_service
-            .get_policy(format!("{}_cpu", converter.policy_id()))
+            .get_policy(format!("{policy_id}_cpu"))
             .await
             .expect("stored policy should be readable back");
 
-        assert_eq!(stored, TRIVIAL_POLICY);
-    }
-
-    /// Installing our own policies must not disturb the four built-in defaults, which are
-    /// registered at construction with `overwrite: false`.
-    #[tokio::test]
-    async fn builtin_default_policies_are_left_alone() {
-        let converter = converter().await;
-
-        let installed = converter
-            .attestation_service
-            .list_policies()
-            .await
-            .expect("listing policies should succeed");
-
-        assert!(installed.contains(&"default_cpu".to_string()));
-        assert!(installed.contains(&"default_gpu".to_string()));
+        assert_eq!(stored, policy(""));
     }
 
     /// An invalid policy has to stop construction: the service stores policy bytes without parsing
@@ -272,7 +270,7 @@ trust_claims := {
             TeeClassPolicies::from([("cpu".to_string(), "package policy\nnot rego".to_string())]);
 
         // Matched rather than `expect_err`, which would need `Debug` on the converter.
-        let err = match CocoBuiltinConverter::new(&policies, None, &[]).await {
+        let err = match CocoBuiltinConverter::new(TEST_POLICY_ID, &policies, None, &[]).await {
             Ok(_) => panic!("an unparseable policy should fail construction"),
             Err(err) => err,
         };
@@ -305,84 +303,51 @@ trust_claims := {
 
 /// Scaffolding shared by the hardware-backed end-to-end tests below.
 ///
+/// Everything above this point tests the service in isolation, without evidence. These are what
+/// establish that the whole path works: hardware to attestation agent, evidence to the in-process
+/// service, verification against the platform's trust roots, policy appraisal, EAR token minting
+/// under an ephemeral key, and verification of that token.
+///
 /// Each TEE gets its own module, because each needs a different verifier feature and a different
-/// policy, but the way evidence is requested and the service is built is identical.
+/// policy, but the flow is identical and so lives here. They are gated on the verifier feature
+/// rather than skipped at runtime.
 #[cfg(all(
     test,
     feature = "attester-coco",
     any(feature = "coco-builtin-as-tdx", feature = "coco-builtin-as-azsnp")
 ))]
 mod hardware_support {
+    use serial_test::serial;
+
     use super::*;
     use crate::tee::claims::Claims;
     use crate::tee::coco::attester::CocoAttester;
-    use crate::tee::{GenericAttester as _, ReportData};
+    use crate::tee::{GenericAttester as _, GenericVerifier as _, ReportData};
 
     pub(super) const AA_ADDR: &str =
         "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock";
 
-    /// A syntactically complete policy that asserts nothing, so every claim keeps its
-    /// non-affirming default.
-    pub(super) const INERT_POLICY: &str = r#"package policy
-import rego.v1
-
-default hardware := 97
-default executables := 33
-default configuration := 36
-
-trust_claims := {
-	"executables": executables,
-	"hardware": hardware,
-	"configuration": configuration,
-	"file-system": 0,
-	"instance-identity": 0,
-	"runtime-opaque": 0,
-	"storage-opaque": 0,
-	"sourced-data": 0,
-}
-"#;
-
     /// Affirms on the mere presence of GPU evidence, pinning nothing.
     ///
-    /// The mirror image of the GPU module's `CPU_PRESENCE_POLICY`, and installed for the same
+    /// The mirror image of the GPU module's `cpu_presence_policy`, and installed for the same
     /// reason: these modules are about the CPU class, but the broker demands a policy for every
     /// class the evidence carries. Without this, a host that attests a GPU as well as a CPU would
     /// fail evaluation outright, before the CPU policy under test was ever consulted.
-    pub(super) const GPU_PRESENCE_POLICY: &str = r#"package policy
-import rego.v1
+    fn gpu_presence_policy() -> String {
+        policy(
+            r#"hardware := 2 if input.nvidia
+executables := 3 if input.nvidia
+configuration := 2 if input.nvidia"#,
+        )
+    }
 
-default hardware := 97
-default executables := 33
-default configuration := 36
-
-gpu := input.nvidia
-
-hardware := 2 if gpu
-
-executables := 3 if gpu
-
-configuration := 2 if gpu
-
-trust_claims := {
-	"executables": executables,
-	"hardware": hardware,
-	"configuration": configuration,
-	"file-system": 0,
-	"instance-identity": 0,
-	"runtime-opaque": 0,
-	"storage-opaque": 0,
-	"sourced-data": 0,
-}
-"#;
-
-    /// Installs the CPU policy under test, plus a permissive GPU policy so the same tests run on
-    /// GPU and GPU-less hosts alike. A policy is only consulted for a class the evidence actually
-    /// carries, so the GPU one costs nothing on a host without a device.
-    pub(super) async fn converter_with(policy: String) -> CocoBuiltinConverter {
+    /// Installs the CPU policy under test, plus the permissive GPU policy above so the same tests
+    /// run on GPU and GPU-less hosts alike.
+    pub(super) async fn converter_with(cpu_policy: String) -> CocoBuiltinConverter {
         converter_with_policies(
             BTreeMap::from([
-                ("cpu".to_owned(), policy),
-                ("gpu".to_owned(), GPU_PRESENCE_POLICY.to_owned()),
+                ("cpu".to_owned(), cpu_policy),
+                ("gpu".to_owned(), gpu_presence_policy()),
             ]),
             &[],
         )
@@ -396,7 +361,7 @@ trust_claims := {
         policies: TeeClassPolicies,
         required_tee_classes: &[String],
     ) -> CocoBuiltinConverter {
-        CocoBuiltinConverter::new(&policies, None, required_tee_classes)
+        CocoBuiltinConverter::new("test", &policies, None, required_tee_classes)
             .await
             .expect("converter should construct")
     }
@@ -417,117 +382,32 @@ trust_claims := {
             .await
             .expect("the attestation agent should produce evidence")
     }
-}
 
-/// End-to-end tests that run real TDX evidence from this host through the in-process service.
-///
-/// Everything above this point tests the service in isolation, without evidence. These are what
-/// establish that the whole path works: hardware evidence to attestation agent, evidence to the
-/// in-process attestation service, quote verification against Intel's collateral, policy
-/// appraisal, EAR token minting under an ephemeral key, and verification of that token.
-///
-/// Gated on the verifier feature rather than skipping at runtime. The previous builtin
-/// implementation's equivalent tests caught the "feature `tdx-verifier` is not enabled" error
-/// and returned success, so they passed on every machine that could not actually run them, which
-/// is indistinguishable from having no coverage at all.
-///
-/// Requirements to run: TDX hardware, the Intel DCAP quote verification library
-/// (`libsgx-dcap-quote-verify-dev`), the attestation agent socket (owned by root, so these need
-/// `sudo -E`), and outbound access to Intel's PCS. This revision of the verifier fetches
-/// collateral itself over HTTPS and fails the verification if it cannot, so unlike the
-/// containerized service there is no quote provider library config to set.
-#[cfg(all(test, feature = "coco-builtin-as-tdx", feature = "attester-coco"))]
-mod tdx_e2e_tests {
-    use serial_test::serial;
+    pub(super) fn payload_of(token: &CocoAsToken) -> serde_json::Value {
+        let payload = token
+            .as_str()
+            .split('.')
+            .nth(1)
+            .expect("a JWT should have a payload segment");
+        let payload = URL_SAFE_NO_PAD
+            .decode(payload)
+            .expect("the payload should be base64url");
 
-    use super::hardware_support::*;
-    use super::*;
-    use crate::tee::GenericVerifier as _;
-
-    /// Accepted TDX module measurements, the same pair the containerized attestation service is
-    /// handed through its reference value store in `.github/test-deps`.
-    ///
-    /// Inlined rather than resolved with `query_reference_value`, which is the point of the
-    /// design: the builtin service runs with an empty RVPS, so every reference value lookup
-    /// returns nothing and any rule built on one fails.
-    const MR_SEAM_ALLOWED: [&str; 2] = [
-        "489e585f1c54bc5a02066c8c6ec21619ff0334ec6f21e07e2a35202c59183789c8057e7d97dd591bb08314b185819e72",
-        "ab62561a173acbd18ee50ff37750db44184c6cf5e886df74247cc575e163b04c34b9e18374757c235affa614d4127f6b",
-    ];
-
-    /// A measurement no TDX module will ever report, used to show the allowlist is load-bearing.
-    const MR_SEAM_WRONG: [&str; 1] = [
-        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
-    ];
-
-    /// Builds a TDX policy asserting the same properties the shared `default_cpu.rego` does,
-    /// with the accepted measurements passed in so a test can substitute a wrong one.
-    fn tdx_policy(mr_seam_allowed: &[&str]) -> String {
-        let allowed = serde_json::to_string(mr_seam_allowed).expect("allowlist should serialize");
-
-        format!(
-            r#"package policy
-import rego.v1
-
-default hardware := 97
-default executables := 33
-default configuration := 36
-
-mr_seam_allowed := {allowed}
-
-# The quote has to be a TDX quote issued by Intel's quoting enclave, carry a TDX module
-# measurement we accept, and have been checked against collateral that had not expired.
-hardware := 2 if {{
-	input.tdx
-
-	input.tdx.quote.header.tee_type == "81000000"
-	input.tdx.quote.header.vendor_id == "939a7233f79c4ca9940a0db3957f0607"
-	input.tdx.quote.body.mr_seam in mr_seam_allowed
-	input.tdx.collateral_expiration_status == "0"
-}}
-
-# The guest measurements this would pin (rtmr1/rtmr2, mr_td) are properties of the image under
-# test rather than of the attestation path, and the shared policy leaves them commented out for
-# the same reason. Asserting only that TDX evidence is present keeps this test from failing every
-# time the test image is rebuilt.
-executables := 3 if {{
-	input.tdx
-}}
-
-configuration := 2 if {{
-	input.tdx
-
-	input.tdx.td_attributes.debug == false
-}}
-
-trust_claims := {{
-	"executables": executables,
-	"hardware": hardware,
-	"configuration": configuration,
-	"file-system": 0,
-	"instance-identity": 0,
-	"runtime-opaque": 0,
-	"storage-opaque": 0,
-	"sourced-data": 0,
-}}
-"#
-        )
+        serde_json::from_slice(&payload).expect("the payload should be JSON")
     }
 
-    /// The one that matters: real hardware evidence all the way to an accepted token. The
-    /// previous builtin implementation never had this, only a test asserting the token was
-    /// rejected.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn real_tdx_evidence_is_affirmed() {
-        let converter = converter_with(tdx_policy(&MR_SEAM_ALLOWED)).await;
+    /// The CPU end-to-end tests are the same flow for every TEE — request evidence from the agent,
+    /// convert it, verify the token — differing only in the policy, so the flow lives here and each
+    /// module below supplies its own.
+    pub(super) async fn assert_evidence_is_affirmed(cpu_policy: String, nonce: &str) {
+        let converter = converter_with(cpu_policy).await;
         let verifier = converter.new_verifier().await.expect("verifier");
-        let report_data = report_data("dGVzdC1ub25jZS1hZmZpcm0");
+        let report_data = report_data(nonce);
 
         let token = converter
             .convert(&evidence_for(&report_data).await)
             .await
-            .expect("the in-process service should verify this host's TDX quote");
+            .expect("the in-process service should verify this host's evidence");
 
         verifier
             .verify_evidence(&token, &report_data)
@@ -536,14 +416,11 @@ trust_claims := {{
     }
 
     /// Without this, an affirming result proves only that the pipeline runs, not that the policy
-    /// decides anything. Swapping in a measurement the hardware cannot report has to flip the
-    /// outcome.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn a_policy_with_an_unmatched_measurement_is_rejected() {
-        let converter = converter_with(tdx_policy(&MR_SEAM_WRONG)).await;
+    /// decides anything: a golden value the hardware cannot report has to flip the outcome.
+    pub(super) async fn assert_evidence_is_not_affirmed(cpu_policy: String, nonce: &str) {
+        let converter = converter_with(cpu_policy).await;
         let verifier = converter.new_verifier().await.expect("verifier");
-        let report_data = report_data("dGVzdC1ub25jZS1tcnNlYW0");
+        let report_data = report_data(nonce);
 
         let token = converter
             .convert(&evidence_for(&report_data).await)
@@ -553,7 +430,7 @@ trust_claims := {{
         let err = verifier
             .verify_evidence(&token, &report_data)
             .await
-            .expect_err("an unmatched measurement must not be affirmed");
+            .expect_err("an unmatched golden value must not be affirmed");
 
         assert!(
             matches!(err, Error::EarStatusNotAffirming { .. }),
@@ -561,236 +438,62 @@ trust_claims := {{
         );
     }
 
-    /// A policy that leaves its claims at the defaults must fail closed, which is what makes an
-    /// ungenerated or truncated policy safe.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn a_policy_asserting_nothing_is_rejected() {
-        let converter = converter_with(INERT_POLICY.to_owned()).await;
-        let verifier = converter.new_verifier().await.expect("verifier");
-        let report_data = report_data("dGVzdC1ub25jZS1pbmVydA");
+    /// A value this host actually reports, read back from a token appraised under a policy that
+    /// pins nothing.
+    ///
+    /// The affirming tests need a golden value that matches, and writing one down as a literal
+    /// would tie the suite to a paravisor, TDX module or GPU firmware release. Those move on the
+    /// platform owner's schedule, so a literal turns someone else's update into a red build that
+    /// says nothing about this code. Calibrating against the host keeps the affirming case
+    /// exercising a real comparison without this repo owning the value, which belongs to whoever
+    /// writes the deployment's policy.
+    ///
+    /// `pointer` is the path a policy would use, because a submodule's annotated evidence is
+    /// exactly the policy's `input`.
+    pub(super) async fn host_claim(tee_class: &str, pointer: &str) -> serde_json::Value {
+        let converter = converter_with(policy("")).await;
+        let report_data = report_data("dGVzdC1ub25jZS1jYWxpYnJhdGU");
 
         let token = converter
             .convert(&evidence_for(&report_data).await)
             .await
-            .expect("conversion should succeed regardless of the appraisal");
+            .expect("conversion should succeed");
 
-        let err = verifier
-            .verify_evidence(&token, &report_data)
-            .await
-            .expect_err("a policy asserting nothing must not affirm");
+        let payload = payload_of(&token);
+        let submodules = payload
+            .pointer("/submods")
+            .and_then(|submods| submods.as_object())
+            .expect("an EAR token should carry submodules");
 
-        assert!(
-            matches!(err, Error::EarStatusNotAffirming { .. }),
-            "expected a non-affirming appraisal, got {err:?}"
-        );
+        let (name, appraisal) = submodules
+            .iter()
+            .find(|(name, _)| name.starts_with(tee_class))
+            .unwrap_or_else(|| panic!("this host attests no {tee_class}, got {submodules:?}"));
+
+        let value = appraisal
+            .pointer(&format!("/ear.veraison.annotated-evidence{pointer}"))
+            .unwrap_or_else(|| panic!("{name} reports nothing at {pointer}"))
+            .clone();
+
+        // Without this an extraction that came back empty would still build a policy, and that
+        // policy would be trivially satisfiable rather than a comparison, so the affirming test
+        // would pass for the wrong reason.
+        let empty = match &value {
+            serde_json::Value::String(text) => text.is_empty(),
+            serde_json::Value::Object(map) => map.is_empty(),
+            serde_json::Value::Null => true,
+            _ => false,
+        };
+        assert!(!empty, "{name} reports an empty {pointer}");
+
+        value
     }
 
     /// The freshness guarantee: evidence is bound to the runtime data it was requested with, so a
-    /// token cannot be replayed against a different nonce. This is the check that stands in for
-    /// the challenge the upstream service does not provide.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn a_token_bound_to_another_nonce_is_rejected() {
-        let converter = converter_with(tdx_policy(&MR_SEAM_ALLOWED)).await;
-        let verifier = converter.new_verifier().await.expect("verifier");
-
-        let token = converter
-            .convert(&evidence_for(&report_data("dGVzdC1ub25jZS1vbmU")).await)
-            .await
-            .expect("conversion should succeed");
-
-        let err = verifier
-            .verify_evidence(&token, &report_data("dGVzdC1ub25jZS10d28"))
-            .await
-            .expect_err("a token bound to a different nonce must be refused");
-
-        assert!(
-            matches!(err, Error::RuntimeDataMismatch),
-            "expected a runtime data mismatch, got {err:?}"
-        );
-    }
-}
-
-/// End-to-end tests that run real Azure SEV-SNP evidence from this host through the in-process
-/// service.
-///
-/// Azure confidential VMs run SEV-SNP under a paravisor in vTOM mode, so the guest has no
-/// `/dev/sev-guest` to ask for a report. Evidence instead comes from the vTPM: the paravisor puts
-/// the SNP report in an NV index, and the guest wraps it in a TPM quote that binds the report data
-/// as the quote nonce. That is a different attester and a different verifier from raw SEV-SNP,
-/// which is why this is gated on `coco-builtin-as-azsnp` and not `coco-builtin-as-snp`.
-///
-/// Unlike the TDX path, verification here is fully offline: the attester fetches the VCEK and
-/// ships it inside the evidence, and the verifier checks it against AMD root and intermediate
-/// certificates compiled into the verifier, so nothing has to reach a collateral service.
-///
-/// Requirements to run: an Azure SEV-SNP confidential VM, the TPM2 TSS libraries
-/// (`libtss2-dev`), and an attestation agent built with the `az-cvm-vtpm` attester, reachable on
-/// the socket below. The agent needs the vTPM, so it and these tests run as root.
-#[cfg(all(test, feature = "coco-builtin-as-azsnp", feature = "attester-coco"))]
-mod azsnp_e2e_tests {
-    use serial_test::serial;
-
-    use super::hardware_support::*;
-    use super::*;
-    use crate::tee::GenericVerifier as _;
-
-    /// The SNP launch measurement this host reports, base64 as the verifier emits it.
-    ///
-    /// On an Azure CVM in vTOM mode this measures the paravisor launch context, not the guest OS
-    /// disk: the guest boot chain is measured into the vTPM PCRs instead. So this value survives
-    /// swapping the guest image and only moves when Azure updates the paravisor, which makes it
-    /// the SEV-SNP counterpart of pinning `mr_seam` on the TDX side.
-    const PARAVISOR_MEASUREMENT_ALLOWED: [&str; 1] =
-        ["qnydpVwThuWxZTsSWXi+2ns/laha6w+d2723g84FaijJ0CHaI5w0pYw6ZXZUJw7v"];
-
-    /// A measurement no SNP platform will report: 48 zero bytes, the right shape but not a value
-    /// any launch can produce.
-    const PARAVISOR_MEASUREMENT_WRONG: [&str; 1] =
-        ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"];
-
-    /// Builds an Azure SEV-SNP policy, with the accepted measurements passed in so a test can
-    /// substitute one the hardware cannot report.
-    ///
-    /// This deliberately pins nothing that depends on the guest image. The point of these tests is
-    /// that a golden measurement is compared at all and that the comparison decides the outcome;
-    /// deciding which measurements a real deployment should accept belongs in the policy repo, not
-    /// here.
-    ///
-    /// Note the claims are reached through `input["az-snp-vtpm"]`. The attestation service nests a
-    /// verifier's claims under the serde name of its TEE type, and for this one that name contains
-    /// hyphens, so the dotted form used by the TDX policy is not available here. Writing
-    /// `input.azsnpvtpm` compiles but matches nothing, which fails closed and so looks like a
-    /// rejected appraisal rather than a broken policy.
-    fn azsnp_policy(measurement_allowed: &[&str]) -> String {
-        let allowed = serde_json::to_string(measurement_allowed).expect("allowlist serializes");
-
-        format!(
-            r#"package policy
-import rego.v1
-
-default hardware := 97
-default executables := 33
-default configuration := 36
-
-measurement_allowed := {allowed}
-
-snp := input["az-snp-vtpm"]
-
-# The launch measurement has to be one we accept. Under vTOM this is the paravisor's measurement,
-# which is why it is the only golden value here: it does not move when the guest image changes.
-hardware := 2 if {{
-	snp
-
-	snp.measurement in measurement_allowed
-}}
-
-# The guest measurements a real policy would pin live in the vTPM PCRs, and they change every time
-# the guest image is rebuilt, so they are deliberately not asserted. Asserting only that SNP
-# evidence is present keeps this test about the attestation path.
-executables := 3 if {{
-	snp
-}}
-
-# Debug being allowed would let the host read guest memory. This is set by the host from the VM's
-# launch policy rather than by the guest image, so it is stable across image changes, and it
-# mirrors the `td_attributes.debug` check in the TDX policy above.
-configuration := 2 if {{
-	snp
-
-	snp.policy_debug_allowed == "false"
-}}
-
-trust_claims := {{
-	"executables": executables,
-	"hardware": hardware,
-	"configuration": configuration,
-	"file-system": 0,
-	"instance-identity": 0,
-	"runtime-opaque": 0,
-	"storage-opaque": 0,
-	"sourced-data": 0,
-}}
-"#
-        )
-    }
-
-    /// Real hardware evidence all the way to an accepted token.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn real_azure_snp_evidence_is_affirmed() {
-        let converter = converter_with(azsnp_policy(&PARAVISOR_MEASUREMENT_ALLOWED)).await;
-        let verifier = converter.new_verifier().await.expect("verifier");
-        let report_data = report_data("dGVzdC1ub25jZS1hZmZpcm0");
-
-        let token = converter
-            .convert(&evidence_for(&report_data).await)
-            .await
-            .expect("the in-process service should verify this host's SNP report and TPM quote");
-
-        verifier
-            .verify_evidence(&token, &report_data)
-            .await
-            .expect("a token appraised under an affirming policy should verify");
-    }
-
-    /// Without this, an affirming result proves only that the pipeline runs, not that the policy
-    /// decides anything. The measurement is the only difference between this test and the one
-    /// above.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn a_policy_with_an_unmatched_measurement_is_rejected() {
-        let converter = converter_with(azsnp_policy(&PARAVISOR_MEASUREMENT_WRONG)).await;
-        let verifier = converter.new_verifier().await.expect("verifier");
-        let report_data = report_data("dGVzdC1ub25jZS1tZWFz");
-
-        let token = converter
-            .convert(&evidence_for(&report_data).await)
-            .await
-            .expect("evidence is still valid, only the appraisal should fail");
-
-        let err = verifier
-            .verify_evidence(&token, &report_data)
-            .await
-            .expect_err("an unmatched measurement must not be affirmed");
-
-        assert!(
-            matches!(err, Error::EarStatusNotAffirming { .. }),
-            "expected a non-affirming appraisal, got {err:?}"
-        );
-    }
-
-    /// A policy that leaves its claims at the defaults must fail closed.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn a_policy_asserting_nothing_is_rejected() {
-        let converter = converter_with(INERT_POLICY.to_owned()).await;
-        let verifier = converter.new_verifier().await.expect("verifier");
-        let report_data = report_data("dGVzdC1ub25jZS1pbmVydA");
-
-        let token = converter
-            .convert(&evidence_for(&report_data).await)
-            .await
-            .expect("conversion should succeed regardless of the appraisal");
-
-        let err = verifier
-            .verify_evidence(&token, &report_data)
-            .await
-            .expect_err("a policy asserting nothing must not affirm");
-
-        assert!(
-            matches!(err, Error::EarStatusNotAffirming { .. }),
-            "expected a non-affirming appraisal, got {err:?}"
-        );
-    }
-
-    /// The freshness guarantee. On this path the nonce is bound twice over, as the TPM quote nonce
-    /// and as the SNP report data, and the verifier checks both before any claim is emitted.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn a_token_bound_to_another_nonce_is_rejected() {
-        let converter = converter_with(azsnp_policy(&PARAVISOR_MEASUREMENT_ALLOWED)).await;
+    /// token cannot be replayed against another nonce. This is the check that stands in for the
+    /// challenge the upstream service does not provide.
+    pub(super) async fn assert_a_replayed_nonce_is_rejected(cpu_policy: String) {
+        let converter = converter_with(cpu_policy).await;
         let verifier = converter.new_verifier().await.expect("verifier");
 
         let token = converter
@@ -809,16 +512,16 @@ trust_claims := {{
         );
     }
 
-    /// Prints only the two platform values the policy above asserts on, so the measurement can be
-    /// re-pinned after Azure updates the paravisor. These are golden values of the same kind
-    /// already committed to this repo's policies, not evidence or key material.
+    /// Prints every submodule's claims exactly as a policy sees them, which is how you find the
+    /// paths a policy can assert on and the values this host would satisfy them with. These are
+    /// measurements of the kind a policy pins, not evidence or key material.
     ///
     /// Ignored so it never runs as part of the suite: `--ignored --nocapture` to use it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[serial]
-    #[ignore = "diagnostic, reports this host's expected measurement rather than asserting"]
-    async fn print_expected_platform_values() {
-        let converter = converter_with(INERT_POLICY.to_owned()).await;
+    #[ignore = "diagnostic, reports this host's claims rather than asserting"]
+    async fn print_appraisal() {
+        let converter = converter_with(policy("")).await;
         let report_data = report_data("dGVzdC1ub25jZS1kdW1w");
 
         let token = converter
@@ -826,61 +529,212 @@ trust_claims := {{
             .await
             .expect("conversion should succeed");
 
-        let payload = token
-            .as_str()
-            .split('.')
-            .nth(1)
-            .expect("a JWT should have a payload segment");
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(payload)
-            .expect("the payload should be base64url");
-        let payload: serde_json::Value =
-            serde_json::from_slice(&payload).expect("the payload should be JSON");
+        let payload = payload_of(&token);
+        let submodules = payload
+            .pointer("/submods")
+            .and_then(|submods| submods.as_object())
+            .expect("an EAR token should carry submodules");
 
-        // Searched for by name rather than by path, so this does not depend on how the EAR token
-        // happens to nest a verifier's claims.
-        fn find<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
-            match value {
-                serde_json::Value::Object(map) => map
-                    .get(key)
-                    .or_else(|| map.values().find_map(|nested| find(nested, key))),
-                serde_json::Value::Array(items) => items.iter().find_map(|item| find(item, key)),
-                _ => None,
-            }
-        }
+        for (name, appraisal) in submodules {
+            let claims = appraisal
+                .pointer("/ear.veraison.annotated-evidence")
+                .unwrap_or(&serde_json::Value::Null);
 
-        for field in ["measurement", "policy_debug_allowed"] {
             println!(
-                "PLATFORM_VALUE {field} = {}",
-                find(&payload, field).unwrap_or(&serde_json::Value::Null)
+                "SUBMODULE {name} {}",
+                serde_json::to_string_pretty(claims).expect("claims should serialize")
             );
         }
     }
 }
 
-/// End-to-end tests that run real NVIDIA GPU evidence from this host through the in-process
-/// service.
+/// Real TDX evidence from this host, appraised in-process.
+///
+/// Needs TDX hardware and the Intel DCAP quote verification library
+/// (`libsgx-dcap-quote-verify-dev`). Verification is online: this revision of the verifier fetches
+/// collateral from Intel's PCS itself and fails if it cannot, so unlike the containerized service
+/// there is no quote provider library config to set.
+#[cfg(all(test, feature = "coco-builtin-as-tdx", feature = "attester-coco"))]
+mod tdx_e2e_tests {
+    use serial_test::serial;
+
+    use super::hardware_support::*;
+    use super::policy;
+
+    /// A measurement no TDX module will ever report, used to show the allowlist is load-bearing.
+    const MR_SEAM_WRONG: [&str; 1] = [
+        "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    ];
+
+    /// The TDX module measurement this host reports. Note the value the affirming tests accept is
+    /// whatever the host says, since it moves whenever Intel updates the module.
+    async fn mr_seam() -> String {
+        host_claim("cpu", "/tdx/quote/body/mr_seam")
+            .await
+            .as_str()
+            .expect("mr_seam should be a hex string")
+            .to_owned()
+    }
+
+    /// The accepted measurements are a parameter so a test can substitute one the hardware cannot
+    /// report. The guest measurements a real policy would also pin (rtmr1/rtmr2, mr_td) are
+    /// properties of the image under test rather than of the attestation path, so asserting only
+    /// the presence of TDX evidence for `executables` keeps this from failing on every rebuild.
+    fn tdx_policy(mr_seam_allowed: &[&str]) -> String {
+        let allowed = serde_json::to_string(mr_seam_allowed).expect("allowlist should serialize");
+
+        policy(&format!(
+            r#"mr_seam_allowed := {allowed}
+
+# A TDX quote from Intel's quoting enclave, carrying a module measurement we accept, checked
+# against collateral that had not expired.
+hardware := 2 if {{
+	input.tdx.quote.header.tee_type == "81000000"
+	input.tdx.quote.header.vendor_id == "939a7233f79c4ca9940a0db3957f0607"
+	input.tdx.quote.body.mr_seam in mr_seam_allowed
+	input.tdx.collateral_expiration_status == "0"
+}}
+
+executables := 3 if input.tdx
+
+configuration := 2 if input.tdx.td_attributes.debug == false"#
+        ))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn real_tdx_evidence_is_affirmed() {
+        let mr_seam = mr_seam().await;
+
+        assert_evidence_is_affirmed(tdx_policy(&[&mr_seam]), "dGVzdC1ub25jZS1hZmZpcm0").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn a_policy_with_an_unmatched_mr_seam_is_rejected() {
+        assert_evidence_is_not_affirmed(tdx_policy(&MR_SEAM_WRONG), "dGVzdC1ub25jZS1tcnNlYW0")
+            .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn a_token_bound_to_another_nonce_is_rejected() {
+        let mr_seam = mr_seam().await;
+
+        assert_a_replayed_nonce_is_rejected(tdx_policy(&[&mr_seam])).await;
+    }
+}
+
+/// Real Azure SEV-SNP evidence from this host, appraised in-process.
+///
+/// Azure confidential VMs run SEV-SNP under a paravisor in vTOM mode, so the guest has no
+/// `/dev/sev-guest` to ask for a report. Evidence comes from the vTPM instead: the paravisor puts
+/// the SNP report in an NV index, and the guest wraps it in a TPM quote binding the report data as
+/// the quote nonce. That is a different attester and verifier from raw SEV-SNP, hence the gate on
+/// `coco-builtin-as-azsnp` rather than `coco-builtin-as-snp`.
+///
+/// Unlike TDX, verification is fully offline: the attester ships the VCEK inside the evidence and
+/// the verifier checks it against AMD certificates compiled into it.
+///
+/// Needs an Azure SEV-SNP confidential VM, the TPM2 TSS libraries (`libtss2-dev`), and an agent
+/// built with the `az-cvm-vtpm` attester.
+#[cfg(all(test, feature = "coco-builtin-as-azsnp", feature = "attester-coco"))]
+mod azsnp_e2e_tests {
+    use serial_test::serial;
+
+    use super::hardware_support::*;
+    use super::policy;
+
+    /// A measurement no SNP platform will report: 48 zero bytes, the right shape but not a value
+    /// any launch can produce.
+    const MEASUREMENT_WRONG: [&str; 1] =
+        ["AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"];
+
+    /// The SNP launch measurement this host reports, base64 as the verifier emits it.
+    ///
+    /// On an Azure CVM in vTOM mode this measures the paravisor launch context, not the guest OS
+    /// disk: the guest boot chain is measured into the vTPM PCRs instead. It therefore survives
+    /// swapping the guest image and moves when Azure updates the paravisor, which is why the
+    /// affirming tests read it from the host rather than pinning it, exactly as with `mr_seam`.
+    async fn measurement() -> String {
+        host_claim("cpu", "/az-snp-vtpm/measurement")
+            .await
+            .as_str()
+            .expect("measurement should be a base64 string")
+            .to_owned()
+    }
+
+    /// As with TDX, the accepted measurements are a parameter, and the guest measurements a real
+    /// policy would pin — here the vTPM PCRs — are left out because they move with the image.
+    ///
+    /// Note the claims are reached through `input["az-snp-vtpm"]`. The attestation service nests a
+    /// verifier's claims under the serde name of its TEE type, and for this one that name contains
+    /// hyphens, so the dotted form the TDX policy uses is not available. Writing `input.azsnpvtpm`
+    /// compiles but matches nothing, which fails closed and so looks like a rejected appraisal
+    /// rather than a broken policy.
+    fn azsnp_policy(measurement_allowed: &[&str]) -> String {
+        let allowed = serde_json::to_string(measurement_allowed).expect("allowlist serializes");
+
+        policy(&format!(
+            r#"measurement_allowed := {allowed}
+
+snp := input["az-snp-vtpm"]
+
+hardware := 2 if snp.measurement in measurement_allowed
+
+executables := 3 if snp
+
+# Debug being allowed would let the host read guest memory. The host sets this from the VM's launch
+# policy rather than the guest image, so it is stable across image changes, mirroring the TDX
+# policy's `td_attributes.debug`.
+configuration := 2 if snp.policy_debug_allowed == "false""#
+        ))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn real_azure_snp_evidence_is_affirmed() {
+        let measurement = measurement().await;
+
+        assert_evidence_is_affirmed(azsnp_policy(&[&measurement]), "dGVzdC1ub25jZS1hZmZpcm0").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn a_policy_with_an_unmatched_measurement_is_rejected() {
+        assert_evidence_is_not_affirmed(azsnp_policy(&MEASUREMENT_WRONG), "dGVzdC1ub25jZS1tZWFz")
+            .await;
+    }
+
+    /// On this path the nonce is bound twice over, as the TPM quote nonce and as the SNP report
+    /// data, and the verifier checks both before any claim is emitted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn a_token_bound_to_another_nonce_is_rejected() {
+        let measurement = measurement().await;
+
+        assert_a_replayed_nonce_is_rejected(azsnp_policy(&[&measurement])).await;
+    }
+}
+
+/// Real NVIDIA GPU evidence from this host, appraised in-process.
 ///
 /// A GPU is never attested on its own. The agent returns the CPU's evidence plus a map of
-/// *additional* evidence per device, and the converter turns each entry into its own verification
-/// request bound to the same runtime data. The service appraises each request under the policy for
-/// its TEE class and emits one EAR submodule per device, so a token from this host carries both a
-/// `cpu0` and a `gpu0` appraisal, and `CommonCocoVerifier` requires every submodule to be
-/// affirming. That is why this module needs a CPU verifier feature alongside the NVIDIA one, and
-/// why a GPU host must be configured with a `gpu` policy: the broker looks a policy up per class
-/// and evaluation fails outright when the class has none.
+/// *additional* evidence per device, each of which becomes its own verification request bound to
+/// the same runtime data, appraised under the policy for its TEE class. A token from this host
+/// therefore carries both a `cpu0` and a `gpu0` appraisal and `CommonCocoVerifier` requires every
+/// submodule to affirm, which is why this module needs a CPU verifier feature alongside the NVIDIA
+/// one and a `gpu` policy installed.
 ///
-/// Verification is local and fully offline. Upstream's NVIDIA verifier defaults to `Local`, which
-/// checks the SPDM attestation report against the device certificate chain carried inside the
-/// evidence and binds the report to the nonce, reaching neither NRAS nor the RIM service. Local
-/// mode deliberately does no reference-value comparison of its own: it reports what the device
-/// measured and leaves the golden-value check to the policy, which is the split this whole design
-/// relies on.
+/// Verification is local and offline: upstream's NVIDIA verifier defaults to `Local`, which checks
+/// the SPDM report against the device certificate chain inside the evidence and binds it to the
+/// nonce, reaching neither NRAS nor the RIM service. It deliberately does no reference-value
+/// comparison of its own, reporting what the device measured and leaving the golden-value check to
+/// the policy — the split this whole design relies on.
 ///
-/// Requirements to run: an NVIDIA Hopper GPU in confidential-compute mode (local verification
-/// refuses other architectures), an agent built with the `nvidia` attester in addition to a CPU
-/// one, and `libnvat` available to that agent. The agent needs the GPU and the vTPM, so it and
-/// these tests run as root.
+/// Needs a Hopper GPU in confidential-compute mode (local verification refuses other
+/// architectures) and an agent built with the `nvidia` attester alongside a CPU one, with `libnvat`
+/// available to it.
 #[cfg(all(
     test,
     feature = "coco-builtin-as-nvidia",
@@ -894,126 +748,73 @@ mod nvidia_e2e_tests {
     use super::*;
     use crate::tee::GenericVerifier as _;
 
-    /// The measurement registers this host's GPU reports, as index to hex digest.
-    ///
-    /// Unlike a guest measurement these describe GPU firmware and VBIOS, so they are independent
-    /// of the guest image and only move when the GPU firmware is updated. Which registers a real
-    /// deployment should pin, and to what, is a question for the policy repo; the point here is
-    /// that a golden value is compared at all and that the comparison decides the outcome.
-    ///
-    /// The device reports 64 registers, most of them zero. A representative few are pinned rather
-    /// than all of them, because the aim is to exercise the comparison, not to describe an
-    /// acceptable GPU.
-    ///
-    /// Re-pin with the `print_gpu_appraisal` diagnostic below.
-    const GOLDEN_MEASUREMENTS: &str = r#"{
-	"2": "8048dfd18fe229bf16eb9d30cca0f11a24dafe6eb731de1462984645a0b189b77c4e4e17de727a5e19e3d07de51da338",
-	"3": "3ef2c048688f734018cb8a52ef0e445d09b2705d707e0183de62ffda1d4caf60bfee15c66665c45eb40e73397d353a42",
-	"4": "73bbf35822549e28ba8fb2671fb7b58f46424a0069205b3ecf1d0fa762adef90b538cc9d692eb5c050147f2f1e8214ab"
-}"#;
-
     /// A digest no GPU will report: 48 zero bytes, the right shape but not a value any firmware
-    /// measures. Pinned at a register the device does populate, so the comparison actually runs
+    /// measures. Set at register 2, which the device does populate, so the comparison actually runs
     /// instead of failing for want of the register.
-    const WRONG_MEASUREMENTS: &str = r#"{
-	"2": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-}"#;
+    fn wrong_measurements() -> serde_json::Value {
+        serde_json::json!({
+            "2": "000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        })
+    }
 
-    /// The VBIOS this GPU reports. Device firmware rather than anything the guest controls, so like
-    /// the measurements above it survives a guest image change and only moves when the VBIOS does.
-    const GOLDEN_VBIOS_VERSION: &str = "96.00.9f.00.04";
+    /// The firmware values this GPU reports: the measurement registers as index to hex digest, and
+    /// the VBIOS version. Both describe the device rather than the guest, so they survive an image
+    /// change and move when the GPU firmware does — hence read from the host, like the CPU
+    /// measurements above. Which of them a real deployment should pin is a policy question.
+    async fn golden_values() -> (serde_json::Value, String) {
+        let gpu = host_claim("gpu", "/nvidia").await;
+
+        let vbios_version = gpu["config"]["vbios_version"]
+            .as_str()
+            .expect("the GPU should report a VBIOS version")
+            .to_owned();
+
+        (gpu["measurements"].clone(), vbios_version)
+    }
 
     /// Affirms on the mere presence of CPU evidence, pinning nothing.
     ///
-    /// These tests are about the GPU class, and the CPU class already has its own modules above
-    /// with real golden values. Keeping this policy free of host-specific values is what lets the
-    /// same GPU tests run on an Azure SEV-SNP host and a TDX one.
-    const CPU_PRESENCE_POLICY: &str = r#"package policy
-import rego.v1
+    /// These tests are about the GPU class, and the CPU class has its own modules above with real
+    /// golden values. Keeping this free of host-specific values is what lets the same GPU tests run
+    /// on an Azure SEV-SNP host and a TDX one.
+    fn cpu_presence_policy() -> String {
+        policy(
+            r#"cpu_present if input["az-snp-vtpm"]
+cpu_present if input.tdx
 
-default hardware := 97
-default executables := 33
-default configuration := 36
+hardware := 2 if cpu_present
+executables := 3 if cpu_present
+configuration := 2 if cpu_present"#,
+        )
+    }
 
-cpu_evidence_present if input["az-snp-vtpm"]
-
-cpu_evidence_present if input.tdx
-
-hardware := 2 if cpu_evidence_present
-
-executables := 3 if cpu_evidence_present
-
-configuration := 2 if cpu_evidence_present
-
-trust_claims := {
-	"executables": executables,
-	"hardware": hardware,
-	"configuration": configuration,
-	"file-system": 0,
-	"instance-identity": 0,
-	"runtime-opaque": 0,
-	"storage-opaque": 0,
-	"sourced-data": 0,
-}
-"#;
-
-    /// Builds a GPU policy, with the accepted measurements passed in so a test can substitute ones
-    /// the device cannot report.
-    ///
     /// The claims arrive under `input.nvidia`, the serde name of the evidence's TEE type, even
     /// though the TEE *class* this policy is installed under is `gpu`.
-    fn gpu_policy(golden_measurements: &str) -> String {
-        format!(
-            r#"package policy
-import rego.v1
-
-default hardware := 97
-default executables := 33
-default configuration := 36
-
-golden_measurements := {golden_measurements}
+    fn gpu_policy(golden_measurements: &serde_json::Value, vbios_version: &str) -> String {
+        policy(&format!(
+            r#"golden_measurements := {golden_measurements}
 
 gpu := input.nvidia
 
-# Local verification only supports Hopper, so a non-Hopper architecture here would mean the
-# claims came from somewhere other than the verifier we think we are running.
-hardware := 2 if {{
-	gpu
-	gpu.arch == "Hopper"
-}}
+# Local verification only supports Hopper, so a non-Hopper architecture would mean the claims came
+# from somewhere other than the verifier we think we are running.
+hardware := 2 if gpu.arch == "Hopper"
 
-# Every pinned register has to match what the device reported. A register absent from the
-# evidence makes the comparison undefined, so `every` fails closed rather than skipping it.
-# The count guard matters: `every` over an empty set is vacuously true, so without it an empty
-# golden map would affirm everything.
+# A register absent from the evidence makes the comparison undefined, so `every` fails closed
+# rather than skipping it. The count guard matters too: `every` over an empty set is vacuously
+# true, so without it an empty golden map would affirm everything.
 executables := 3 if {{
-	gpu
 	count(golden_measurements) > 0
 	every index, digest in golden_measurements {{
 		gpu.measurements[index] == digest
 	}}
 }}
 
-# The device's own firmware version, which is the closest thing on this path to the
-# host-controlled configuration the CPU policies assert on. The driver version is also reported
-# here but is deliberately not pinned: it comes from the guest image.
-configuration := 2 if {{
-	gpu
-	gpu.config.vbios_version == "{GOLDEN_VBIOS_VERSION}"
-}}
-
-trust_claims := {{
-	"executables": executables,
-	"hardware": hardware,
-	"configuration": configuration,
-	"file-system": 0,
-	"instance-identity": 0,
-	"runtime-opaque": 0,
-	"storage-opaque": 0,
-	"sourced-data": 0,
-}}
-"#
-        )
+# Device firmware, the closest thing on this path to the host-controlled configuration the CPU
+# policies assert on. The driver version is reported here too but comes from the guest image, so it
+# is deliberately not pinned.
+configuration := 2 if gpu.config.vbios_version == "{vbios_version}""#
+        ))
     }
 
     async fn converter_with_gpu_policy(
@@ -1022,35 +823,12 @@ trust_claims := {{
     ) -> CocoBuiltinConverter {
         converter_with_policies(
             BTreeMap::from([
-                ("cpu".to_owned(), CPU_PRESENCE_POLICY.to_owned()),
+                ("cpu".to_owned(), cpu_presence_policy()),
                 ("gpu".to_owned(), gpu_policy),
             ]),
             required_tee_classes,
         )
         .await
-    }
-
-    fn payload_of(token: &CocoAsToken) -> serde_json::Value {
-        let payload = token
-            .as_str()
-            .split('.')
-            .nth(1)
-            .expect("a JWT should have a payload segment");
-        let payload = URL_SAFE_NO_PAD
-            .decode(payload)
-            .expect("the payload should be base64url");
-
-        serde_json::from_slice(&payload).expect("the payload should be JSON")
-    }
-
-    fn submodule_names(token: &CocoAsToken) -> Vec<String> {
-        payload_of(token)
-            .pointer("/submods")
-            .and_then(|submods| submods.as_object())
-            .expect("an EAR token should carry submodules")
-            .keys()
-            .cloned()
-            .collect()
     }
 
     /// Real GPU evidence all the way to an accepted token.
@@ -1061,7 +839,9 @@ trust_claims := {{
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[serial]
     async fn real_gpu_evidence_is_affirmed() {
-        let converter = converter_with_gpu_policy(gpu_policy(GOLDEN_MEASUREMENTS), &[]).await;
+        let (measurements, vbios_version) = golden_values().await;
+        let converter =
+            converter_with_gpu_policy(gpu_policy(&measurements, &vbios_version), &[]).await;
         let verifier = converter.new_verifier().await.expect("verifier");
         let report_data = report_data("dGVzdC1ub25jZS1ncHUtYWZmaXJt");
 
@@ -1070,10 +850,13 @@ trust_claims := {{
             .await
             .expect("the in-process service should verify this host's GPU attestation report");
 
-        let submodules = submodule_names(&token);
+        let payload = payload_of(&token);
+        let submodules = payload
+            .pointer("/submods")
+            .expect("an EAR token should carry submodules");
         assert!(
-            submodules.iter().any(|name| name == "gpu0"),
-            "the token must carry a GPU appraisal, got submodules {submodules:?}"
+            submodules.get("gpu0").is_some(),
+            "the token must carry a GPU appraisal, got submodules {submodules}"
         );
 
         verifier
@@ -1088,7 +871,11 @@ trust_claims := {{
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[serial]
     async fn a_gpu_policy_with_unmatched_measurements_is_rejected() {
-        let converter = converter_with_gpu_policy(gpu_policy(WRONG_MEASUREMENTS), &[]).await;
+        // The VBIOS is the one this host reports, so the measurements are the only thing that can
+        // account for the rejection.
+        let (_, vbios_version) = golden_values().await;
+        let converter =
+            converter_with_gpu_policy(gpu_policy(&wrong_measurements(), &vbios_version), &[]).await;
         let verifier = converter.new_verifier().await.expect("verifier");
         let report_data = report_data("dGVzdC1ub25jZS1ncHUtbWVhcw");
 
@@ -1111,43 +898,19 @@ trust_claims := {{
         }
     }
 
-    /// A GPU policy that leaves its claims at the defaults must fail closed, which is what makes an
-    /// ungenerated or truncated GPU policy safe.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn a_gpu_policy_asserting_nothing_is_rejected() {
-        let converter = converter_with_gpu_policy(INERT_POLICY.to_owned(), &[]).await;
-        let verifier = converter.new_verifier().await.expect("verifier");
-        let report_data = report_data("dGVzdC1ub25jZS1ncHUtaW5lcnQ");
-
-        let token = converter
-            .convert(&evidence_for(&report_data).await)
-            .await
-            .expect("conversion should succeed regardless of the appraisal");
-
-        let err = verifier
-            .verify_evidence(&token, &report_data)
-            .await
-            .expect_err("a GPU policy asserting nothing must not affirm");
-
-        match err {
-            Error::EarStatusNotAffirming { tee_type, .. } => assert_eq!(
-                tee_type, "gpu0",
-                "the GPU appraisal should be the one that fails"
-            ),
-            other => panic!("expected a non-affirming GPU appraisal, got {other:?}"),
-        }
-    }
-
-    /// Requiring the classes this host does present has to be satisfied by it.
+    /// Requiring a class is checked against real submodule names here; that the check accepts and
+    /// rejects the right sets is covered by unit tests over a recorded token in the verifier. What
+    /// this adds is that a `gpu0` submodule really does satisfy a requirement written as `gpu`.
     ///
-    /// This is the verifier-side counterpart to the GPU policy: the policy constrains a GPU that
+    /// It is also the verifier-side counterpart to the GPU policy: the policy constrains a GPU that
     /// shows up, while this insists one shows up at all.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[serial]
     async fn requiring_the_classes_this_host_presents_is_satisfied() {
         let required = ["cpu".to_owned(), "gpu".to_owned()];
-        let converter = converter_with_gpu_policy(gpu_policy(GOLDEN_MEASUREMENTS), &required).await;
+        let (measurements, vbios_version) = golden_values().await;
+        let converter =
+            converter_with_gpu_policy(gpu_policy(&measurements, &vbios_version), &required).await;
         let verifier = converter.new_verifier().await.expect("verifier");
         let report_data = report_data("dGVzdC1ub25jZS1yZXF1aXJlZA");
 
@@ -1160,69 +923,5 @@ trust_claims := {{
             .verify_evidence(&token, &report_data)
             .await
             .expect("this host attests both a CPU and a GPU, so both requirements hold");
-    }
-
-    /// Requiring a class the host cannot present must be refused, which is the case that matters:
-    /// a peer that quietly omits a device it was supposed to attest is exactly what this check
-    /// exists to catch, and no policy can catch it.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    async fn requiring_a_class_the_host_cannot_present_is_rejected() {
-        // NVLink switches, which a single-GPU host has none of.
-        let required = ["switch".to_owned()];
-        let converter = converter_with_gpu_policy(gpu_policy(GOLDEN_MEASUREMENTS), &required).await;
-        let verifier = converter.new_verifier().await.expect("verifier");
-        let report_data = report_data("dGVzdC1ub25jZS1zd2l0Y2g");
-
-        let token = converter
-            .convert(&evidence_for(&report_data).await)
-            .await
-            .expect("the evidence is valid; only the class requirement should fail");
-
-        let err = verifier
-            .verify_evidence(&token, &report_data)
-            .await
-            .expect_err("a class the host never attested must not be treated as satisfied");
-
-        match err {
-            Error::MissingRequiredTeeClass { tee_class, present } => {
-                assert_eq!(tee_class, "switch");
-                assert!(
-                    present.contains(&"gpu".to_owned()),
-                    "the classes actually attested should be reported, got {present:?}"
-                );
-            }
-            other => panic!("expected a missing required class, got {other:?}"),
-        }
-    }
-
-    /// Prints the GPU claims exactly as the policy sees them, so the golden measurements above can
-    /// be pinned or re-pinned. These are device firmware measurements, the same kind of golden
-    /// value already committed to this repo's policies, not evidence or key material.
-    ///
-    /// Ignored so it never runs as part of the suite: `--ignored --nocapture` to use it.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[serial]
-    #[ignore = "diagnostic, reports this host's GPU claims rather than asserting"]
-    async fn print_gpu_appraisal() {
-        let converter = converter_with_gpu_policy(INERT_POLICY.to_owned(), &[]).await;
-        let report_data = report_data("dGVzdC1ub25jZS1ncHUtZHVtcA");
-
-        let token = converter
-            .convert(&evidence_for(&report_data).await)
-            .await
-            .expect("conversion should succeed");
-
-        println!("SUBMODULES {:?}", submodule_names(&token));
-
-        let payload = payload_of(&token);
-        let claims = payload
-            .pointer("/submods/gpu0/ear.veraison.annotated-evidence")
-            .expect("the GPU submodule should carry annotated evidence");
-
-        println!(
-            "GPU_CLAIMS {}",
-            serde_json::to_string_pretty(claims).expect("claims should serialize")
-        );
     }
 }

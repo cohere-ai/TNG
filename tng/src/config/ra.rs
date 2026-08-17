@@ -298,12 +298,39 @@ impl RaArgsUnchecked {
 
                 match converter {
                     #[cfg(feature = "__coco-builtin-as")]
-                    ConverterArgs::CocoBuiltin { policy_dir, .. } => {
+                    ConverterArgs::CocoBuiltin {
+                        policy_dir,
+                        policy_ids,
+                        ..
+                    } => {
                         // No policy is compiled into the binary, so an ingress whose policy
                         // directory is missing could never verify anything.
                         if !Path::new(policy_dir).is_dir() {
                             return Err(TngError::InvalidParameter(anyhow!(
                                 "Policy directory does not exist: {policy_dir}"
+                            )));
+                        }
+
+                        // The EAR token broker enforces the first id and warns that it ignored the
+                        // rest, so accepting a longer list would silently enforce less than asked.
+                        if policy_ids.len() != 1 {
+                            return Err(TngError::InvalidParameter(anyhow!(
+                                "The 'coco_builtin' provider requires exactly one entry in 'policy_ids', naming the policies to read from {policy_dir} as {{policy_id}}_{{tee_class}}.rego, but {} were given",
+                                policy_ids.len()
+                            )));
+                        }
+
+                        // The id becomes both a filename and a storage key, and the attestation
+                        // service rejects a key outside this set. Catching it here names the field
+                        // at fault instead of failing later inside `set_policy`.
+                        let id = &policy_ids[0];
+                        if id.is_empty()
+                            || !id
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                        {
+                            return Err(TngError::InvalidParameter(anyhow!(
+                                "Invalid policy id {id:?}: only ASCII letters, digits, '-', '_' and '.' are allowed"
                             )));
                         }
                     }
@@ -442,6 +469,13 @@ pub enum ConverterArgs {
         /// Directory the Rego policies are read from
         #[serde(default = "default_policy_dir")]
         policy_dir: String,
+        /// Policy ID list, naming the policies in `policy_dir` to enforce
+        ///
+        /// A policy is read from `{policy_id}_{tee_class}.rego`, mirroring how the attestation
+        /// service names a policy in its own storage, so one directory can hold several sets. A
+        /// list to match the attestation service's request field and the other providers here,
+        /// though its EAR token broker only ever honours one, so exactly one is required.
+        policy_ids: Vec<String>,
         /// TEE classes a peer must attest, such as `gpu`, rejecting it if any is absent
         ///
         /// A policy cannot express this, because policies are only evaluated against the evidence
@@ -556,8 +590,8 @@ pub enum VerifierArgs {
     /// Counterpart to [`ConverterArgs::CocoBuiltin`].
     ///
     /// Carries no settings of its own: the token it checks is signed with an ephemeral key held by
-    /// the converter and appraised under a policy id derived from the policy contents, so both
-    /// values come from the converter rather than from configuration.
+    /// the converter, so the key and the policy id it accepts both come from there rather than
+    /// from configuration.
     #[cfg(feature = "__coco-builtin-as")]
     CocoBuiltin,
     Ita(ItaVerifierArgs),
@@ -1232,7 +1266,8 @@ mod tests {
         let json = json!({
             "verify": {
                 "as_provider": "coco_builtin",
-                "policy_dir": "/etc/tng/policies"
+                "policy_dir": "/etc/tng/policies",
+                "policy_ids": ["myorg"]
             }
         });
 
@@ -1244,8 +1279,13 @@ mod tests {
                 verifier,
             }) => {
                 match converter {
-                    ConverterArgs::CocoBuiltin { policy_dir, .. } => {
-                        assert_eq!(policy_dir, "/etc/tng/policies")
+                    ConverterArgs::CocoBuiltin {
+                        policy_dir,
+                        policy_ids,
+                        ..
+                    } => {
+                        assert_eq!(policy_dir, "/etc/tng/policies");
+                        assert_eq!(policy_ids, &vec!["myorg"]);
                     }
                     _ => panic!("Expected CocoBuiltin converter"),
                 }
@@ -1260,12 +1300,36 @@ mod tests {
         assert!(!serialized.contains(r#""as_type""#));
     }
 
+    /// A list of any length but one would enforce something other than what was asked for, since
+    /// the broker takes the first id and only warns about the rest; and an id outside the storage
+    /// key charset would fail later inside `set_policy` instead.
+    #[cfg(feature = "__coco-builtin-as")]
+    #[test]
+    fn test_coco_builtin_rejects_unusable_policy_ids() {
+        for policy_ids in [json!([]), json!(["one", "two"]), json!(["my policy!"])] {
+            let json = json!({
+                "verify": {
+                    "as_provider": "coco_builtin",
+                    "policy_dir": "/tmp",
+                    "policy_ids": policy_ids
+                }
+            });
+
+            let ra_args: RaArgsUnchecked =
+                serde_json::from_value(json).expect("Failed to deserialize");
+
+            ra_args
+                .into_checked()
+                .expect_err(&format!("{policy_ids} should be rejected"));
+        }
+    }
+
     /// Omitting `policy_dir` has to be allowed, since a deployment installing policies at the
     /// default location should not have to name it.
     #[cfg(feature = "__coco-builtin-as")]
     #[test]
     fn test_coco_builtin_policy_dir_defaults() {
-        let json = json!({"verify": {"as_provider": "coco_builtin"}});
+        let json = json!({"verify": {"as_provider": "coco_builtin", "policy_ids": ["myorg"]}});
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
