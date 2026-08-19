@@ -9,9 +9,7 @@ use rats_cert::tee::GenericVerifier;
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::provider::{TngEvidence, TngToken};
 use crate::tunnel::ra_context::VerifyContext;
-use crate::tunnel::service_metrics::{
-    AttestationMetrics, AttestationOperation, AttestationProtocol,
-};
+use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 
 fn parse_token_from_dice_cert(cbor_tag: u64, raw_evidence: &[u8]) -> Result<TngToken> {
     rats_cert::errors::Result::from(TngToken::create_evidence_from_dice(cbor_tag, raw_evidence))
@@ -39,22 +37,21 @@ fn parse_evidence_from_dice_cert(cbor_tag: u64, raw_evidence: &[u8]) -> Result<T
 #[derive(Debug)]
 pub struct TngCommonCertVerifier {
     verify_ctx: Arc<VerifyContext>,
-    attestation_metrics: AttestationMetrics,
     pending_cert: spin::mutex::spin::SpinMutex<Option<Vec<u8>>>,
 }
 
 impl TngCommonCertVerifier {
-    pub fn new(verify_ctx: Arc<VerifyContext>, attestation_metrics: AttestationMetrics) -> Self {
+    pub fn new(verify_ctx: Arc<VerifyContext>) -> Self {
         Self {
             verify_ctx,
-            attestation_metrics,
             pending_cert: spin::mutex::spin::SpinMutex::new(None),
         }
     }
 
     pub async fn verity_pending_cert(&self) -> Result<AttestationResult> {
         let attestation_attempt = self
-            .attestation_metrics
+            .verify_ctx
+            .attestation_metrics()
             .start(AttestationOperation::Verify, AttestationProtocol::RatsTls);
         tracing::debug!("Verifying rats-tls cert");
 
@@ -72,7 +69,7 @@ impl TngCommonCertVerifier {
 
         // Step 2: Based on verify mode, convert evidence to token and verify
         let token = match &*self.verify_ctx {
-            VerifyContext::Passport { verifier } => {
+            VerifyContext::Passport { verifier, .. } => {
                 // Passport: extension must parse as an AS token (not raw evidence).
                 let token = parse_token_from_dice_cert(
                     pending_result.cbor_tag,
@@ -90,6 +87,7 @@ impl TngCommonCertVerifier {
             VerifyContext::BackgroundCheck {
                 converter,
                 verifier,
+                ..
             } => {
                 // BackgroundCheck: extension must parse as raw evidence (then convert via AS).
                 let evidence = parse_evidence_from_dice_cert(

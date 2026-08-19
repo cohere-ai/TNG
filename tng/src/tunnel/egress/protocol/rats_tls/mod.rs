@@ -7,7 +7,6 @@ use crate::{
             stream_manager::trusted::{ProtocolStreamDecoder, ProtocolStreamDecoderOutput},
         },
         ra_context::RaContext,
-        service_metrics::AttestationMetrics,
     },
     CommonStreamTrait, TokioRuntime,
 };
@@ -28,16 +27,10 @@ pub struct RatsTlsStreamDecoder {
 impl RatsTlsStreamDecoder {
     pub async fn new(
         ra_context: Arc<RaContext>,
-        attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self> {
         Ok(Self {
-            security_layer: RatsTlsSecurityLayer::new(
-                ra_context,
-                attestation_metrics,
-                runtime.clone(),
-            )
-            .await?,
+            security_layer: RatsTlsSecurityLayer::new(ra_context, runtime.clone()).await?,
             runtime,
         })
     }

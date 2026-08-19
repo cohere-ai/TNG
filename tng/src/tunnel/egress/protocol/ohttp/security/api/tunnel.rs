@@ -105,11 +105,13 @@ impl OhttpServerApi {
             .validate_client_attestation_consistency(metadata.client_auth)
             .await;
         if attestation_required {
-            self.attestation_metrics.record(
-                AttestationOperation::Verify,
-                AttestationProtocol::Ohttp,
-                attestation_result.is_ok(),
-            );
+            self.ra_context.attestation_metrics().map(|metrics| {
+                metrics.record(
+                    AttestationOperation::Verify,
+                    AttestationProtocol::Ohttp,
+                    attestation_result.is_ok(),
+                )
+            });
         }
         attestation_result.map_err(TngError::MetadataValidateError)?;
 
@@ -213,7 +215,7 @@ impl OhttpServerApi {
                 Some(verify_ctx),
             ) => {
                 match verify_ctx {
-                    VerifyContext::Passport { verifier }
+                    VerifyContext::Passport { verifier, .. }
                     | VerifyContext::BackgroundCheck { verifier, .. } => {
                         let provider = ProviderType::from_optional_wire_str(&as_provider)?;
                         let token =

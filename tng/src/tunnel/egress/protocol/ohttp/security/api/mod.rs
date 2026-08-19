@@ -16,7 +16,6 @@ use crate::tunnel::egress::protocol::ohttp::security::key_manager::{
 };
 use crate::tunnel::ohttp::protocol::KeyConfigResponse;
 use crate::tunnel::ra_context::RaContext;
-use crate::tunnel::service_metrics::AttestationMetrics;
 use crate::tunnel::utils::maybe_cached::MaybeCached;
 use crate::TokioRuntime;
 
@@ -39,7 +38,6 @@ pub struct OhttpServerApi {
     /// and reused for subsequent client requests to avoid expensive re-attestation.
     /// The cache automatically refreshes based on configured refresh strategy.
     passport_cache: Arc<RwLock<OnceCell<MaybeCached<KeyConfigResponse, TngError>>>>,
-    pub(crate) attestation_metrics: AttestationMetrics,
 }
 
 impl OhttpServerApi {
@@ -49,7 +47,6 @@ impl OhttpServerApi {
     pub async fn new(
         ra_context: Arc<RaContext>,
         key: KeyArgs,
-        attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self, TngError> {
         // Create key manager based on configuration
@@ -60,10 +57,13 @@ impl OhttpServerApi {
             KeyArgs::File { path } => {
                 Arc::new(FileBasedKeyManager::new(runtime, path.into()).await?)
             }
-            KeyArgs::PeerShared(peer_shared_args) => Arc::new(
-                PeerSharedKeyManager::new(runtime, peer_shared_args, attestation_metrics.clone())
-                    .await?,
-            ),
+            KeyArgs::PeerShared(peer_shared_args) => {
+                let metrics = ra_context
+                    .attestation_metrics()
+                    .cloned()
+                    .unwrap_or_else(crate::tunnel::attestation_metrics::AttestationMetrics::noop);
+                Arc::new(PeerSharedKeyManager::new(runtime, peer_shared_args, metrics).await?)
+            }
         };
 
         let passport_cache: Arc<RwLock<OnceCell<MaybeCached<KeyConfigResponse, TngError>>>> =
@@ -87,7 +87,6 @@ impl OhttpServerApi {
             ra_context,
             key_manager,
             passport_cache,
-            attestation_metrics,
         })
     }
 }

@@ -53,7 +53,8 @@ impl TrustedStreamManager {
         runtime: TokioRuntime,
     ) -> Result<Self> {
         let ra_args = common_args.ra_args.clone().into_checked()?;
-        let ra_context = Arc::new(RaContext::from_ra_args(&ra_args).await?);
+        let ra_context =
+            Arc::new(RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics).await?);
 
         Ok(Self {
             transport_layer: TransportLayer::new(
@@ -63,18 +64,9 @@ impl TrustedStreamManager {
             decoder: match &common_args.ohttp {
                 // Note that ohttp.allow_non_tng_traffic_regexes is handled by TransportLayer so we don't need to handle it here.
                 Some(ohttp) => Box::new(
-                    OHttpStreamDecoder::new(
-                        ra_context,
-                        ohttp.clone(),
-                        attestation_metrics,
-                        runtime.clone(),
-                    )
-                    .await?,
+                    OHttpStreamDecoder::new(ra_context, ohttp.clone(), runtime.clone()).await?,
                 ),
-                None => Box::new(
-                    RatsTlsStreamDecoder::new(ra_context, attestation_metrics, runtime.clone())
-                        .await?,
-                ),
+                None => Box::new(RatsTlsStreamDecoder::new(ra_context, runtime.clone()).await?),
             },
             runtime,
         })

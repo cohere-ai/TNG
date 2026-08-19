@@ -8,7 +8,6 @@ use crate::{
             stream_manager::trusted::{ProtocolStreamDecoder, ProtocolStreamDecoderOutput},
         },
         ra_context::RaContext,
-        service_metrics::AttestationMetrics,
     },
     CommonStreamTrait, TokioRuntime,
 };
@@ -29,18 +28,11 @@ impl OHttpStreamDecoder {
     pub async fn new(
         ra_context: Arc<RaContext>,
         ohttp_args: OHttpArgs,
-        attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self> {
         Ok(Self {
             security_layer: Arc::new(
-                OHttpSecurityLayer::new(
-                    ra_context,
-                    ohttp_args,
-                    attestation_metrics,
-                    runtime.clone(),
-                )
-                .await?,
+                OHttpSecurityLayer::new(ra_context, ohttp_args, runtime.clone()).await?,
             ),
             runtime,
         })

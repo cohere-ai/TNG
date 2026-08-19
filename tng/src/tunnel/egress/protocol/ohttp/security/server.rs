@@ -14,7 +14,7 @@ use tower_http::{
     cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer, ExposeHeaders},
 };
 
-use crate::tunnel::{ra_context::RaContext, service_metrics::AttestationMetrics};
+use crate::tunnel::ra_context::RaContext;
 use crate::{
     config::egress::{CorsConfig, OHttpArgs},
     error::TngError,
@@ -45,14 +45,10 @@ impl OhttpServer {
     pub async fn new(
         ra_context: Arc<RaContext>,
         ohttp_args: OHttpArgs,
-        attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self> {
         Ok(Self {
-            api: Arc::new(
-                OhttpServerApi::new(ra_context, ohttp_args.key, attestation_metrics, runtime)
-                    .await?,
-            ),
+            api: Arc::new(OhttpServerApi::new(ra_context, ohttp_args.key, runtime).await?),
             cors_layer: match &ohttp_args.cors {
                 Some(cors_config) => Some(Self::construct_cors_layer(cors_config)?),
                 None => None,

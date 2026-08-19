@@ -120,14 +120,14 @@ impl PeerSharedKeyManager {
         );
         let ra_args = peer_shared.ra_args.clone().into_checked()?;
         let ra_context = Arc::new(
-            RaContext::from_ra_args(&ra_args)
+            RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics.clone())
                 .await
                 .map_err(TngError::InvalidParameter)?,
         );
         let net_opts =
             NetTransportOptions::<_, SocketAddrResolver<InstrumentedTokioRuntime>, _>::with_stream_layer_options(
                 node_id,
-                ((ra_context, attestation_metrics, runtime.clone()), inner),
+                ((ra_context, runtime.clone()), inner),
             )
             .with_bind_addresses(
                 [{

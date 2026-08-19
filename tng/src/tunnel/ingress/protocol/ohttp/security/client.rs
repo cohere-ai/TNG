@@ -49,9 +49,7 @@ use crate::tunnel::ohttp::protocol::userdata::ClientUserData;
 #[cfg(unix)]
 use crate::tunnel::ra_context::AttestContext;
 #[cfg(unix)]
-use crate::tunnel::service_metrics::{
-    AttestationMetrics, AttestationOperation, AttestationProtocol,
-};
+use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 use crate::{
     error::CheckErrorResponse as _,
     tunnel::{
@@ -102,8 +100,6 @@ pub struct OHttpClientInner {
     /// How many seconds before the reported expiry to treat the cached key as
     /// expired, triggering an early background refresh.
     refresh_before_expiry: Duration,
-    #[cfg(unix)]
-    attestation_metrics: AttestationMetrics,
 }
 
 struct KeyStoreValue {
@@ -129,7 +125,6 @@ impl OHttpClient {
         base_url: Url,
         forward_headers: reqwest::header::HeaderMap,
         key_refresh_before_expiry_seconds: Option<u64>,
-        #[cfg(unix)] attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self> {
         let refresh_before_expiry = Duration::from_secs(
@@ -162,8 +157,6 @@ impl OHttpClient {
             base_url,
             runtime: runtime.clone(),
             refresh_before_expiry,
-            #[cfg(unix)]
-            attestation_metrics,
         });
 
         let key_store_value = MaybeCached::new(runtime.clone(), refresh_strategy, {
@@ -223,8 +216,8 @@ impl OHttpClientInner {
         // Handle metatdata for self
         let (client_key, client_auth, mut expire) = self.create_attested_client_key().await?;
         #[cfg(unix)]
-        let attestation_attempt = self.ra_context.verify_context().map(|_| {
-            self.attestation_metrics
+        let attestation_attempt = self.ra_context.verify_context().map(|ctx| {
+            ctx.attestation_metrics()
                 .start(AttestationOperation::Verify, AttestationProtocol::Ohttp)
         });
 
@@ -232,7 +225,7 @@ impl OHttpClientInner {
             let verify_context = self.ra_context.verify_context();
 
             match verify_context {
-                Some(VerifyContext::Passport { verifier }) => {
+                Some(VerifyContext::Passport { verifier, .. }) => {
                     // Request hpke configuration for server
                     let response = self
                         .get_hpke_configuration(KeyConfigRequest {
@@ -273,6 +266,7 @@ impl OHttpClientInner {
                 Some(VerifyContext::BackgroundCheck {
                     converter,
                     verifier,
+                    ..
                 }) => {
                     // fetch a challenge token from attestation service
                     let challenge_token = converter.get_nonce().await?;
@@ -378,8 +372,8 @@ impl OHttpClientInner {
         Expire,
     )> {
         #[cfg(unix)]
-        let attestation_attempt = self.ra_context.attest_context().map(|_| {
-            self.attestation_metrics
+        let attestation_attempt = self.ra_context.attest_context().map(|ctx| {
+            ctx.attestation_metrics()
                 .start(AttestationOperation::Generate, AttestationProtocol::Ohttp)
         });
 

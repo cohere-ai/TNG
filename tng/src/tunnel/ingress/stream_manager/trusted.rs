@@ -38,7 +38,8 @@ impl TrustedStreamManager {
         }
 
         let ra_args = common_args.ra_args.clone().into_checked()?;
-        let ra_context = Arc::new(RaContext::from_ra_args(&ra_args).await?);
+        let ra_context =
+            Arc::new(RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics).await?);
 
         Ok(Self {
             stream_forwarder: {
@@ -53,7 +54,6 @@ impl TrustedStreamManager {
                             transport_so_mark,
                             ohttp_args,
                             ra_context,
-                            attestation_metrics,
                             runtime.clone(),
                         )
                         .await?,
@@ -68,7 +68,6 @@ impl TrustedStreamManager {
                             ))]
                             transport_so_mark,
                             ra_context,
-                            attestation_metrics,
                             runtime.clone(),
                         )
                         .await?,

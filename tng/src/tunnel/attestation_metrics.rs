@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use opentelemetry::{
-    metrics::{Counter, Meter},
+    metrics::{Counter, Meter, MeterProvider},
     KeyValue,
 };
+
+use crate::observability::metric::simple_exporter::noop::NoopMeterProvider;
 
 #[derive(Debug, Clone, Copy)]
 pub enum AttestationOperation {
@@ -46,6 +48,11 @@ pub struct AttestationMetrics {
 }
 
 impl AttestationMetrics {
+    pub(crate) fn noop() -> Self {
+        let provider = NoopMeterProvider::new();
+        Self::new(&provider.meter("tng"), Arc::new(IndexMap::new()))
+    }
+
     pub(crate) fn new(meter: &Meter, attributes: Arc<IndexMap<String, String>>) -> Self {
         Self {
             total: meter
