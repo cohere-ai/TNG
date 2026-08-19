@@ -105,13 +105,13 @@ impl OhttpServerApi {
             .validate_client_attestation_consistency(metadata.client_auth)
             .await;
         if attestation_required {
-            self.ra_context.attestation_metrics().map(|metrics| {
+            if let Some(metrics) = self.ra_context.attestation_metrics() {
                 metrics.record(
                     AttestationOperation::Verify,
                     AttestationProtocol::Ohttp,
                     attestation_result.is_ok(),
-                )
-            });
+                );
+            }
         }
         attestation_result.map_err(TngError::MetadataValidateError)?;
 

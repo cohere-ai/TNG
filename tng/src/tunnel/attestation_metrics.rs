@@ -128,7 +128,6 @@ mod tests {
         instance::MetricExporterInstance,
         simple_exporter::{SimpleMetric, SimpleMetricExporter},
     };
-    use opentelemetry::metrics::MeterProvider as _;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn exports_failed_attestation_with_bounded_attributes() {

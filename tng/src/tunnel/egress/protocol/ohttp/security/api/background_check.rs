@@ -37,13 +37,13 @@ impl OhttpServerApi {
         }
         .await
         .map_err(TngError::ServerVerifyClientGetChallengeTokenFailed);
-        self.ra_context.attestation_metrics().map(|metrics| {
+        if let Some(metrics) = self.ra_context.attestation_metrics() {
             metrics.record(
                 AttestationOperation::Challenge,
                 AttestationProtocol::Ohttp,
                 result.is_ok(),
-            )
-        });
+            );
+        }
         result
     }
 
@@ -80,13 +80,13 @@ impl OhttpServerApi {
         }
         .await
         .map_err(TngError::ServerVerifyClientEvidenceFailed);
-        self.ra_context.attestation_metrics().map(|metrics| {
+        if let Some(metrics) = self.ra_context.attestation_metrics() {
             metrics.record(
                 AttestationOperation::Verify,
                 AttestationProtocol::Ohttp,
                 result.is_ok(),
-            )
-        });
+            );
+        }
         result
     }
 }

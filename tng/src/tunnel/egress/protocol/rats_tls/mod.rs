@@ -25,10 +25,7 @@ pub struct RatsTlsStreamDecoder {
 }
 
 impl RatsTlsStreamDecoder {
-    pub async fn new(
-        ra_context: Arc<RaContext>,
-        runtime: TokioRuntime,
-    ) -> Result<Self> {
+    pub async fn new(ra_context: Arc<RaContext>, runtime: TokioRuntime) -> Result<Self> {
         Ok(Self {
             security_layer: RatsTlsSecurityLayer::new(ra_context, runtime.clone()).await?,
             runtime,
