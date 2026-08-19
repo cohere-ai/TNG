@@ -48,6 +48,8 @@ use crate::tunnel::ohttp::protocol::metadata::AttestedPublicKey;
 use crate::tunnel::ohttp::protocol::userdata::ClientUserData;
 #[cfg(unix)]
 use crate::tunnel::ra_context::AttestContext;
+#[cfg(unix)]
+use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 use crate::{
     error::CheckErrorResponse as _,
     tunnel::{
@@ -213,12 +215,17 @@ impl OHttpClientInner {
     async fn create_key_store_value(&self) -> Result<(KeyStoreValue, Expire)> {
         // Handle metatdata for self
         let (client_key, client_auth, mut expire) = self.create_attested_client_key().await?;
+        #[cfg(unix)]
+        let attestation_attempt = self.ra_context.verify_context().map(|ctx| {
+            ctx.attestation_metrics()
+                .start(AttestationOperation::Verify, AttestationProtocol::Ohttp)
+        });
 
         let (server_key_config, token) = {
             let verify_context = self.ra_context.verify_context();
 
             match verify_context {
-                Some(VerifyContext::Passport { verifier }) => {
+                Some(VerifyContext::Passport { verifier, .. }) => {
                     // Request hpke configuration for server
                     let response = self
                         .get_hpke_configuration(KeyConfigRequest {
@@ -259,6 +266,7 @@ impl OHttpClientInner {
                 Some(VerifyContext::BackgroundCheck {
                     converter,
                     verifier,
+                    ..
                 }) => {
                     // fetch a challenge token from attestation service
                     let challenge_token = converter.get_nonce().await?;
@@ -315,6 +323,11 @@ impl OHttpClientInner {
             }
         };
 
+        #[cfg(unix)]
+        if let Some(attempt) = attestation_attempt {
+            attempt.mark_succeeded();
+        }
+
         expire = std::cmp::min(
             expire,
             Expire::from_timestamp(server_key_config.expire_timestamp)?,
@@ -336,7 +349,7 @@ impl OHttpClientInner {
                 .as_ref(),
         )?;
 
-        Ok((
+        let result = (
             KeyStoreValue {
                 client_auth,
                 client_key, // TODO: ohttp hpke setup with the client key
@@ -344,7 +357,8 @@ impl OHttpClientInner {
                 server_attestation_result,
             },
             expire,
-        ))
+        );
+        Ok(result)
     }
 
     async fn create_attested_client_key(
@@ -357,13 +371,19 @@ impl OHttpClientInner {
         ClientAuth,
         Expire,
     )> {
+        #[cfg(unix)]
+        let attestation_attempt = self.ra_context.attest_context().map(|ctx| {
+            ctx.attestation_metrics()
+                .start(AttestationOperation::Generate, AttestationProtocol::Ohttp)
+        });
+
         #[cfg(not(unix))]
         {
             return Ok((None, ClientAuth::NoAuth(NoAuth {}), Expire::NoExpire));
         }
 
         #[cfg(unix)]
-        Ok(match self.ra_context.attest_context() {
+        let result = match self.ra_context.attest_context() {
             Some(attest_ctx) => {
                 let client_key = X25519HkdfSha256::gen_keypair(&mut self.rng.lock().await);
                 let pk_s = client_key.1.to_bytes().to_vec();
@@ -428,7 +448,13 @@ impl OHttpClientInner {
                 // Not required
                 (None, ClientAuth::NoAuth(NoAuth {}), Expire::NoExpire)
             }
-        })
+        };
+        #[cfg(unix)]
+        if let Some(attempt) = attestation_attempt {
+            attempt.mark_succeeded();
+        }
+        #[cfg(unix)]
+        return Ok(result);
     }
 
     /// Interface 1: Get HPKE Configuration

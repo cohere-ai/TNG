@@ -1,4 +1,6 @@
 pub(crate) mod access_log;
+#[cfg(unix)]
+pub(crate) mod attestation_metrics;
 pub(crate) mod attestation_result;
 #[cfg(unix)]
 pub(crate) mod cert_verifier;

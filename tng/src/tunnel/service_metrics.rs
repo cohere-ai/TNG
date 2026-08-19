@@ -8,6 +8,10 @@ use crate::observability::metric::{
     stream::StreamWithCounter,
 };
 
+pub(crate) use super::attestation_metrics::{
+    AttestationMetrics, AttestationOperation, AttestationProtocol,
+};
+
 pub struct ServiceMetricsCreator(Arc<dyn MeterProvider + Send + Sync>);
 
 impl ServiceMetricsCreator {
@@ -35,6 +39,7 @@ pub struct ServiceMetrics {
     cx_failed: AttributedCounter<Counter<u64>, u64>,
     tx_bytes_total: AttributedCounter<Counter<u64>, u64>,
     rx_bytes_total: AttributedCounter<Counter<u64>, u64>,
+    attestation: AttestationMetrics,
 }
 
 impl ServiceMetrics {
@@ -82,12 +87,15 @@ impl ServiceMetrics {
             .with_attributes(attributes.clone());
         rx_bytes_total.add(0);
 
+        let attestation = AttestationMetrics::new(&meter, attributes);
+
         Self {
             cx_total,
             cx_active,
             cx_failed,
             tx_bytes_total,
             rx_bytes_total,
+            attestation,
         }
     }
 
@@ -110,6 +118,10 @@ impl ServiceMetrics {
             tx_bytes_total: self.tx_bytes_total.clone(),
             rx_bytes_total: self.rx_bytes_total.clone(),
         }
+    }
+
+    pub fn attestation(&self) -> AttestationMetrics {
+        self.attestation.clone()
     }
 }
 

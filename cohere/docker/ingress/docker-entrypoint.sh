@@ -43,4 +43,26 @@ if [ -n "$POLICY_IDS" ]; then
     ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
 fi
 
+if [ -n "$TNG_METRIC_OTLP_ENDPOINT" ]; then
+    case "$TNG_METRIC_OTLP_ENDPOINT" in
+        http://127.0.0.1:*|http://opentelemetry-collector.opentelemetry.svc.cluster.local:4317|https://*)
+            ;;
+        *)
+            echo "Unsupported TNG_METRIC_OTLP_ENDPOINT" >&2
+            exit 1
+            ;;
+    esac
+
+    tmp=$(mktemp)
+    jq --arg endpoint "$TNG_METRIC_OTLP_ENDPOINT" '
+        .metric.exporters = ((.metric.exporters // []) + [{
+            "type": "oltp",
+            "protocol": "grpc",
+            "headers": null,
+            "endpoint": $endpoint,
+            "step": 30
+        }])
+    ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+fi
+
 exec tng launch --config-file "$CONFIG" "$@"

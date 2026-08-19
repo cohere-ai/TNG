@@ -58,7 +58,11 @@ impl OhttpServerApi {
                 Arc::new(FileBasedKeyManager::new(runtime, path.into()).await?)
             }
             KeyArgs::PeerShared(peer_shared_args) => {
-                Arc::new(PeerSharedKeyManager::new(runtime, peer_shared_args).await?)
+                let metrics = ra_context
+                    .attestation_metrics()
+                    .cloned()
+                    .unwrap_or_else(crate::tunnel::attestation_metrics::AttestationMetrics::noop);
+                Arc::new(PeerSharedKeyManager::new(runtime, peer_shared_args, metrics).await?)
             }
         };
 

@@ -38,10 +38,12 @@ pub enum TlsConfigGenerator {
 impl TlsConfigGenerator {
     pub async fn new(ra_context: Arc<RaContext>, runtime: TokioRuntime) -> Result<Self> {
         Ok(match ra_context.as_ref() {
+            #[cfg(unix)]
             RaContext::AttestOnly(attest_ctx) => Self::Attest(Arc::new(
                 CertManager::new(attest_ctx.clone(), runtime).await?,
             )),
             RaContext::VerifyOnly(verify_ctx) => Self::Verify(verify_ctx.clone()),
+            #[cfg(unix)]
             RaContext::AttestAndVerify { attest, verify } => Self::AttestAndVerify(
                 Arc::new(CertManager::new(attest.clone(), runtime).await?),
                 verify.clone(),

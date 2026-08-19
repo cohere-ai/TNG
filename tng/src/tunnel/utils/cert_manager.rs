@@ -8,10 +8,13 @@ use rats_cert::{
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
-    tunnel::ra_context::AttestContext,
     tunnel::utils::{
         maybe_cached::{Expire, MaybeCached},
         runtime::TokioRuntime,
+    },
+    tunnel::{
+        ra_context::AttestContext,
+        service_metrics::{AttestationOperation, AttestationProtocol},
     },
 };
 
@@ -37,13 +40,19 @@ impl CertManager {
     ) -> Result<(rustls::sign::CertifiedKey, Expire)> {
         let retry_policy =
             RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(attest_ctx.max_retries());
-        retry_policy
+        let result = retry_policy
             .retry(|| async {
                 Self::fetch_new_cert_inner(attest_ctx)
                     .await
                     .context("Failed to generate new cert")
             })
-            .await
+            .await;
+        attest_ctx.attestation_metrics().record(
+            AttestationOperation::Generate,
+            AttestationProtocol::RatsTls,
+            result.is_ok(),
+        );
+        result
     }
 
     async fn fetch_new_cert_inner(
@@ -159,7 +168,9 @@ mod tests {
                 refresh_interval: Some(3),
                 max_retries: None,
             })?;
-            let mut cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
+            let mut cert_manager =
+                CertManager::new(Arc::new(attest_ctx), runtime)
+                    .await?;
 
             let old_cert = cert_manager.get_latest_cert().await?;
             assert!(Arc::ptr_eq(
@@ -213,7 +224,9 @@ mod tests {
                 refresh_interval: Some(0),
                 max_retries: None,
             })?;
-            let cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
+            let cert_manager =
+                CertManager::new(Arc::new(attest_ctx), runtime)
+                    .await?;
 
             let old_cert = cert_manager.get_latest_cert().await?;
 
@@ -254,7 +267,9 @@ mod tests {
                 refresh_interval: Some(0),
                 max_retries: None,
             })?;
-            let cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
+            let cert_manager =
+                CertManager::new(Arc::new(attest_ctx), runtime)
+                    .await?;
 
             let certified_key = cert_manager.get_latest_cert().await?;
             let cert_der = certified_key.cert.first().expect("cert chain is empty");

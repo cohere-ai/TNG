@@ -19,6 +19,7 @@ use crate::tunnel::ohttp::protocol::{
     AttestationRequest, HpkeKeyConfig, KeyConfigRequest, KeyConfigResponse, ServerAttestationInfo,
 };
 use crate::tunnel::ra_context::{AttestContext, RaContext};
+use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 use crate::tunnel::utils::maybe_cached::{Expire, MaybeCached};
 
 impl OhttpServerApi {
@@ -130,6 +131,7 @@ impl OhttpServerApi {
         };
 
         let attestation_request = payload.and_then(|Json(payload)| payload.attestation_request);
+        let attestation_requested = attestation_request.is_some();
 
         let response = async {
             Ok(match ra_context.attest_context() {
@@ -206,8 +208,21 @@ impl OhttpServerApi {
                 }
             })
         }
-        .await
-        .map_err(TngError::GenServerHpkeConfigurationResponseFailed)?;
+        .await;
+
+        if attestation_requested {
+            if let Some(metrics) = ra_context.attestation_metrics() {
+                metrics.record(
+                    AttestationOperation::Generate,
+                    AttestationProtocol::Ohttp,
+                    response
+                        .as_ref()
+                        .is_ok_and(|response| response.attestation_info.is_some()),
+                );
+            }
+        }
+
+        let response = response.map_err(TngError::GenServerHpkeConfigurationResponseFailed)?;
 
         Ok(response)
     }

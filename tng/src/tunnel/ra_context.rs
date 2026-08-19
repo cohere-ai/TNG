@@ -21,6 +21,8 @@ use rats_cert::tee::coco::verifier::CocoVerifier;
 #[cfg(feature = "__builtin-as")]
 use crate::config::ra::{CocoConverterArgs, ConverterArgs};
 #[cfg(unix)]
+use crate::tunnel::attestation_metrics::AttestationMetrics;
+#[cfg(unix)]
 use crate::tunnel::utils::maybe_cached::RefreshStrategy;
 
 #[cfg(unix)]
@@ -51,23 +53,72 @@ pub enum RaContext {
 }
 
 impl RaContext {
-    /// Create pre-instantiated RA context from RaArgs configuration
+    /// Create pre-instantiated RA context from RaArgs configuration.
+    ///
+    /// Tests and NoRa paths get a no-op metrics handle. Production tunnels should
+    /// call [`Self::from_ra_args_with_metrics`].
     pub async fn from_ra_args(ra_args: &RaArgs) -> Result<Self> {
+        #[cfg(unix)]
+        {
+            Self::from_ra_args_with_metrics(ra_args, AttestationMetrics::noop()).await
+        }
+        #[cfg(not(unix))]
+        {
+            Self::from_ra_args_inner(ra_args, ()).await
+        }
+    }
+
+    #[cfg(unix)]
+    /// Inject service-scoped attestation metrics into attest/verify contexts.
+    pub async fn from_ra_args_with_metrics(
+        ra_args: &RaArgs,
+        attestation_metrics: AttestationMetrics,
+    ) -> Result<Self> {
+        Self::from_ra_args_inner(ra_args, attestation_metrics).await
+    }
+
+    async fn from_ra_args_inner(
+        ra_args: &RaArgs,
+        #[cfg(unix)] attestation_metrics: AttestationMetrics,
+        #[cfg(not(unix))] _attestation_metrics: (),
+    ) -> Result<Self> {
         match ra_args {
             RaArgs::NoRa => Ok(Self::NoRa),
-            RaArgs::VerifyOnly(verify_args) => Ok(Self::VerifyOnly(Arc::new(
-                VerifyContext::from_verify_args(verify_args).await?,
-            ))),
+            RaArgs::VerifyOnly(verify_args) => {
+                #[cfg(unix)]
+                let verify =
+                    VerifyContext::from_verify_args_with_metrics(verify_args, attestation_metrics)
+                        .await?;
+                #[cfg(not(unix))]
+                let verify = VerifyContext::from_verify_args(verify_args).await?;
+                Ok(Self::VerifyOnly(Arc::new(verify)))
+            }
             #[cfg(unix)]
             RaArgs::AttestOnly(attest_args) => Ok(Self::AttestOnly(Arc::new(
-                AttestContext::from_attest_args(attest_args)?,
+                AttestContext::from_attest_args_with_metrics(attest_args, attestation_metrics)?,
             ))),
             #[cfg(unix)]
             RaArgs::AttestAndVerify(attest_args, verify_args) => Ok(Self::AttestAndVerify {
-                attest: Arc::new(AttestContext::from_attest_args(attest_args)?),
-                verify: Arc::new(VerifyContext::from_verify_args(verify_args).await?),
+                attest: Arc::new(AttestContext::from_attest_args_with_metrics(
+                    attest_args,
+                    attestation_metrics.clone(),
+                )?),
+                verify: Arc::new(
+                    VerifyContext::from_verify_args_with_metrics(verify_args, attestation_metrics)
+                        .await?,
+                ),
             }),
         }
+    }
+
+    #[cfg(unix)]
+    pub fn attestation_metrics(&self) -> Option<&AttestationMetrics> {
+        self.verify_context()
+            .map(VerifyContext::attestation_metrics)
+            .or_else(|| {
+                self.attest_context()
+                    .map(AttestContext::attestation_metrics)
+            })
     }
 
     /// Get verify context if available
@@ -102,6 +153,7 @@ pub enum AttestContext {
         converter: TngConverter,
         refresh_strategy: RefreshStrategy,
         max_retries: usize,
+        metrics: AttestationMetrics,
     },
 
     /// Background check mode - just attest via AA (client verifies)
@@ -109,6 +161,7 @@ pub enum AttestContext {
         attester: TngAttester,
         refresh_strategy: RefreshStrategy,
         max_retries: usize,
+        metrics: AttestationMetrics,
     },
     // Future: PassportBuiltin, Builtin
 }
@@ -117,6 +170,13 @@ pub enum AttestContext {
 impl AttestContext {
     /// Create attestation context from AttestArgs configuration
     pub fn from_attest_args(attest_args: &AttestArgs) -> Result<Self> {
+        Self::from_attest_args_with_metrics(attest_args, AttestationMetrics::noop())
+    }
+
+    pub fn from_attest_args_with_metrics(
+        attest_args: &AttestArgs,
+        metrics: AttestationMetrics,
+    ) -> Result<Self> {
         match attest_args {
             AttestArgs::Passport {
                 attester: attester_args,
@@ -130,6 +190,7 @@ impl AttestContext {
                     converter,
                     refresh_strategy: attest_args.refresh_strategy(),
                     max_retries: attest_args.max_retries(),
+                    metrics,
                 })
             }
             AttestArgs::BackgroundCheck {
@@ -148,8 +209,15 @@ impl AttestContext {
                     attester,
                     refresh_strategy: attest_args.refresh_strategy(),
                     max_retries: attest_args.max_retries(),
+                    metrics,
                 })
             }
+        }
+    }
+
+    pub fn attestation_metrics(&self) -> &AttestationMetrics {
+        match self {
+            Self::Passport { metrics, .. } | Self::BackgroundCheck { metrics, .. } => metrics,
         }
     }
 
@@ -179,11 +247,17 @@ impl AttestContext {
 /// Holds components needed for verifying client attestation.
 pub enum VerifyContext {
     /// Passport mode - verify token from remote AS
-    Passport { verifier: TngVerifier },
+    Passport {
+        verifier: TngVerifier,
+        #[cfg(unix)]
+        metrics: AttestationMetrics,
+    },
     /// Background check - convert evidence via remote AS, then verify
     BackgroundCheck {
         converter: TngConverter,
         verifier: TngVerifier,
+        #[cfg(unix)]
+        metrics: AttestationMetrics,
     },
 }
 
@@ -203,12 +277,38 @@ impl std::fmt::Debug for VerifyContext {
 impl VerifyContext {
     /// Create verification context from VerifyArgs configuration
     pub async fn from_verify_args(verify_args: &VerifyArgs) -> Result<Self> {
+        #[cfg(unix)]
+        {
+            Self::from_verify_args_with_metrics(verify_args, AttestationMetrics::noop()).await
+        }
+        #[cfg(not(unix))]
+        {
+            Self::from_verify_args_inner(verify_args).await
+        }
+    }
+
+    #[cfg(unix)]
+    pub async fn from_verify_args_with_metrics(
+        verify_args: &VerifyArgs,
+        metrics: AttestationMetrics,
+    ) -> Result<Self> {
+        Self::from_verify_args_inner(verify_args, metrics).await
+    }
+
+    async fn from_verify_args_inner(
+        verify_args: &VerifyArgs,
+        #[cfg(unix)] metrics: AttestationMetrics,
+    ) -> Result<Self> {
         match verify_args {
             VerifyArgs::Passport {
                 verifier: verifier_args,
             } => {
                 let verifier = create_verifier(verifier_args).await?;
-                Ok(Self::Passport { verifier })
+                Ok(Self::Passport {
+                    verifier,
+                    #[cfg(unix)]
+                    metrics,
+                })
             }
             VerifyArgs::BackgroundCheck {
                 converter: converter_args,
@@ -227,6 +327,8 @@ impl VerifyContext {
                     return Ok(Self::BackgroundCheck {
                         converter: TngConverter::Coco(CocoConverter::Builtin(builtin_converter)),
                         verifier: TngVerifier::Coco(builtin_verifier),
+                        #[cfg(unix)]
+                        metrics,
                     });
                 }
 
@@ -235,8 +337,17 @@ impl VerifyContext {
                 Ok(Self::BackgroundCheck {
                     converter,
                     verifier,
+                    #[cfg(unix)]
+                    metrics,
                 })
             }
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn attestation_metrics(&self) -> &AttestationMetrics {
+        match self {
+            Self::Passport { metrics, .. } | Self::BackgroundCheck { metrics, .. } => metrics,
         }
     }
 }
