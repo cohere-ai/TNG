@@ -9,11 +9,15 @@ use base64::Engine as _;
 use key_value_storage::{KeyValueStorageType, KvStorageProvider, StorageBackendConfig};
 use rand::RngCore as _;
 
+use policy::TeeClassPolicies;
+
 use super::super::evidence::{AttestationServiceHashAlgo, CocoAsToken, CocoEvidence};
+use super::{convert_additional_evidence, CoCoNonce};
 use crate::errors::*;
-use crate::tee::coco::converter::policy::{self, TeeClassPolicies};
-use crate::tee::coco::converter::{convert_additional_evidence, CoCoNonce};
 use crate::tee::GenericConverter;
+
+/// Policies for the in-process service, which reads them from disk rather than from a remote one.
+pub mod policy;
 
 /// Length of the locally generated nonce, in bytes.
 ///
@@ -109,7 +113,7 @@ impl CocoBuiltinConverter {
     /// nowhere in configuration, so it can only be had from the converter holding the private half.
     pub async fn new_verifier(
         &self,
-    ) -> Result<crate::tee::coco::verifier::coco_builtin::CocoBuiltinVerifier> {
+    ) -> Result<crate::tee::coco::verifier::builtin::CocoBuiltinVerifier> {
         let unavailable = |e: anyhow::Error| Error::CocoBuiltinAsSignerKeyUnavailable(Arc::new(e));
 
         // As JSON, because the service's `jsonwebtoken` is not the one the verifier reads token
@@ -126,7 +130,7 @@ impl CocoBuiltinConverter {
             })
             .map_err(unavailable)?;
 
-        crate::tee::coco::verifier::coco_builtin::CocoBuiltinVerifier::new(
+        crate::tee::coco::verifier::builtin::CocoBuiltinVerifier::new(
             std::slice::from_ref(&self.policy_id),
             &self.required_tee_classes,
             signer_key,

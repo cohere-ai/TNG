@@ -1,6 +1,6 @@
 use rats_cert::errors::*;
 #[cfg(feature = "__coco-builtin-as")]
-use rats_cert::tee::coco::converter::coco_builtin::CocoBuiltinConverter;
+use rats_cert::tee::coco::converter::builtin::CocoBuiltinConverter;
 use rats_cert::tee::coco::converter::{CoCoNonce, CocoConverter};
 use rats_cert::tee::ita::ItaConverter;
 use rats_cert::tee::GenericConverter;

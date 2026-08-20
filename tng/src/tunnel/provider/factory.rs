@@ -7,7 +7,7 @@ use anyhow::Result;
 #[cfg(unix)]
 use rats_cert::tee::coco::attester::CocoAttester;
 #[cfg(feature = "__coco-builtin-as")]
-use rats_cert::tee::coco::converter::coco_builtin::CocoBuiltinConverter;
+use rats_cert::tee::coco::converter::builtin::CocoBuiltinConverter;
 use rats_cert::tee::coco::converter::grpc::CocoGrpcConverter;
 use rats_cert::tee::coco::converter::restful::CocoRestfulConverter;
 use rats_cert::tee::coco::converter::CocoConverter;
@@ -52,7 +52,7 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
 
             // Read here rather than lazily: an ingress with no usable policy can verify nothing,
             // so failing now surfaces the problem at startup instead of on the first handshake.
-            let policies = rats_cert::tee::coco::converter::policy::load_from_dir(
+            let policies = rats_cert::tee::coco::converter::builtin::policy::load_from_dir(
                 Path::new(policy_dir),
                 policy_id,
             )

@@ -455,7 +455,7 @@ fn default_policy_dir() -> String {
 
 #[cfg(feature = "__coco-builtin-as")]
 fn default_required_tee_classes() -> Vec<String> {
-    vec![rats_cert::tee::coco::converter::policy::CPU_TEE_CLASS.to_owned()]
+    vec![rats_cert::tee::coco::converter::builtin::policy::CPU_TEE_CLASS.to_owned()]
 }
 
 /// Provider-tagged converter config. Serde reads "as_provider" from flat JSON.
