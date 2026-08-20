@@ -487,7 +487,8 @@ In TNG, you can configure any endpoint as an Attester role, enabling it to respo
 > **Current Implementation Notes**:  
 > Currently, TNG supports obtaining Evidence through the [Attestation Agent](https://github.com/confidential-containers/guest-components/tree/main/attestation-agent) (AA) either directly (`"coco"` / `"ita"` providers) or indirectly via the [API Server Rest](https://github.com/confidential-containers/guest-components/tree/main/api-server-rest) (ASR) HTTP proxy (`"coco_asr"` / `"ita_asr"` providers).  
 > The ASR providers are useful when TNG runs in a container that does not have direct access to the AA Unix socket.
-> Both the **CoCo** and **ITA** providers use the same Attestation Agent for evidence collection, but differ in how the runtime data is processed and injected into the evidence (according to the requirements of the respective attestation services).
+> Both the **CoCo** and **ITA** providers use the same Attestation Agent for evidence collection, but differ in how the runtime data is processed and injected into the evidence (according to the requirements of the respective attestation services).  
+> The Attestation Agent must be built against `kbs-types` 0.13 or newer, which is the release that renamed the Azure vTPM TEE identifiers to `az-snp-vtpm` and `az-tdx-vtpm`. An older agent reports `azsnpvtpm` and TNG rejects its evidence with an unknown TEE type error. No other TEE identifier changed in that release, so this only affects Azure confidential VMs.
 
 <a name="verify"></a>
 ### Verifier: The Decision Maker Verifying Peer Trustworthiness
