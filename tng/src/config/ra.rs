@@ -454,6 +454,11 @@ fn default_policy_dir() -> String {
     DEFAULT_POLICY_DIR.to_string()
 }
 
+#[cfg(feature = "__coco-builtin-as")]
+fn default_required_tee_classes() -> Vec<String> {
+    vec![rats_cert::tee::coco::converter::policy::CPU_TEE_CLASS.to_owned()]
+}
+
 /// Provider-tagged converter config. Serde reads "as_provider" from flat JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "as_provider", rename_all = "snake_case")]
@@ -476,13 +481,23 @@ pub enum ConverterArgs {
         /// list to match the attestation service's request field and the other providers here,
         /// though its EAR token broker only ever honours one, so exactly one is required.
         policy_ids: Vec<String>,
-        /// TEE classes a peer must attest, such as `gpu`, rejecting it if any is absent
+        /// TEE classes a peer must attest, rejecting it if any is absent
         ///
         /// A policy cannot express this, because policies are only evaluated against the evidence
         /// that arrived: a peer that never offers its GPU is appraised on its CPU alone, and the
-        /// `gpu` policy is never consulted no matter how strict it is. Empty by default, which
-        /// accepts whatever the peer chooses to present.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        /// `gpu` policy is never consulted no matter how strict it is.
+        ///
+        /// Defaults to `cpu`, because the class of a peer's primary evidence is whatever its agent
+        /// reports it to be, and nothing else here ties that to a CPU. A peer presenting only
+        /// device evidence would otherwise mint a token holding a single non-CPU appraisal and be
+        /// accepted, so requiring the class is what makes "the peer runs in a confidential VM" a
+        /// property this side checks rather than assumes. Add `gpu` to demand the device too, or
+        /// set this to `[]` to accept whatever the peer presents.
+        ///
+        /// Always serialized, unlike the optional fields around it: with a non-empty default, an
+        /// omitted field and an explicit `[]` mean different things, so a round trip through JSON
+        /// has to preserve which one was written.
+        #[serde(default = "default_required_tee_classes")]
         required_tee_classes: Vec<String>,
         /// Passed through to the attestation service's per-TEE verifier configuration
         #[serde(default, skip_serializing_if = "Option::is_none")]
