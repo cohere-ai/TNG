@@ -213,17 +213,16 @@ impl RaArgsUnchecked {
                 VerifyArgs::Passport { verifier }
                 | VerifyArgs::BackgroundCheck { verifier, .. } => {
                     match verifier {
-                        // This verifier accepts whatever key the token names in its own header,
-                        // which is only sound because the token was minted a few stack frames
-                        // earlier by an in-process service. A token arriving from a peer has no
-                        // such provenance, so anyone could sign one with a key they generated and
-                        // have it accepted. Passport mode has to be refused rather than merely
-                        // discouraged.
+                        // This verifier only accepts tokens signed by the in-process service it was
+                        // derived from, and in passport mode the token is minted by the peer's
+                        // attestation service instead, which holds a different key. Every
+                        // handshake would fail, so refuse the combination up front rather than at
+                        // the first connection.
                         #[cfg(feature = "__coco-builtin-as")]
                         VerifierArgs::CocoBuiltin => {
                             if matches!(verify_args, VerifyArgs::Passport { .. }) {
                                 return Err(TngError::InvalidParameter(anyhow!(
-                                    "The 'coco_builtin' verifier cannot be used in passport mode, because it would accept a token signed by any key the sender chose. Use 'background_check' instead."
+                                    "The 'coco_builtin' verifier cannot be used in passport mode, because it only accepts tokens minted by the builtin attestation service in this process, not ones the peer brings from its own. Use 'background_check' instead."
                                 )));
                             }
                         }

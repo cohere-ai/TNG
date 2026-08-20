@@ -103,12 +103,33 @@ impl CocoBuiltinConverter {
         &self.policy_id
     }
 
+    /// Derives the verifier for the tokens this converter mints.
+    ///
+    /// The verifier needs the signer's public key, which is generated at construction and appears
+    /// nowhere in configuration, so it can only be had from the converter holding the private half.
     pub async fn new_verifier(
         &self,
     ) -> Result<crate::tee::coco::verifier::coco_builtin::CocoBuiltinVerifier> {
+        let unavailable = |e: anyhow::Error| Error::CocoBuiltinAsSignerKeyUnavailable(Arc::new(e));
+
+        // As JSON, because the service's `jsonwebtoken` is not the one the verifier reads token
+        // headers with, so the two `Jwk` types cannot meet. The broker publishes the single key it
+        // signs with.
+        let signer_key = self
+            .attestation_service
+            .get_token_signer_jwks()
+            .and_then(|jwks| {
+                let [key] = <[_; 1]>::try_from(jwks.keys).map_err(|keys| {
+                    anyhow::anyhow!("expected one signing key, got {}", keys.len())
+                })?;
+                Ok(serde_json::to_value(key)?)
+            })
+            .map_err(unavailable)?;
+
         crate::tee::coco::verifier::coco_builtin::CocoBuiltinVerifier::new(
             std::slice::from_ref(&self.policy_id),
             &self.required_tee_classes,
+            signer_key,
         )
         .await
     }
@@ -381,6 +402,50 @@ configuration := 2 if input.nvidia"#,
             .get_evidence(report_data)
             .await
             .expect("the attestation agent should produce evidence")
+    }
+
+    /// A token minted by another instance must be refused, however well-formed its claims.
+    ///
+    /// This is the sole basis for `insecure_key`: the signature is checked against the key the
+    /// token itself names, so without the pin a peer could sign an affirming token with a key it
+    /// generated and skip attestation entirely. Reachable input, not a hypothetical, because the
+    /// OHTTP client-attestation flow hands tokens to the peer and reads them back. The refusal
+    /// also holds between replicas, each of which signs with its own ephemeral key.
+    ///
+    /// Lives here rather than beside the tests above because only a real token proves this, and
+    /// the appraisal is deliberately unconditional so that any TEE's evidence will do.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial]
+    async fn a_token_from_another_signer_is_refused() {
+        let affirming = "hardware := 2\nexecutables := 3\nconfiguration := 2";
+        let mine = converter_with(policy(affirming)).await;
+        let theirs = converter_with(policy(affirming)).await;
+        let report_data = report_data("dGVzdC1ub25jZS1zaWduZXI");
+
+        let token = mine
+            .convert(&evidence_for(&report_data).await)
+            .await
+            .expect("this host's evidence should convert");
+
+        mine.new_verifier()
+            .await
+            .expect("verifier")
+            .verify_evidence(&token, &report_data)
+            .await
+            .expect("a token this instance signed should verify");
+
+        let err = theirs
+            .new_verifier()
+            .await
+            .expect("verifier")
+            .verify_evidence(&token, &report_data)
+            .await
+            .expect_err("a token another instance signed must not verify");
+
+        assert!(
+            matches!(err, Error::CocoBuiltinAsForeignTokenSigner),
+            "got {err:?}"
+        );
     }
 
     pub(super) fn payload_of(token: &CocoAsToken) -> serde_json::Value {
