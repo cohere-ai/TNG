@@ -99,6 +99,14 @@ pub enum Error {
     #[error("The `{tee_class}` policy does not set the `{claim}` trust claim")]
     CocoBuiltinAsPolicyMissingClaim { tee_class: String, claim: String },
 
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Failed to read the public key of the builtin attestation service's token signer")]
+    CocoBuiltinAsSignerKeyUnavailable(#[source] std::sync::Arc<anyhow::Error>),
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("The token was not signed by the builtin attestation service in this process")]
+    CocoBuiltinAsForeignTokenSigner,
+
     // Remote AS related
     #[error("Remote AS gRPC is not supported")]
     RemoteAsGrpcNotSupported,
