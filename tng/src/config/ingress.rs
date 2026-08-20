@@ -3,7 +3,7 @@ use cidr::Ipv4Cidr;
 use serde::{Deserialize, Serialize};
 use serde_with::{formats::PreferMany, serde_as, OneOrMany};
 
-use super::{ra::RaArgsUnchecked, Endpoint};
+use super::{ra::RaArgsUnchecked, DirectForwardRules, Endpoint};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddIngressArgs {
@@ -153,6 +153,10 @@ pub struct BodyFieldHeader {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct OHttpArgs {
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub direct_forward: Option<DirectForwardRules>,
+
     #[serde(default)]
     pub path_rewrites: Vec<PathRewrite>,
 
@@ -389,6 +393,41 @@ mod tests {
 
         let empty: super::OHttpArgs = serde_json::from_value(json!({}))?;
         assert!(empty.body_field_headers.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_ohttp_args_direct_forward() -> Result<()> {
+        let args: super::OHttpArgs = serde_json::from_value(json!({
+            "direct_forward": [
+                {"http_path": "^/v1/models$"},
+                {"http_path": "/health"}
+            ]
+        }))?;
+        let rules = args.direct_forward.unwrap();
+        assert_eq!(rules.0.len(), 2);
+        assert_eq!(rules.0[0].http_path, "^/v1/models$");
+        assert_eq!(rules.0[1].http_path, "/health");
+        Ok(())
+    }
+
+    #[test]
+    fn test_ohttp_args_direct_forward_absent() -> Result<()> {
+        let args: super::OHttpArgs = serde_json::from_value(json!({}))?;
+        assert!(args.direct_forward.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_ohttp_args_direct_forward_roundtrip() -> Result<()> {
+        let input = json!({
+            "direct_forward": [{"http_path": "/public/.*"}]
+        });
+        let args: super::OHttpArgs = serde_json::from_value(input)?;
+        let roundtripped: super::OHttpArgs = serde_json::from_value(serde_json::to_value(&args)?)?;
+        let rules = roundtripped.direct_forward.unwrap();
+        assert_eq!(rules.0.len(), 1);
+        assert_eq!(rules.0[0].http_path, "/public/.*");
         Ok(())
     }
 }

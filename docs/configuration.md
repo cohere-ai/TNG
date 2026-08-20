@@ -1058,6 +1058,13 @@ The OHTTP capability can be enabled by specifying the `ohttp` field in the `add_
     - Existing headers are never overwritten.
 
 - **`tls_ca_certs`** (array [string], optional, default is an empty array): A list of file paths to PEM-encoded CA certificates. These certificates are added to the trust store used for TLS connections from the ingress to the egress. This is useful when the egress is behind a TLS gateway using a certificate signed by a private CA.
+
+- **`direct_forward`** (array [DirectForwardRule], optional): Specifies matching rules for requests that should bypass OHTTP encryption and be forwarded directly as plain HTTP/HTTPS. This is useful when certain paths (e.g., health checks, info listings) are consumed by intermediate services before reaching the TNG egress. Each rule uses the same format as the egress-side `direct_forward` field:
+
+    - **`http_path`** (string): A regular expression matched against the HTTP request path. If any rule matches, the request is forwarded directly to the `out` endpoint without OHTTP encryption. The regex uses partial matching by default; use `^` and `$` anchors for exact path matching.
+
+    TLS is supported for direct-forwarded requests: if `out.scheme` is set to `"https"`, the forwarded request will use HTTPS. Custom CA certificates from `tls_ca_certs` are also respected.
+
 > [!NOTE]
 > For syntax information about regular expressions, please refer to the <a href="#regex">Regular Expressions</a> section.
 
@@ -1101,6 +1108,44 @@ In this example, we add a PathRewrite rule that matches all user HTTP requests w
     ]
 }
 ```
+
+#### Direct Forward (Bypass OHTTP)
+
+In some deployments, certain HTTP paths should not be encrypted because they will be consumed by intermediate services (e.g., L7 gateways, health-check endpoints) before reaching the TNG egress. The `direct_forward` field allows you to specify which request paths should bypass OHTTP encryption and be forwarded as plain HTTP/HTTPS.
+
+```json
+{
+    "add_ingress": [
+        {
+            "mapping": {
+                "in": {
+                    "host": "0.0.0.0",
+                    "port": 8080
+                },
+                "out": {
+                    "host": "gateway.example.com",
+                    "port": 443,
+                    "scheme": "https"
+                }
+            },
+            "ohttp": {
+                "direct_forward": [
+                    {"http_path": "^/v1/info$"},
+                    {"http_path": "/health"}
+                ],
+                "forward_headers": ["authorization"],
+                "tls_ca_certs": ["/path/to/ca.pem"]
+            },
+            "verify": {
+                "as_addr": "http://127.0.0.1:8080/",
+                "policy_ids": ["default"]
+            }
+        }
+    ]
+}
+```
+
+In this example, requests to `/v1/info` (exact match) and any path containing `/health` are forwarded directly as HTTPS to `gateway.example.com:443` without OHTTP encryption. All other requests go through OHTTP as normal. This uses the same `http_path` rule format as the egress-side [`direct_forward`](#directforwardrule) feature.
 
 #### L7 Gateway Compatibility
 

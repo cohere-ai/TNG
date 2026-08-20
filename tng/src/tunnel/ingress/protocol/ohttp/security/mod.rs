@@ -14,13 +14,38 @@ use crate::{
         endpoint::TngEndpoint,
         ingress::protocol::ohttp::security::{client::OHttpClient, path_rewrite::PathRewriteGroup},
         ra_context::RaContext,
+        utils::direct_forward::DirectForwardTrafficDetector,
     },
     AttestationResult, TokioRuntime, HTTP_REQUEST_USER_AGENT_HEADER,
 };
 use anyhow::{Context, Result};
-use http::{header::HeaderName, HeaderValue};
+use http::{header, header::HeaderName, HeaderValue};
 use tokio::sync::{OnceCell, RwLock};
 use url::Url;
+
+// Headers that apply only to a single transport-level connection and must not
+// be forwarded by proxies (RFC 7230 §6.1).
+const HOP_BY_HOP_HEADERS: &[header::HeaderName] = &[
+    header::CONNECTION,
+    header::TRANSFER_ENCODING,
+    header::PROXY_AUTHENTICATE,
+    header::PROXY_AUTHORIZATION,
+    header::TE,
+    header::TRAILER,
+    header::UPGRADE,
+];
+
+/// Returns true if the header is hop-by-hop per RFC 7230 §6.1: either in the
+/// static list or named by a Connection header token.
+fn is_hop_by_hop(name: &http::header::HeaderName, headers: &http::HeaderMap) -> bool {
+    HOP_BY_HOP_HEADERS.contains(name)
+        || headers
+            .get_all(header::CONNECTION)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .any(|t| t.trim().eq_ignore_ascii_case(name.as_str()))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct OHttpClientCacheKey {
@@ -38,6 +63,7 @@ pub struct OHttpSecurityLayer {
     forward_header_names: Vec<HeaderName>,
     body_field_headers: Vec<(String, HeaderName)>,
     key_refresh_before_expiry_seconds: Option<u64>,
+    direct_forward_detector: Option<DirectForwardTrafficDetector>,
     runtime: TokioRuntime,
 }
 
@@ -88,6 +114,10 @@ impl OHttpSecurityLayer {
                 }
             }
 
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+            builder = builder.no_proxy();
+            builder = builder.no_gzip().no_brotli().no_zstd();
+
             builder.build()?
         };
         let body_field_headers = ohttp_args
@@ -119,6 +149,14 @@ impl OHttpSecurityLayer {
         forward_header_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         forward_header_names.dedup();
 
+        let direct_forward_detector = ohttp_args
+            .direct_forward
+            .as_ref()
+            .map(|rules| DirectForwardTrafficDetector::new(rules.clone()))
+            .transpose()
+            .context("Failed to initialize direct_forward detector")
+            .map_err(TngError::InvalidParameter)?;
+
         Ok(Self {
             ra_context,
             http_client: Arc::new(http_client),
@@ -127,6 +165,7 @@ impl OHttpSecurityLayer {
             forward_header_names,
             body_field_headers,
             key_refresh_before_expiry_seconds: ohttp_args.key_refresh_before_expiry_seconds,
+            direct_forward_detector,
             runtime,
         })
     }
@@ -136,6 +175,16 @@ impl OHttpSecurityLayer {
         endpoint: &TngEndpoint,
         request: axum::extract::Request,
     ) -> Result<(axum::response::Response, Option<AttestationResult>), TngError> {
+        if let Some(detector) = &self.direct_forward_detector {
+            if detector.matches_path(request.uri().path()) {
+                tracing::debug!(
+                    path = request.uri().path(),
+                    "Direct forwarding request (bypassing OHTTP)"
+                );
+                return self.forward_directly(endpoint, request).await;
+            }
+        }
+
         async {
             let request = if !self.body_field_headers.is_empty() {
                 self.promote_body_fields_to_headers(request).await?
@@ -198,6 +247,59 @@ impl OHttpSecurityLayer {
                 .map_err(TngError::CreateOHttpClientFailed)?
         };
         Ok(base_url)
+    }
+
+    async fn forward_directly(
+        &self,
+        endpoint: &TngEndpoint,
+        request: axum::extract::Request,
+    ) -> Result<(axum::response::Response, Option<AttestationResult>), TngError> {
+        let method = request.method().clone();
+        let url = format!(
+            "{}://{}:{}{}",
+            endpoint.scheme(),
+            endpoint.host(),
+            endpoint.port(),
+            request
+                .uri()
+                .path_and_query()
+                .map(|pq| pq.as_str())
+                .unwrap_or("/")
+        );
+
+        let mut req_builder = self.http_client.request(method, &url);
+        for (name, value) in request.headers() {
+            if is_hop_by_hop(name, request.headers()) {
+                continue;
+            }
+            req_builder = req_builder.header(name, value);
+        }
+
+        let reqwest_body = reqwest::Body::wrap_stream(request.into_body().into_data_stream());
+        req_builder = req_builder.body(reqwest_body);
+
+        let response = req_builder.send().await.map_err(|e| {
+            TngError::DirectForwardFailed(anyhow::anyhow!("request to upstream failed: {e}"))
+        })?;
+
+        let status = response.status();
+        let headers = response.headers().clone();
+        let resp_body_stream = response.bytes_stream();
+
+        let mut resp = axum::response::Response::builder().status(status);
+        for (name, value) in headers.iter() {
+            if is_hop_by_hop(name, &headers) {
+                continue;
+            }
+            resp = resp.header(name, value);
+        }
+        let resp = resp
+            .body(axum::body::Body::from_stream(resp_body_stream))
+            .map_err(|e| {
+                TngError::DirectForwardFailed(anyhow::anyhow!("response build failed: {e}"))
+            })?;
+
+        Ok((resp, None))
     }
 
     async fn get_or_create_ohttp_client(
@@ -451,5 +553,154 @@ mod tests {
         let result = promote_body_fields(&config, request).await.unwrap();
 
         assert!(result.headers().get("x-gateway-model-name").is_none());
+    }
+
+    /// Verifies forward_directly preserves request framing across all common cases.
+    #[tokio::test]
+    #[allow(clippy::disallowed_methods)]
+    async fn test_direct_forward_preserves_request_framing() {
+        use std::sync::Arc;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        use crate::config::ingress::OHttpArgs;
+        use crate::config::ra::RaArgs;
+        use crate::config::{DirectForwardRule, DirectForwardRules};
+        use crate::tunnel::endpoint::TngEndpoint;
+        use crate::tunnel::ra_context::RaContext;
+
+        let listener = Arc::new(TcpListener::bind("127.0.0.1:0").await.unwrap());
+        let port = listener.local_addr().unwrap().port();
+
+        let shutdown = tokio_graceful::Shutdown::new(futures::future::pending::<()>());
+        let layer = Arc::new(
+            OHttpSecurityLayer::new(
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                None,
+                &OHttpArgs {
+                    direct_forward: Some(DirectForwardRules(vec![DirectForwardRule {
+                        http_path: "/.*".to_owned(),
+                    }])),
+                    ..Default::default()
+                },
+                Arc::new(RaContext::from_ra_args(&RaArgs::NoRa).await.unwrap()),
+                TokioRuntime::current(shutdown.guard()).unwrap(),
+            )
+            .await
+            .unwrap(),
+        );
+        let endpoint = TngEndpoint::new("127.0.0.1", port).with_scheme("http");
+
+        // Send a request and return the raw bytes the upstream received
+        let forward = |req: axum::extract::Request| {
+            let l = listener.clone();
+            let layer = layer.clone();
+            let endpoint = endpoint.clone();
+            async move {
+                let srv = tokio::spawn(async move {
+                    let (mut s, _) = l.accept().await.unwrap();
+                    let mut buf = vec![0u8; 8192];
+                    let n = s.read(&mut buf).await.unwrap();
+                    s.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                        .await
+                        .unwrap();
+                    String::from_utf8_lossy(&buf[..n]).to_string()
+                });
+                layer.forward_http_request(&endpoint, req).await.unwrap();
+                srv.await.unwrap()
+            }
+        };
+
+        // GET with Body::empty (sidecar path)
+        let raw = forward(
+            axum::extract::Request::builder()
+                .method("GET")
+                .uri(format!("http://127.0.0.1:{port}/v1/models"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            !raw.to_lowercase().contains("transfer-encoding"),
+            "GET (empty): {raw}"
+        );
+
+        // GET with Body::from_stream (Python SDK path — empty duplex)
+        let (rd, wr) = tokio::io::duplex(1024);
+        drop(wr);
+        let raw = forward(
+            axum::extract::Request::builder()
+                .method("GET")
+                .uri(format!("http://127.0.0.1:{port}/v1/models"))
+                .body(Body::from_stream(tokio_util::io::ReaderStream::new(rd)))
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            !raw.to_lowercase().contains("transfer-encoding"),
+            "GET (stream): {raw}"
+        );
+
+        // POST with Content-Length
+        let raw = forward(
+            axum::extract::Request::builder()
+                .method("POST")
+                .uri(format!("http://127.0.0.1:{port}/v1/chat"))
+                .header("content-length", "11")
+                .body(Body::from("hello world"))
+                .unwrap(),
+        )
+        .await;
+        assert!(
+            raw.to_lowercase().contains("content-length: 11"),
+            "POST CL: {raw}"
+        );
+        assert!(
+            !raw.to_lowercase().contains("transfer-encoding"),
+            "POST CL TE: {raw}"
+        );
+        assert!(raw.ends_with("hello world"), "POST CL body: {raw}");
+
+        // POST streaming (no Content-Length)
+        let (mut tx, rx) = tokio::io::duplex(1024);
+        let req = axum::extract::Request::builder()
+            .method("POST")
+            .uri(format!("http://127.0.0.1:{port}/v1/stream"))
+            .body(Body::from_stream(tokio_util::io::ReaderStream::new(rx)))
+            .unwrap();
+        let l = listener.clone();
+        let srv = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut tmp = [0u8; 4096];
+            loop {
+                let n = s.read(&mut tmp).await.unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&tmp[..n]);
+                if buf.windows(8).any(|w| w == b"streamed") {
+                    break;
+                }
+            }
+            s.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok")
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&buf).to_string()
+        });
+        let fwd = tokio::spawn({
+            let layer = layer.clone();
+            let endpoint = endpoint.clone();
+            async move { layer.forward_http_request(&endpoint, req).await.unwrap() }
+        });
+        tx.write_all(b"streamed").await.unwrap();
+        drop(tx);
+        fwd.await.unwrap();
+        let raw = srv.await.unwrap();
+        assert!(raw.contains("streamed"), "POST stream body: {raw}");
+        assert!(
+            !raw.to_lowercase().contains("content-length"),
+            "POST stream CL: {raw}"
+        );
     }
 }

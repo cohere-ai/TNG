@@ -241,6 +241,7 @@ jobs:
               python3 -m venv /workspace/.venv
               /workspace/.venv/bin/pip install maturin httpx pytest
               cd /workspace/cohere/python/cohere-tng && /workspace/.venv/bin/maturin develop
+              /workspace/.venv/bin/pip install -e /workspace/cohere/python/conseel
 
               # Python unit tests (no network needed)
               /workspace/.venv/bin/pytest /workspace/cohere/python/cohere-tng/tests/ -v

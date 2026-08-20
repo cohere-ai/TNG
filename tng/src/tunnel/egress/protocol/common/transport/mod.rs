@@ -1,10 +1,11 @@
 use std::time::Duration;
 
 use crate::{
-    config::egress::{DirectForwardRules, OHttpArgs},
+    config::{egress::OHttpArgs, DirectForwardRules},
     tunnel::{
         stream::CommonStreamTrait,
         utils::{
+            direct_forward::DirectForwardTrafficDetector,
             http_inspector::{HttpRequestInspector, InspectionResult},
             runtime::TokioRuntime,
         },
@@ -12,11 +13,9 @@ use crate::{
 };
 
 use anyhow::{bail, Context as _, Result};
-use direct_forward::DirectForwardTrafficDetector;
 use timeout::FirstByteReadTimeoutStream;
 use tracing::Instrument;
 
-mod direct_forward;
 mod timeout;
 
 /// Timeout before we receive first byte from peer, This is essential to make it fasts fail quickly when a none tng client is connected to tng server unexpectedly.
