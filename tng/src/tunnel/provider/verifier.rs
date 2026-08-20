@@ -1,6 +1,6 @@
 use rats_cert::errors::*;
 #[cfg(feature = "__coco-builtin-as")]
-use rats_cert::tee::coco::verifier::coco_builtin::CocoBuiltinVerifier;
+use rats_cert::tee::coco::verifier::builtin::CocoBuiltinVerifier;
 use rats_cert::tee::coco::verifier::remote::CocoRemoteVerifier;
 use rats_cert::tee::ita::ItaVerifier;
 use rats_cert::tee::{GenericVerifier, ReportData};

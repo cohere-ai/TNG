@@ -10,7 +10,7 @@ use crate::{errors::*, tee::GenericVerifier};
 
 /// Verifier for tokens minted by the in-process [`CocoBuiltinConverter`].
 ///
-/// [`CocoBuiltinConverter`]: crate::tee::coco::converter::coco_builtin::CocoBuiltinConverter
+/// [`CocoBuiltinConverter`]: crate::tee::coco::converter::builtin::CocoBuiltinConverter
 pub struct CocoBuiltinVerifier {
     inner: CommonCocoVerifier,
 
