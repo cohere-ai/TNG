@@ -24,7 +24,9 @@ const TEE_CLASSES: &[&str] = &["cpu", "gpu", "switch", "ppcie"];
 /// device does turn up with no policy installed for its class, that lookup misses and the whole
 /// appraisal fails with `PolicyNotFound`, so the omission fails closed rather than admitting the
 /// device.
-const CPU_TEE_CLASS: &str = "cpu";
+///
+/// Public so the configuration can require this class of a peer by default.
+pub const CPU_TEE_CLASS: &str = "cpu";
 
 /// The rule the EAR broker reads an appraisal's trust claims from.
 const TRUST_CLAIMS_RULE: &str = "data.policy.trust_claims";
