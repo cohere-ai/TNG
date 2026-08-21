@@ -75,6 +75,17 @@ impl OHttpSecurityLayer {
         ra_context: Arc<RaContext>,
         runtime: TokioRuntime,
     ) -> Result<Self> {
+        // The HTTP client cannot set SO_MARK on its own sockets, so an ingress that relies on a
+        // mark to keep its iptables rules from capturing TNG's own egress traffic would send this
+        // client's requests back into the tunnel. Refuse the combination instead of looping.
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        if transport_so_mark.is_some() {
+            anyhow::bail!(
+                "The `ohttp` protocol is not supported on an ingress that requires SO_MARK (such as `netfilter`). \
+                 Use the `rats_tls` protocol with a `netfilter` ingress, or switch the ingress to `mapping`, `http_proxy` or `socks5`."
+            );
+        }
+
         let http_client = {
             let mut builder = reqwest::Client::builder();
             builder = builder.default_headers({
@@ -99,11 +110,9 @@ impl OHttpSecurityLayer {
                 // builder = builder.tcp_user_timeout(Duration::from_secs(TCP_USER_TIMEOUT_SECS as u64));
             }
 
-            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-            {
-                builder = builder.tcp_mark(transport_so_mark);
-            }
-
+            // On wasm32 the browser owns the trust store: reqwest exposes neither
+            // `Certificate` nor `add_root_certificate`, and there is no filesystem to read from.
+            #[cfg(not(wasm))]
             for path in &ohttp_args.tls_ca_certs {
                 let pem = std::fs::read(path)
                     .with_context(|| format!("Failed to read TLS CA cert: {path}"))?;
@@ -114,9 +123,16 @@ impl OHttpSecurityLayer {
                 }
             }
 
-            builder = builder.redirect(reqwest::redirect::Policy::none());
-            builder = builder.no_proxy();
-            builder = builder.no_gzip().no_brotli().no_zstd();
+            // On wasm32 fetch owns all three of these, so reqwest exposes no way to set them: the
+            // browser applies its own redirect and proxy behaviour and decodes Content-Encoding
+            // transparently. A wasm ingress therefore follows redirects rather than surfacing them,
+            // which is the browser's policy and not ours to override.
+            #[cfg(not(wasm))]
+            {
+                builder = builder.redirect(reqwest::redirect::Policy::none());
+                builder = builder.no_proxy();
+                builder = builder.no_gzip().no_brotli().no_zstd();
+            }
 
             builder.build()?
         };
@@ -284,7 +300,16 @@ impl OHttpSecurityLayer {
 
         let status = response.status();
         let headers = response.headers().clone();
-        let resp_body_stream = response.bytes_stream();
+
+        // Streamed natively, buffered on wasm: fetch's response stream is built on JS futures and so
+        // is not `Send`, which `Body::from_stream` requires. Buffering costs the memory of one
+        // response body, which the browser would hold anyway.
+        #[cfg(not(wasm))]
+        let resp_body = axum::body::Body::from_stream(response.bytes_stream());
+        #[cfg(wasm)]
+        let resp_body = axum::body::Body::from(response.bytes().await.map_err(|e| {
+            TngError::DirectForwardFailed(anyhow::anyhow!("reading upstream response failed: {e}"))
+        })?);
 
         let mut resp = axum::response::Response::builder().status(status);
         for (name, value) in headers.iter() {
@@ -293,11 +318,9 @@ impl OHttpSecurityLayer {
             }
             resp = resp.header(name, value);
         }
-        let resp = resp
-            .body(axum::body::Body::from_stream(resp_body_stream))
-            .map_err(|e| {
-                TngError::DirectForwardFailed(anyhow::anyhow!("response build failed: {e}"))
-            })?;
+        let resp = resp.body(resp_body).map_err(|e| {
+            TngError::DirectForwardFailed(anyhow::anyhow!("response build failed: {e}"))
+        })?;
 
         Ok((resp, None))
     }
