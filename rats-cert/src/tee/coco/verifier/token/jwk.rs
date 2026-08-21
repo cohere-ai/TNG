@@ -501,7 +501,7 @@ mod tests {
         let tmp_dir = tempfile::tempdir().expect("to get tmpdir");
         let jwks_file = tmp_dir.path().join("test.jwks");
 
-        let _ = tokio::fs::write(&jwks_file, json)
+        tokio::fs::write(&jwks_file, json)
             .await
             .expect("to get testdata written to tmpdir");
 
