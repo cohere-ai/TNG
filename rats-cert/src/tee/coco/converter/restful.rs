@@ -7,12 +7,13 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use kbs_types::Tee;
 use reqwest::Client;
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::json;
 use serde_json::Value;
 
-use super::super::evidence::{AttestationServiceHashAlgo, CocoAsToken, CocoEvidence};
+use super::super::evidence::{
+    tee_to_string, AttestationServiceHashAlgo, CocoAsToken, CocoEvidence,
+};
 use crate::errors::*;
 use crate::tee::coco::converter::convert_additional_evidence;
 use crate::tee::coco::converter::CoCoNonce;
@@ -38,6 +39,7 @@ impl CocoRestfulConverter {
         as_addr: &str,
         policy_ids: &Vec<String>,
         as_headers: &HashMap<String, String>,
+        as_ca_certs: &[String],
     ) -> Result<Self> {
         let mut headers = reqwest::header::HeaderMap::new();
         for (k, v) in as_headers {
@@ -53,6 +55,23 @@ impl CocoRestfulConverter {
             let mut builder = reqwest::Client::builder()
                 .user_agent(format!("rats-rs/{}", env!("CARGO_PKG_VERSION")));
             builder = builder.default_headers(headers);
+            for path in as_ca_certs {
+                let pem = std::fs::read(path).map_err(|source| {
+                    Error::ReadAttestationServiceCaCertFailed {
+                        path: path.clone(),
+                        source,
+                    }
+                })?;
+                let certs = reqwest::Certificate::from_pem_bundle(&pem).map_err(|source| {
+                    Error::ParseAttestationServiceCaCertFailed {
+                        path: path.clone(),
+                        source,
+                    }
+                })?;
+                for cert in certs {
+                    builder = builder.add_root_certificate(cert);
+                }
+            }
             #[cfg(unix)]
             let builder =
                 builder.connect_timeout(Duration::from_secs(RESTFUL_AS_CONNECT_TIMEOUT_DEFAULT));
@@ -69,6 +88,13 @@ impl CocoRestfulConverter {
     }
 }
 
+fn serialize_tee<S>(tee: &Tee, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&tee_to_string(*tee).map_err(serde::ser::Error::custom)?)
+}
+
 mod as_api {
     pub mod v1_5_2 {
         use super::super::*;
@@ -76,6 +102,7 @@ mod as_api {
         // Copy from https://github.com/confidential-containers/trustee/blob/7dbd42f0baeb3d26d75d43ab73b29a168d584472/attestation-service/attestation-service/src/bin/restful/mod.rs#L36-L45
         #[derive(Debug, Serialize, Deserialize)]
         pub struct AttestationRequest {
+            #[serde(serialize_with = "serialize_tee")]
             pub tee: Tee,
             pub evidence: String,
             pub runtime_data: Option<Data>,
@@ -105,6 +132,7 @@ mod as_api {
 
         #[derive(Debug, Serialize, Deserialize)]
         pub struct IndividualAttestationRequest {
+            #[serde(serialize_with = "serialize_tee")]
             pub tee: Tee,
             pub evidence: String,
             pub runtime_data: Option<RuntimeData>,
@@ -112,7 +140,7 @@ mod as_api {
             pub runtime_data_hash_algorithm: Option<String>,
         }
 
-        #[derive(Debug, Serialize, Deserialize)]
+        #[derive(Clone, Debug, Serialize, Deserialize)]
         #[serde(rename_all = "snake_case")]
         pub enum RuntimeData {
             Raw(String),
@@ -222,35 +250,35 @@ impl CocoRestfulConverter {
 
         let runtime_data_hash_algorithm =
             AttestationServiceHashAlgo::from(in_evidence.get_aa_runtime_data_hash_algo()).str_id();
+        let runtime_data = as_api::v1_6_0::RuntimeData::Structured(
+            serde_json::from_str(in_evidence.aa_runtime_data_ref())
+                .map_err(Error::ParseRuntimeDataJsonFailed)?,
+        );
 
         let url = format!("{}/attestation", self.as_addr);
-        let body = as_api::v1_6_0::AttestationRequest {
-            verification_requests: std::iter::once(as_api::v1_6_0::IndividualAttestationRequest {
-                tee: *in_evidence.get_tee_type(),
-                evidence: URL_SAFE_NO_PAD.encode(in_evidence.aa_evidence_ref()),
-                init_data: None, // TODO: add support for init_data when support on AA is ready
-                runtime_data: Some(as_api::v1_6_0::RuntimeData::Structured(
-                    serde_json::from_str(in_evidence.aa_runtime_data_ref())
-                        .map_err(Error::ParseRuntimeDataJsonFailed)?,
-                )),
-                runtime_data_hash_algorithm: Some(runtime_data_hash_algorithm.into()),
-            })
-            .chain(
-                convert_additional_evidence(in_evidence)?
-                    .iter()
-                    .map(|(tee_type, evidence)| {
-                        as_api::v1_6_0::IndividualAttestationRequest {
-                            tee: *tee_type,
-                            evidence: URL_SAFE_NO_PAD.encode(evidence.to_string()),
-                            init_data: None,
-                            runtime_data: None, // Always None for additional evidence
-                            runtime_data_hash_algorithm: None,
-                        }
-                    }),
-            )
-            .collect::<Vec<_>>(),
-            policy_ids: self.policy_ids.clone(),
-        };
+        let body =
+            as_api::v1_6_0::AttestationRequest {
+                verification_requests: std::iter::once(
+                    as_api::v1_6_0::IndividualAttestationRequest {
+                        tee: *in_evidence.get_tee_type(),
+                        evidence: URL_SAFE_NO_PAD.encode(in_evidence.aa_evidence_ref()),
+                        init_data: None, // TODO: add support for init_data when support on AA is ready
+                        runtime_data: Some(runtime_data.clone()),
+                        runtime_data_hash_algorithm: Some(runtime_data_hash_algorithm.to_owned()),
+                    },
+                )
+                .chain(convert_additional_evidence(in_evidence)?.iter().map(
+                    |(tee_type, evidence)| as_api::v1_6_0::IndividualAttestationRequest {
+                        tee: *tee_type,
+                        evidence: URL_SAFE_NO_PAD.encode(evidence.to_string()),
+                        init_data: None,
+                        runtime_data: Some(runtime_data.clone()),
+                        runtime_data_hash_algorithm: Some(runtime_data_hash_algorithm.to_owned()),
+                    },
+                ))
+                .collect::<Vec<_>>(),
+                policy_ids: self.policy_ids.clone(),
+            };
         let client = self.client.clone();
 
         let fut = async move {
@@ -394,4 +422,29 @@ pub struct GetChallengeResponse {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ExtraParams {
     pub jwt: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serializes_azure_tee_names_for_restful_as() {
+        let request = as_api::v1_6_0::AttestationRequest {
+            verification_requests: vec![as_api::v1_6_0::IndividualAttestationRequest {
+                tee: Tee::AzSnpVtpm,
+                evidence: String::new(),
+                runtime_data: None,
+                init_data: None,
+                runtime_data_hash_algorithm: None,
+            }],
+            policy_ids: vec![],
+        };
+
+        let json = serde_json::to_value(request).unwrap();
+        assert_eq!(
+            json.pointer("/verification_requests/0/tee").unwrap(),
+            "az-snp-vtpm"
+        );
+    }
 }

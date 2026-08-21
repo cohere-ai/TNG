@@ -48,6 +48,20 @@ pub enum Error {
     #[error("No trust source provided (neither trusted_certs_paths nor as_addr)")]
     NoTrustSource,
 
+    #[error("Failed to read Attestation Service CA certificate `{path}`")]
+    ReadAttestationServiceCaCertFailed {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("Failed to parse Attestation Service CA certificate `{path}`")]
+    ParseAttestationServiceCaCertFailed {
+        path: String,
+        #[source]
+        source: reqwest::Error,
+    },
+
     // gRPC AS related errors
     #[cfg(not(all(
         target_arch = "wasm32",

@@ -113,6 +113,7 @@ pub mod tests {
                                 as_addr: "http://127.0.0.1:8080/".to_owned(),
                                 policy_ids: vec!["default".to_owned()],
                                 as_headers: Default::default(),
+                                as_ca_certs: vec![],
                             }),
                             verifier: VerifierArgs::Coco(CocoVerifierArgs::Restful {
                                 as_addr: Some("http://127.0.0.1:8080/".to_owned()),

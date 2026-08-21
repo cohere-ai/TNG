@@ -492,6 +492,9 @@ pub enum CocoConverterArgs {
         /// Custom headers to be sent with attestation service requests
         #[serde(default)]
         as_headers: HashMap<String, String>,
+        /// CA certificate bundles used to authenticate the Attestation Service
+        #[serde(default)]
+        as_ca_certs: Vec<String>,
     },
     /// gRPC API
     Grpc {
