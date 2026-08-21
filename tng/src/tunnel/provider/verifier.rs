@@ -1,13 +1,21 @@
 use rats_cert::errors::*;
-use rats_cert::tee::coco::verifier::CocoVerifier;
+#[cfg(feature = "__coco-builtin-as")]
+use rats_cert::tee::coco::verifier::builtin::CocoBuiltinVerifier;
+use rats_cert::tee::coco::verifier::remote::CocoRemoteVerifier;
 use rats_cert::tee::ita::ItaVerifier;
 use rats_cert::tee::{GenericVerifier, ReportData};
 
 use super::token::TngToken;
 
 /// Provider-polymorphic verifier. Verifies an AS token against report data.
+///
+/// `Coco` covers both service interfaces, since verifying a token does not depend on how it was
+/// fetched. `CocoBuiltin` is separate because it trusts the ephemeral key of the service running in
+/// this process rather than a configured certificate.
 pub enum TngVerifier {
-    Coco(CocoVerifier),
+    Coco(CocoRemoteVerifier),
+    #[cfg(feature = "__coco-builtin-as")]
+    CocoBuiltin(CocoBuiltinVerifier),
     Ita(ItaVerifier),
 }
 
@@ -15,6 +23,8 @@ impl TngVerifier {
     pub fn provider_type(&self) -> super::provider_type::ProviderType {
         match self {
             Self::Coco(_) => super::provider_type::ProviderType::Coco,
+            #[cfg(feature = "__coco-builtin-as")]
+            Self::CocoBuiltin(_) => super::provider_type::ProviderType::Coco,
             Self::Ita(_) => super::provider_type::ProviderType::Ita,
         }
     }
@@ -27,6 +37,9 @@ impl GenericVerifier for TngVerifier {
     async fn verify_evidence(&self, token: &TngToken, report_data: &ReportData) -> Result<()> {
         match (self, token) {
             (Self::Coco(v), TngToken::Coco(t)) => v.verify_evidence(t, report_data).await,
+            // A builtin service still mints a CoCo AS token, so it pairs with the same token type.
+            #[cfg(feature = "__coco-builtin-as")]
+            (Self::CocoBuiltin(v), TngToken::Coco(t)) => v.verify_evidence(t, report_data).await,
             (Self::Ita(v), TngToken::Ita(t)) => v.verify_evidence(t, report_data).await,
             _ => Err(Error::IncompatibleTypes {
                 detail: "verifier and token provider mismatch".to_string(),

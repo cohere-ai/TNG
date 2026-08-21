@@ -8,9 +8,17 @@ use super::evidence::{AttestationServiceHashAlgo, CocoAsToken, CocoEvidence};
 use crate::errors::*;
 use crate::tee::GenericConverter;
 
+#[cfg(feature = "__coco-builtin-as")]
+pub mod builtin;
 pub mod grpc;
 pub mod restful;
 
+/// The interfaces a CoCo attestation service exposes, which is to say the two ways of reaching one
+/// over the network.
+///
+/// [`builtin::CocoBuiltinConverter`] is deliberately not a variant. It runs the service in this
+/// process rather than talking to one, so it is a peer of this type rather than a member of it, and
+/// callers select between them the way the configuration does.
 pub enum CocoConverter {
     Grpc(CocoGrpcConverter),
     Restful(CocoRestfulConverter),

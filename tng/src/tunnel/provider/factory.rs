@@ -1,11 +1,17 @@
+#[cfg(feature = "__coco-builtin-as")]
+use std::path::Path;
+
+#[cfg(feature = "__coco-builtin-as")]
+use anyhow::Context as _;
 use anyhow::Result;
 #[cfg(unix)]
 use rats_cert::tee::coco::attester::CocoAttester;
+#[cfg(feature = "__coco-builtin-as")]
+use rats_cert::tee::coco::converter::builtin::CocoBuiltinConverter;
 use rats_cert::tee::coco::converter::grpc::CocoGrpcConverter;
 use rats_cert::tee::coco::converter::restful::CocoRestfulConverter;
 use rats_cert::tee::coco::converter::CocoConverter;
 use rats_cert::tee::coco::verifier::remote::CocoRemoteVerifier;
-use rats_cert::tee::coco::verifier::CocoVerifier;
 
 #[cfg(unix)]
 use crate::config::ra::{AttesterArgs, CocoAttesterArgs};
@@ -30,8 +36,38 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
 }
 
 /// Instantiate a `TngConverter` from config. Dispatches on provider, then sub-type.
-pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
+pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
     match config {
+        #[cfg(feature = "__coco-builtin-as")]
+        ConverterArgs::CocoBuiltin {
+            policy_dir,
+            policy_ids,
+            required_tee_classes,
+            verifier_config,
+        } => {
+            // Validation has already established that there is exactly one.
+            let policy_id = policy_ids
+                .first()
+                .context("A 'coco_builtin' converter needs one policy id")?;
+
+            // Read here rather than lazily: an ingress with no usable policy can verify nothing,
+            // so failing now surfaces the problem at startup instead of on the first handshake.
+            let policies = rats_cert::tee::coco::converter::builtin::policy::load_from_dir(
+                Path::new(policy_dir),
+                policy_id,
+            )
+            .await?;
+
+            Ok(TngConverter::CocoBuiltin(
+                CocoBuiltinConverter::new(
+                    policy_id,
+                    &policies,
+                    verifier_config.clone(),
+                    required_tee_classes,
+                )
+                .await?,
+            ))
+        }
         ConverterArgs::Coco(coco) => match coco {
             CocoConverterArgs::Restful {
                 as_addr,
@@ -56,6 +92,14 @@ pub fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
 /// Instantiate a `TngVerifier` from config. Dispatches on provider, then sub-type.
 pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
     match config {
+        // Unreachable in a validated configuration: `VerifyContext::from_verify_args` handles this
+        // variant before calling here, and passport mode is rejected at config validation. It
+        // cannot be served from args in any case, because the variant carries no fields and the
+        // ephemeral signing key and policy id a builtin verifier needs live in the converter.
+        #[cfg(feature = "__coco-builtin-as")]
+        VerifierArgs::CocoBuiltin => anyhow::bail!(
+            "A `coco_builtin` verifier cannot be built from configuration alone; it is derived from the `coco_builtin` converter it is paired with in background_check mode"
+        ),
         VerifierArgs::Coco(coco) => match coco {
             CocoVerifierArgs::Restful {
                 as_addr,
@@ -70,10 +114,10 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
                         as_headers: as_headers.clone(),
                     }
                 });
-                Ok(TngVerifier::Coco(CocoVerifier::Remote(
+                Ok(TngVerifier::Coco(
                     CocoRemoteVerifier::new(&as_addr_config, trusted_certs_paths, policy_ids)
                         .await?,
-                )))
+                ))
             }
             CocoVerifierArgs::Grpc {
                 as_addr,
@@ -88,10 +132,10 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
                         as_headers: as_headers.clone(),
                     }
                 });
-                Ok(TngVerifier::Coco(CocoVerifier::Remote(
+                Ok(TngVerifier::Coco(
                     CocoRemoteVerifier::new(&as_addr_config, trusted_certs_paths, policy_ids)
                         .await?,
-                )))
+                ))
             }
         },
         VerifierArgs::Ita(args) => Ok(TngVerifier::Ita(args.to_verifier()?)),

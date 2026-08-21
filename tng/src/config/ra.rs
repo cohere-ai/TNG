@@ -213,6 +213,19 @@ impl RaArgsUnchecked {
                 VerifyArgs::Passport { verifier }
                 | VerifyArgs::BackgroundCheck { verifier, .. } => {
                     match verifier {
+                        // This verifier only accepts tokens signed by the in-process service it was
+                        // derived from, and in passport mode the token is minted by the peer's
+                        // attestation service instead, which holds a different key. Every
+                        // handshake would fail, so refuse the combination up front rather than at
+                        // the first connection.
+                        #[cfg(feature = "__coco-builtin-as")]
+                        VerifierArgs::CocoBuiltin => {
+                            if matches!(verify_args, VerifyArgs::Passport { .. }) {
+                                return Err(TngError::InvalidParameter(anyhow!(
+                                    "The 'coco_builtin' verifier cannot be used in passport mode, because it only accepts tokens minted by the builtin attestation service in this process, not ones the peer brings from its own. Use 'background_check' instead."
+                                )));
+                            }
+                        }
                         VerifierArgs::Coco(coco_verifier) => match coco_verifier {
                             CocoVerifierArgs::Restful {
                                 as_addr,
@@ -257,8 +270,69 @@ impl RaArgsUnchecked {
             };
 
             // Check if as_addr is a valid URL (for Restful/Grpc types)
-            if let VerifyArgs::BackgroundCheck { converter, .. } = verify_args {
+            if let VerifyArgs::BackgroundCheck {
+                converter,
+                verifier,
+            } = verify_args
+            {
+                #[cfg(not(feature = "__coco-builtin-as"))]
+                let _ = verifier;
+
+                // The two halves of the builtin service are one unit: the verifier reads the
+                // signing key and policy id out of the converter. Pairing it with anything else
+                // would fail at the first handshake with an error about an unknown policy rather
+                // than about the misconfiguration that caused it.
+                #[cfg(feature = "__coco-builtin-as")]
+                {
+                    let converter_is_builtin =
+                        matches!(converter, ConverterArgs::CocoBuiltin { .. });
+                    let verifier_is_builtin = matches!(verifier, VerifierArgs::CocoBuiltin);
+
+                    if converter_is_builtin != verifier_is_builtin {
+                        return Err(TngError::InvalidParameter(anyhow!(
+                            "'coco_builtin' must be set as the as_provider of both the converter and the verifier, or of neither"
+                        )));
+                    }
+                }
+
                 match converter {
+                    #[cfg(feature = "__coco-builtin-as")]
+                    ConverterArgs::CocoBuiltin {
+                        policy_dir,
+                        policy_ids,
+                        ..
+                    } => {
+                        // No policy is compiled into the binary, so an ingress whose policy
+                        // directory is missing could never verify anything.
+                        if !Path::new(policy_dir).is_dir() {
+                            return Err(TngError::InvalidParameter(anyhow!(
+                                "Policy directory does not exist: {policy_dir}"
+                            )));
+                        }
+
+                        // The EAR token broker enforces the first id and warns that it ignored the
+                        // rest, so accepting a longer list would silently enforce less than asked.
+                        if policy_ids.len() != 1 {
+                            return Err(TngError::InvalidParameter(anyhow!(
+                                "The 'coco_builtin' provider requires exactly one entry in 'policy_ids', naming the policies to read from {policy_dir} as {{policy_id}}_{{tee_class}}.rego, but {} were given",
+                                policy_ids.len()
+                            )));
+                        }
+
+                        // The id becomes both a filename and a storage key, and the attestation
+                        // service rejects a key outside this set. Catching it here names the field
+                        // at fault instead of failing later inside `set_policy`.
+                        let id = &policy_ids[0];
+                        if id.is_empty()
+                            || !id
+                                .chars()
+                                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                        {
+                            return Err(TngError::InvalidParameter(anyhow!(
+                                "Invalid policy id {id:?}: only ASCII letters, digits, '-', '_' and '.' are allowed"
+                            )));
+                        }
+                    }
                     ConverterArgs::Coco(coco_converter) => match coco_converter {
                         CocoConverterArgs::Restful { as_addr, .. }
                         | CocoConverterArgs::Grpc { as_addr, .. } => {
@@ -367,11 +441,67 @@ fn default_ita_portal_url() -> String {
     DEFAULT_ITA_PORTAL_URL.to_string()
 }
 
+/// Where the builtin attestation service looks for its Rego policies.
+///
+/// Nothing is compiled into the binary, so this directory has to exist and hold a CPU policy
+/// before an ingress using the builtin service will start.
+#[cfg(feature = "__coco-builtin-as")]
+const DEFAULT_POLICY_DIR: &str = "/etc/tng/policies";
+
+#[cfg(feature = "__coco-builtin-as")]
+fn default_policy_dir() -> String {
+    DEFAULT_POLICY_DIR.to_string()
+}
+
+#[cfg(feature = "__coco-builtin-as")]
+fn default_required_tee_classes() -> Vec<String> {
+    vec![rats_cert::tee::coco::converter::builtin::policy::CPU_TEE_CLASS.to_owned()]
+}
+
 /// Provider-tagged converter config. Serde reads "as_provider" from flat JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "as_provider", rename_all = "snake_case")]
 pub enum ConverterArgs {
     Coco(CocoConverterArgs),
+    /// Upstream CoCo attestation service running in this process, with no remote AS involved.
+    ///
+    /// A provider of its own rather than an `as_type` under `coco`, because it shares no settings
+    /// with the remote CoCo types: there is no address to reach, no headers to send and no
+    /// certificates to trust.
+    #[cfg(feature = "__coco-builtin-as")]
+    CocoBuiltin {
+        /// Directory the Rego policies are read from
+        #[serde(default = "default_policy_dir")]
+        policy_dir: String,
+        /// Policy ID list, naming the policies in `policy_dir` to enforce
+        ///
+        /// A policy is read from `{policy_id}_{tee_class}.rego`, mirroring how the attestation
+        /// service names a policy in its own storage, so one directory can hold several sets. A
+        /// list to match the attestation service's request field and the other providers here,
+        /// though its EAR token broker only ever honours one, so exactly one is required.
+        policy_ids: Vec<String>,
+        /// TEE classes a peer must attest, rejecting it if any is absent
+        ///
+        /// A policy cannot express this, because policies are only evaluated against the evidence
+        /// that arrived: a peer that never offers its GPU is appraised on its CPU alone, and the
+        /// `gpu` policy is never consulted no matter how strict it is.
+        ///
+        /// Defaults to `cpu`, because the class of a peer's primary evidence is whatever its agent
+        /// reports it to be, and nothing else here ties that to a CPU. A peer presenting only
+        /// device evidence would otherwise mint a token holding a single non-CPU appraisal and be
+        /// accepted, so requiring the class is what makes "the peer runs in a confidential VM" a
+        /// property this side checks rather than assumes. Add `gpu` to demand the device too, or
+        /// set this to `[]` to accept whatever the peer presents.
+        ///
+        /// Always serialized, unlike the optional fields around it: with a non-empty default, an
+        /// omitted field and an explicit `[]` mean different things, so a round trip through JSON
+        /// has to preserve which one was written.
+        #[serde(default = "default_required_tee_classes")]
+        required_tee_classes: Vec<String>,
+        /// Passed through to the attestation service's per-TEE verifier configuration
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verifier_config: Option<serde_json::Value>,
+    },
     Ita(ItaConverterArgs),
 }
 
@@ -471,6 +601,13 @@ pub enum CocoConverterArgs {
 #[serde(tag = "as_provider", rename_all = "snake_case")]
 pub enum VerifierArgs {
     Coco(CocoVerifierArgs),
+    /// Counterpart to [`ConverterArgs::CocoBuiltin`].
+    ///
+    /// Carries no settings of its own: the token it checks is signed with an ephemeral key held by
+    /// the converter, so the key and the policy id it accepts both come from there rather than
+    /// from configuration.
+    #[cfg(feature = "__coco-builtin-as")]
+    CocoBuiltin,
     Ita(ItaVerifierArgs),
 }
 
@@ -1132,6 +1269,91 @@ mod tests {
         // Test serialization
         let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
         assert!(serialized.contains(r#""as_type":"grpc""#));
+    }
+
+    /// The builtin service is selected with `as_provider` rather than an `as_type` under `coco`,
+    /// because it shares no settings with the remote CoCo types. Both halves of a background_check
+    /// verifier flatten from that one tag, so naming it once configures the pair.
+    #[cfg(feature = "__coco-builtin-as")]
+    #[test]
+    fn test_coco_builtin_is_selected_by_as_provider() {
+        let json = json!({
+            "verify": {
+                "as_provider": "coco_builtin",
+                "policy_dir": "/etc/tng/policies",
+                "policy_ids": ["myorg"]
+            }
+        });
+
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
+
+        match &ra_args.verify {
+            Some(VerifyArgs::BackgroundCheck {
+                converter,
+                verifier,
+            }) => {
+                match converter {
+                    ConverterArgs::CocoBuiltin {
+                        policy_dir,
+                        policy_ids,
+                        ..
+                    } => {
+                        assert_eq!(policy_dir, "/etc/tng/policies");
+                        assert_eq!(policy_ids, &vec!["myorg"]);
+                    }
+                    _ => panic!("Expected CocoBuiltin converter"),
+                }
+                assert!(matches!(verifier, VerifierArgs::CocoBuiltin));
+            }
+            _ => panic!("Expected BackgroundCheck variant"),
+        }
+
+        let serialized = serde_json::to_string(&ra_args).expect("Failed to serialize");
+        assert!(serialized.contains(r#""as_provider":"coco_builtin""#));
+        // No sub-type tag should be injected for a provider that has no sub-types.
+        assert!(!serialized.contains(r#""as_type""#));
+    }
+
+    /// A list of any length but one would enforce something other than what was asked for, since
+    /// the broker takes the first id and only warns about the rest; and an id outside the storage
+    /// key charset would fail later inside `set_policy` instead.
+    #[cfg(feature = "__coco-builtin-as")]
+    #[test]
+    fn test_coco_builtin_rejects_unusable_policy_ids() {
+        for policy_ids in [json!([]), json!(["one", "two"]), json!(["my policy!"])] {
+            let json = json!({
+                "verify": {
+                    "as_provider": "coco_builtin",
+                    "policy_dir": "/tmp",
+                    "policy_ids": policy_ids
+                }
+            });
+
+            let ra_args: RaArgsUnchecked =
+                serde_json::from_value(json).expect("Failed to deserialize");
+
+            ra_args
+                .into_checked()
+                .expect_err(&format!("{policy_ids} should be rejected"));
+        }
+    }
+
+    /// Omitting `policy_dir` has to be allowed, since a deployment installing policies at the
+    /// default location should not have to name it.
+    #[cfg(feature = "__coco-builtin-as")]
+    #[test]
+    fn test_coco_builtin_policy_dir_defaults() {
+        let json = json!({"verify": {"as_provider": "coco_builtin", "policy_ids": ["myorg"]}});
+
+        let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
+
+        match &ra_args.verify {
+            Some(VerifyArgs::BackgroundCheck {
+                converter: ConverterArgs::CocoBuiltin { policy_dir, .. },
+                ..
+            }) => assert_eq!(policy_dir, DEFAULT_POLICY_DIR),
+            _ => panic!("Expected a CocoBuiltin converter"),
+        }
     }
 
     // =====================================================================

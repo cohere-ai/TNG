@@ -58,12 +58,6 @@ impl From<AttestationServiceHashAlgo> for HashAlgo {
 
 /// Convert Tee to its string representation for API calls.
 pub fn tee_to_string(tee: Tee) -> Result<String> {
-    match tee {
-        Tee::AzSnpVtpm => return Ok("az-snp-vtpm".to_string()),
-        Tee::AzTdxVtpm => return Ok("az-tdx-vtpm".to_string()),
-        _ => {}
-    }
-
     serde_json::to_value(tee)
         .ok()
         .and_then(|v| v.as_str().map(|s| s.to_string()))
@@ -72,14 +66,6 @@ pub fn tee_to_string(tee: Tee) -> Result<String> {
 
 /// Convert Tee to its string representation for API calls.
 pub fn tee_from_str(tee_type: &str) -> Result<Tee> {
-    // Both spellings are accepted: `kbs-types` renames these to the hyphenated form, but older
-    // attestation agents built against the pre-0.13 lowercase serde emit the compact one.
-    match tee_type {
-        "az-snp-vtpm" | "azsnpvtpm" => return Ok(Tee::AzSnpVtpm),
-        "az-tdx-vtpm" | "aztdxvtpm" => return Ok(Tee::AzTdxVtpm),
-        _ => {}
-    }
-
     serde_json::from_value::<Tee>(serde_json::Value::String(tee_type.to_string())).map_err(|_| {
         Error::TeeTypeFromStringFailed {
             tee_type: tee_type.to_string(),
@@ -154,18 +140,16 @@ impl CocoEvidence {
 mod tests {
     use super::*;
 
+    /// The Azure names are the ones `kbs-types` renames rather than lowercases, so this is really a
+    /// check that we are on a version that does the rename: before 0.13 it emitted `azsnpvtpm`, and
+    /// an agent speaking that spelling now gets an unknown TEE type rather than a silent mismatch.
     #[test]
     fn azure_tee_names_use_kebab_case() {
         assert_eq!(tee_from_str("az-snp-vtpm").unwrap(), Tee::AzSnpVtpm);
         assert_eq!(tee_from_str("az-tdx-vtpm").unwrap(), Tee::AzTdxVtpm);
         assert_eq!(tee_to_string(Tee::AzSnpVtpm).unwrap(), "az-snp-vtpm");
         assert_eq!(tee_to_string(Tee::AzTdxVtpm).unwrap(), "az-tdx-vtpm");
-    }
-
-    #[test]
-    fn azure_tee_names_accept_legacy_spelling() {
-        assert_eq!(tee_from_str("azsnpvtpm").unwrap(), Tee::AzSnpVtpm);
-        assert_eq!(tee_from_str("aztdxvtpm").unwrap(), Tee::AzTdxVtpm);
+        assert!(tee_from_str("azsnpvtpm").is_err());
     }
 
     #[test]

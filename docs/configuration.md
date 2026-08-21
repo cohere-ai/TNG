@@ -472,6 +472,7 @@ In the TNG architecture, we have integrated a standardized remote attestation pr
 > **Provider selection**: The Attestation Agent stack and the Attestation Service stack are selected with **`aa_provider`** and **`as_provider`** respectively. If `aa_provider` or `as_provider` is omitted, it defaults to **`"coco"`** (Confidential Containers). Currently supported providers are:
 > - **`"coco"`** — [Confidential Containers](https://github.com/confidential-containers) (default). Interfaces with the CoCo Attestation Agent (AA) and CoCo Attestation Service.
 > - **`"ita"`** — [Intel Trust Authority](https://www.intel.com/content/www/us/en/security/trust-authority.html). Interfaces with the CoCo Attestation Agent (AA) for evidence collection and the Intel Trust Authority cloud service for attestation and token verification.
+> - **`"coco_builtin"`** (`as_provider` only) — Runs the upstream CoCo Attestation Service in the TNG process, so evidence is appraised locally with no attestation service to reach. Only available in builds that enable the corresponding feature, and only in the Background Check model. See [Using the Builtin Attestation Service Provider](#using-the-builtin-attestation-service-provider).
 > - **`"coco_asr"`** (`aa_provider` only) — Same as `"coco"` but collects evidence via the CoCo [API Server Rest](https://github.com/confidential-containers/guest-components/tree/main/api-server-rest) (ASR) HTTP proxy instead of connecting directly to the AA. Useful when TNG runs in a container without direct access to the AA Unix socket.
 > - **`"ita_asr"`** (`aa_provider` only) — Same as `"ita"` but collects evidence via the CoCo API Server Rest (ASR) HTTP proxy instead of connecting directly to the AA.
 
@@ -486,7 +487,8 @@ In TNG, you can configure any endpoint as an Attester role, enabling it to respo
 > **Current Implementation Notes**:  
 > Currently, TNG supports obtaining Evidence through the [Attestation Agent](https://github.com/confidential-containers/guest-components/tree/main/attestation-agent) (AA) either directly (`"coco"` / `"ita"` providers) or indirectly via the [API Server Rest](https://github.com/confidential-containers/guest-components/tree/main/api-server-rest) (ASR) HTTP proxy (`"coco_asr"` / `"ita_asr"` providers).  
 > The ASR providers are useful when TNG runs in a container that does not have direct access to the AA Unix socket.
-> Both the **CoCo** and **ITA** providers use the same Attestation Agent for evidence collection, but differ in how the runtime data is processed and injected into the evidence (according to the requirements of the respective attestation services).
+> Both the **CoCo** and **ITA** providers use the same Attestation Agent for evidence collection, but differ in how the runtime data is processed and injected into the evidence (according to the requirements of the respective attestation services).  
+> The Attestation Agent must be built against `kbs-types` 0.13 or newer, which is the release that renamed the Azure vTPM TEE identifiers to `az-snp-vtpm` and `az-tdx-vtpm`. An older agent reports `azsnpvtpm` and TNG rejects its evidence with an unknown TEE type error. No other TEE identifier changed in that release, so this only affects Azure confidential VMs.
 
 <a name="verify"></a>
 ### Verifier: The Decision Maker Verifying Peer Trustworthiness
@@ -675,6 +677,63 @@ Example:
 
 > [!NOTE]
 > The `api_key` can be omitted from the config JSON if the `ITA_API_KEY` environment variable is set. TNG automatically reads it from the environment at startup. This is the recommended approach for API key provisioning.
+
+<a name="using-the-builtin-attestation-service-provider"></a>
+##### Using the Builtin Attestation Service Provider
+
+When `as_provider` is set to `"coco_builtin"`, TNG appraises evidence itself using the upstream [CoCo Attestation Service](https://github.com/confidential-containers/trustee/tree/main/attestation-service) linked into the process. No attestation service has to be deployed or reachable, and the token TNG appraises is minted and consumed within the same process, signed by an ephemeral key that never leaves it.
+
+- **`as_provider`** (string): Set to `"coco_builtin"`. The same value covers both the converter and the verifier; pairing it with a different provider on either side is rejected at startup.
+- **`policy_dir`** (string, optional, default is `"/etc/tng/policies"`): Directory the Rego policies are read from. No policy is compiled into the binary, so this directory must exist and contain a CPU policy when TNG starts, otherwise startup fails.
+- **`policy_ids`** (array [string], required): Names the policy set in `policy_dir` to enforce. Exactly one entry is accepted, because the attestation service's EAR token broker honours only the first and ignores the rest. A list rather than a single string to match the field the attestation service itself takes, and the `policy_ids` of the other providers here.
+- **`required_tee_classes`** (array [string], optional, default is `["cpu"]`): TEE classes the peer must attest. A peer that does not present a required class is rejected. This cannot be expressed in a policy, because a policy is only evaluated against the evidence that actually arrived: a peer that never offers its GPU is appraised on its CPU alone and the GPU policy is never consulted, however strict it is. The default requires a CPU because the class of a peer's primary evidence is whatever its agent reports, so without it a peer presenting only device evidence would be appraised on that device alone. Set it to `["cpu", "gpu"]` to require a GPU as well, or to `[]` to accept whatever the peer presents.
+- **`verifier_config`** (object, optional): Passed through to the attestation service's per-TEE verifier configuration. For example, `{"nvidia_verifier": {"type": "remote"}}` appraises GPU evidence with NVIDIA's remote attestation service (NRAS) instead of the default local verifier, which is required for GPU architectures the local verifier does not support.
+
+The remaining fields of the remote CoCo provider do not apply: there is no `as_addr` or `as_headers` because there is no service to reach, and no `trusted_certs_paths` because the signing key is local.
+
+Example: appraising CPU evidence with a locally provided policy
+
+```json
+"verify": {
+    "as_provider": "coco_builtin",
+    "policy_dir": "/etc/tng/policies",
+    "policy_ids": ["myorg"]
+}
+```
+
+Example: requiring a GPU alongside the CPU, and appraising it via NRAS
+
+```json
+"verify": {
+    "as_provider": "coco_builtin",
+    "policy_dir": "/etc/tng/policies",
+    "policy_ids": ["myorg"],
+    "required_tee_classes": ["cpu", "gpu"],
+    "verifier_config": {
+        "nvidia_verifier": {
+            "type": "remote"
+        }
+    }
+}
+```
+
+**Policy files.** A policy is read from `{policy_id}_{tee_class}.rego` in `policy_dir`, which is how the attestation service names a policy in its own storage. So the configuration above reads `myorg_cpu.rego` and `myorg_gpu.rego`, and one directory can hold several policy sets side by side; nothing outside the configured id is read. The TEE class is one of `cpu`, `gpu`, `switch` or `ppcie`, and a file naming anything else is never read, so a misspelled name is equivalent to not installing the policy at all.
+
+The CPU policy is mandatory, since every attestation produces a CPU appraisal. The rest are optional, because a policy is only consulted for a class the evidence actually carries. If a device does arrive with no policy installed for its class, the attestation service fails the whole appraisal with a policy-not-found error, so the omission fails closed rather than admitting the device.
+
+Each policy declares `package policy` and defines a `trust_claims` rule whose result carries all eight [AR4SI](https://datatracker.ietf.org/doc/html/draft-ietf-rats-ar4si) trustworthiness claims — `configuration`, `executables`, `file-system`, `hardware`, `instance-identity`, `runtime-opaque`, `sourced-data` and `storage-opaque`. Values from 2 to 31 are affirming; anything else is not. TNG compiles both policies and checks the claim set at startup, so a malformed or incomplete policy is a startup error rather than a failed handshake later. Which measurements a policy should pin is deployment-specific and is not defined by this repository.
+
+**Build requirements.** The verifier for each TEE is a build-time choice, and a binary can only appraise evidence from the TEEs it was built for:
+
+| Feature | Appraises |
+|---|---|
+| `coco-builtin-as-tdx` | Intel TDX (requires the Intel DCAP libraries at build and run time) |
+| `coco-builtin-as-azsnp` | AMD SEV-SNP on Azure confidential VMs, including vTOM mode (requires the TPM2 TSS libraries at build and run time) |
+| `coco-builtin-as-nvidia` | NVIDIA GPUs |
+| `coco-builtin-as-all` | All of the above |
+
+> [!NOTE]
+> This provider is only valid in the Background Check model. In the Passport model the token is minted on the attester side and verified elsewhere, which an in-process service signing with an ephemeral key cannot support, so the combination is rejected.
 
 ### Passport Model
 

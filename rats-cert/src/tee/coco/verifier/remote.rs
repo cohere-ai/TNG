@@ -48,6 +48,9 @@ impl CocoRemoteVerifier {
             inner: CommonCocoVerifier {
                 token_verifier,
                 policy_ids: policy_ids.to_owned(),
+                // A remote AS is configured with its own policies and may not even issue EAR
+                // tokens, so requiring classes here is not something this provider can offer.
+                required_tee_classes: Vec::new(),
             },
         })
     }
