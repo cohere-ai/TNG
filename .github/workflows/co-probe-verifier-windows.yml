@@ -1,0 +1,93 @@
+# Throwaway probe: are the builtin verifiers' dependencies Windows-capable?
+#
+# The four shipping wheel targets are covered by co-build-python.yml, which is
+# dispatchable and runs the real maturin build. Windows is not, because the
+# `tng` crate does not compile there yet (see docs/plans/windows-python-wheels-plan.md),
+# so this checks the Trustee verifier crate on its own. It has no dependency on
+# `tng`, which makes it a clean read on the dependency set without waiting for
+# the Windows port.
+#
+# Both verifiers are enabled: NVIDIA needs no source changes yet pulls
+# everything risky (vendored OpenSSL, aws-lc-sys, nvml-wrapper), and azsnp is
+# the one ported off tss-esapi and since rebased onto the SNP verifier's shared
+# report and certificate validation.
+#
+# Delete once Windows is a real wheel target and co-build-python.yml covers it.
+
+name: Probe verifier on Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deps:
+    name: deps (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      # Read the rev out of Cargo.toml rather than hardcoding it. An earlier
+      # version of this probe pinned a literal SHA and went stale the moment
+      # the fork moved, quietly testing the wrong commit.
+      - name: Resolve the Trustee pin
+        id: pin
+        shell: pwsh
+        run: |
+          $m = Select-String -Path Cargo.toml -Pattern 'trustee\.git",\s*rev\s*=\s*"([0-9a-f]{40})"'
+          if (-not $m) { throw "Could not find a Trustee rev in Cargo.toml" }
+          $rev = $m.Matches[0].Groups[1].Value
+          "rev=$rev" >> $env:GITHUB_OUTPUT
+          "Trustee pin: $rev" | Write-Host
+
+      - uses: actions/checkout@v6
+        with:
+          repository: shariqahmed-cohere/trustee
+          ref: ${{ steps.pin.outputs.rev }}
+          path: trustee
+
+      - uses: dtolnay/rust-toolchain@1.89.0
+
+      # Cargo resolves the whole manifest before applying features, so it
+      # fetches the Intel DCAP git dependency even though neither verifier here
+      # uses it. A fixture nested under tools/PoeTools -> nlohmann_json exceeds
+      # MAX_PATH. Cargo fetches via libgit2 by default, so route through the git
+      # CLI too, which honours core.longpaths reliably.
+      - name: Allow long paths for git submodules
+        shell: pwsh
+        run: |
+          git config --system core.longpaths true
+          git config --global core.longpaths true
+          "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> $env:GITHUB_ENV
+
+      # OpenSSL's assembly needs NASM; aws-lc-sys needs cmake, already on the
+      # images. Strawberry Perl ships on windows-latest but is not guaranteed
+      # on the arm64 image.
+      - name: Install native build tools
+        shell: pwsh
+        run: |
+          choco install nasm protoc -y --no-progress
+          if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
+            choco install strawberryperl -y --no-progress
+          }
+          "C:\Program Files\NASM" >> $env:GITHUB_PATH
+
+      - name: Check verifier with vendored OpenSSL
+        shell: pwsh
+        working-directory: trustee
+        run: |
+          cargo check -p verifier --no-default-features `
+            --features az-snp-vtpm-verifier,nvidia-verifier,openssl/vendored
+
+      # The port's correctness lives in these; the Linux job runs them too, but
+      # running them here catches anything endian- or path-sensitive in the
+      # tpm2-protocol parsing that replaced tss-esapi.
+      - name: Run verifier tests
+        shell: pwsh
+        working-directory: trustee
+        run: |
+          cargo test -p verifier --no-default-features `
+            --features az-snp-vtpm-verifier,openssl/vendored

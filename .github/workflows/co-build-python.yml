@@ -55,6 +55,16 @@ jobs:
             protoc --version
       # Validate package metadata and README will render correctly on PyPI
       - run: pip install twine && twine check cohere/python/cohere-tng/dist/*.whl
+      # A wheel that builds but cannot be loaded is the failure mode static
+      # linking is meant to prevent, so prove the extension module actually
+      # imports. Skipped on aarch64 Linux, which is cross-built and cannot run
+      # on this host.
+      - name: Smoke test the wheel
+        if: matrix.target == 'x86_64' || runner.os == 'macOS'
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install cohere/python/cohere-tng/dist/*.whl
+          python3 -c "import cohere_tng; print('import ok', cohere_tng.__file__)"
       # If OpenSSL were linked dynamically, auditwheel/delocate would have copied
       # libssl and libcrypto in here. Their absence is what proves the wheel is
       # self-contained rather than bound to whatever OpenSSL the host happens to
