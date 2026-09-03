@@ -1,15 +1,21 @@
 pub mod netns;
 pub mod task;
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    io::Write,
+    sync::{Arc, Mutex, OnceLock},
+    time::Duration,
+};
 
 use anyhow::{bail, Context, Result};
 use futures::StreamExt as _;
 use netns::BridgeNetwork;
+use serde_json::Value;
 use task::Task;
 use tokio::sync::OnceCell;
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
 static BIN_TEST_LOG_RELOAD_HANDLE: OnceCell<
     tracing_subscriber::reload::Handle<
@@ -17,6 +23,126 @@ static BIN_TEST_LOG_RELOAD_HANDLE: OnceCell<
         tracing_subscriber::Registry,
     >,
 > = OnceCell::const_new();
+
+type CaptureBuffer = Arc<Mutex<Vec<u8>>>;
+
+static STRUCTURED_LOG_CAPTURE: OnceLock<Mutex<Option<CaptureBuffer>>> = OnceLock::new();
+
+fn structured_log_capture() -> &'static Mutex<Option<CaptureBuffer>> {
+    STRUCTURED_LOG_CAPTURE.get_or_init(|| Mutex::new(None))
+}
+
+struct StructuredCaptureMakeWriter;
+
+struct StructuredCaptureWriter {
+    buffer: Option<CaptureBuffer>,
+    event: Vec<u8>,
+}
+
+impl Write for StructuredCaptureWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.event.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for StructuredCaptureWriter {
+    fn drop(&mut self) {
+        if self.event.is_empty() {
+            return;
+        }
+        if let Some(buffer) = &self.buffer {
+            match buffer.lock() {
+                Ok(mut buffer) => buffer.extend_from_slice(&self.event),
+                Err(error) => {
+                    eprintln!("failed to append structured log event: {error}");
+                }
+            }
+        }
+    }
+}
+
+impl<'a> MakeWriter<'a> for StructuredCaptureMakeWriter {
+    type Writer = StructuredCaptureWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        StructuredCaptureWriter {
+            buffer: structured_log_capture()
+                .lock()
+                .expect("structured log capture lock poisoned")
+                .clone(),
+            event: Vec::new(),
+        }
+    }
+}
+
+pub struct StructuredLogCapture {
+    buffer: CaptureBuffer,
+    active: bool,
+}
+
+pub fn capture_structured_logs() -> Result<StructuredLogCapture> {
+    let buffer = Arc::new(Mutex::new(Vec::new()));
+    let mut active_capture = structured_log_capture()
+        .lock()
+        .map_err(|error| anyhow::anyhow!("structured log capture lock poisoned: {error}"))?;
+    if active_capture.is_some() {
+        bail!("a structured log capture is already active");
+    }
+    *active_capture = Some(Arc::clone(&buffer));
+    Ok(StructuredLogCapture {
+        buffer,
+        active: true,
+    })
+}
+
+impl StructuredLogCapture {
+    pub fn finish(mut self) -> Result<Vec<Value>> {
+        self.stop()?;
+        let buffer = self
+            .buffer
+            .lock()
+            .map_err(|error| anyhow::anyhow!("structured log buffer lock poisoned: {error}"))?;
+        buffer
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                serde_json::from_slice(line)
+                    .context("failed to parse captured structured log event")
+            })
+            .collect()
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        if !self.active {
+            return Ok(());
+        }
+        let mut active_capture = structured_log_capture()
+            .lock()
+            .map_err(|error| anyhow::anyhow!("structured log capture lock poisoned: {error}"))?;
+        let is_current_capture = active_capture
+            .as_ref()
+            .is_some_and(|buffer| Arc::ptr_eq(buffer, &self.buffer));
+        if !is_current_capture {
+            bail!("active structured log capture changed unexpectedly");
+        }
+        *active_capture = None;
+        self.active = false;
+        Ok(())
+    }
+}
+
+impl Drop for StructuredLogCapture {
+    fn drop(&mut self) {
+        if let Err(error) = self.stop() {
+            eprintln!("failed to stop structured log capture: {error:#}");
+        }
+    }
+}
 
 /// This is a common function to run bin tests. For each test, it will create many virtual nodes under
 /// a bridge network (192.168.1.0/24), at least there will be one node act as the server side, the other act as
@@ -56,6 +182,15 @@ pub async fn run_test(tasks: Vec<Box<dyn Task>>) -> Result<()> {
                                         .into()
                                     }),
                             ),
+                    )
+                    .with(
+                        tracing_subscriber::fmt::layer()
+                            .json()
+                            .with_ansi(false)
+                            .with_writer(StructuredCaptureMakeWriter)
+                            .with_filter(tracing_subscriber::EnvFilter::new(
+                                "tng::attestation=info",
+                            )),
                     )
                     // .with(console_subscriber::spawn()) // Initialize tokio console
                     .init();
@@ -161,4 +296,103 @@ pub async fn run_test(tasks: Vec<Box<dyn Task>>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod structured_log_capture_tests {
+    use std::collections::HashSet;
+
+    use tracing_subscriber::layer::SubscriberExt as _;
+
+    use super::*;
+
+    #[serial_test::serial]
+    #[test]
+    fn captures_typed_json_event_fields_and_releases_capture() {
+        let capture = capture_structured_logs().unwrap();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_ansi(false)
+                .with_writer(StructuredCaptureMakeWriter),
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(
+                target: "tng::attestation",
+                event = "passport_cache_lookup",
+                cache_hit = true,
+            );
+        });
+
+        let logs = capture.finish().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0]["fields"]["event"], "passport_cache_lookup");
+        assert_eq!(logs[0]["fields"]["cache_hit"], true);
+
+        drop(capture_structured_logs().unwrap());
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn event_writer_publishes_only_when_dropped() {
+        let capture = capture_structured_logs().unwrap();
+        let mut writer = StructuredCaptureMakeWriter.make_writer();
+        writer.write_all(br#"{"fields":{"event":"atomic""#).unwrap();
+        assert!(capture.buffer.lock().unwrap().is_empty());
+        writer.write_all(b"}}\n").unwrap();
+        drop(writer);
+
+        let logs = capture.finish().unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0]["fields"]["event"], "atomic");
+    }
+
+    #[serial_test::serial]
+    #[test]
+    fn concurrent_events_are_complete_and_not_interleaved() {
+        const THREADS: usize = 8;
+        const EVENTS_PER_THREAD: usize = 100;
+
+        let capture = capture_structured_logs().unwrap();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_ansi(false)
+                .with_writer(StructuredCaptureMakeWriter),
+        );
+        let dispatch = tracing::Dispatch::new(subscriber);
+
+        std::thread::scope(|scope| {
+            for worker in 0..THREADS {
+                let dispatch = dispatch.clone();
+                scope.spawn(move || {
+                    tracing::dispatcher::with_default(&dispatch, || {
+                        for sequence in 0..EVENTS_PER_THREAD {
+                            tracing::info!(
+                                target: "tng::attestation",
+                                event = "concurrent_capture_test",
+                                worker,
+                                sequence,
+                            );
+                        }
+                    });
+                });
+            }
+        });
+
+        let logs = capture.finish().unwrap();
+        assert_eq!(logs.len(), THREADS * EVENTS_PER_THREAD);
+        let event_ids = logs
+            .iter()
+            .map(|log| {
+                assert_eq!(log["fields"]["event"], "concurrent_capture_test");
+                (
+                    log["fields"]["worker"].as_u64().unwrap(),
+                    log["fields"]["sequence"].as_u64().unwrap(),
+                )
+            })
+            .collect::<HashSet<_>>();
+        assert_eq!(event_ids.len(), THREADS * EVENTS_PER_THREAD);
+    }
 }
