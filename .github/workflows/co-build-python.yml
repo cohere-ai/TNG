@@ -27,9 +27,19 @@ jobs:
         with:
           working-directory: cohere/python/cohere-tng
           target: ${{ matrix.target }}
-          args: --release --out dist
+          args: --release --out dist --features builtin-verifier-azsnp,builtin-verifier-nvidia
           manylinux: ${{ matrix.manylinux || 'auto' }}
           before-script-linux: |
+            # The verifiers link OpenSSL statically via `openssl/vendored`, and
+            # OpenSSL 3.x's Configure needs IPC::Cmd. Debian's `perl` bundles the
+            # core modules; the RPM-based manylinux images split them out.
+            if command -v yum >/dev/null 2>&1; then
+              yum install -y perl-core perl-IPC-Cmd
+            elif command -v apt-get >/dev/null 2>&1; then
+              apt-get update && apt-get install -y perl
+            fi
+            perl -MIPC::Cmd -e 'print "IPC::Cmd ok\n"'
+
             ARCH=$(uname -m)
             if [ "$ARCH" = "aarch64" ]; then
               PROTOC_ARCH="linux-aarch_64"
@@ -45,6 +55,19 @@ jobs:
             protoc --version
       # Validate package metadata and README will render correctly on PyPI
       - run: pip install twine && twine check cohere/python/cohere-tng/dist/*.whl
+      # If OpenSSL were linked dynamically, auditwheel/delocate would have copied
+      # libssl and libcrypto in here. Their absence is what proves the wheel is
+      # self-contained rather than bound to whatever OpenSSL the host happens to
+      # ship -- the whole point of building the verifiers with `openssl/vendored`.
+      - name: Assert no OpenSSL library was bundled
+        shell: bash
+        run: |
+          WHEEL=$(ls cohere/python/cohere-tng/dist/*.whl)
+          if python3 -c "import zipfile,sys; sys.exit(0 if any('libssl' in n or 'libcrypto' in n for n in zipfile.ZipFile(sys.argv[1]).namelist()) else 1)" "$WHEEL"; then
+            echo "::error::OpenSSL was bundled as a shared library; vendored/static linking did not take effect"
+            exit 1
+          fi
+          echo "No OpenSSL shared library in $(basename "$WHEEL") - statically linked as intended"
       - uses: actions/upload-artifact@v6
         with:
           name: cohere-tng-${{ matrix.os }}-${{ matrix.target }}
