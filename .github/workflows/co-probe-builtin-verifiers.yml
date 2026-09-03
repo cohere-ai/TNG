@@ -1,0 +1,136 @@
+# Throwaway probe for the builtin-verifier port. Delete once the real wheel
+# workflow carries these features.
+#
+# Two questions, two jobs:
+#   wheel  - can the four shipping wheel targets build a verifier that links
+#            OpenSSL statically? Runs the real maturin build rather than a bare
+#            `cargo check`, because the failures we care about live inside the
+#            manylinux containers, not on the host runner.
+#   deps   - do the verifier's dependencies compile for Windows? Checked against
+#            the Trustee crate directly, since `tng` itself does not build on
+#            Windows yet (see docs/plans/windows-python-wheels-plan.md).
+#
+# The NVIDIA verifier is the probe because it needs no source changes, yet it
+# pulls everything risky: vendored OpenSSL, aws-lc-sys, and nvml-wrapper.
+
+name: Probe builtin verifiers
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [probe/builtin-verifiers]
+
+jobs:
+  wheel:
+    name: wheel (${{ matrix.os }} ${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { os: ubuntu-latest, target: aarch64, manylinux: manylinux_2_28 }
+          - { os: macos-15-intel, target: x86_64 }
+          - { os: macos-14, target: aarch64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: cohere/python/cohere-tng
+          target: ${{ matrix.target }}
+          args: --release --out dist --features pyo3/extension-module,builtin-verifier-nvidia
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          before-script-linux: |
+            # OpenSSL 3.x's Configure needs IPC::Cmd. Debian's `perl` bundles the
+            # core modules; RPM distros split them out, which is the single most
+            # common vendored-OpenSSL CI failure.
+            if command -v yum >/dev/null 2>&1; then
+              yum install -y perl-core perl-IPC-Cmd
+            elif command -v apt-get >/dev/null 2>&1; then
+              apt-get update && apt-get install -y perl
+            fi
+            perl -MIPC::Cmd -e 'print "IPC::Cmd ok\n"'
+
+            ARCH=$(uname -m)
+            if [ "$ARCH" = "aarch64" ]; then
+              PROTOC_ARCH="linux-aarch_64"
+              PROTOC_SHA256="1de522032a8b194002fe35cab86d747848238b5e4de4f99648372079f5b46f9a"
+            else
+              PROTOC_ARCH="linux-x86_64"
+              PROTOC_SHA256="0ad949f04a6a174da83cdcbdb36dee0a4925272a5b6d83f79a6bf9852076d53f"
+            fi
+            curl -Lo /tmp/protoc.zip "https://github.com/protocolbuffers/protobuf/releases/download/v28.3/protoc-28.3-${PROTOC_ARCH}.zip"
+            echo "${PROTOC_SHA256}  /tmp/protoc.zip" | sha256sum -c -
+            python3 -c "import zipfile; zipfile.ZipFile('/tmp/protoc.zip').extractall('/usr/local')"
+            chmod +x /usr/local/bin/protoc
+            protoc --version
+
+      # A wheel that builds but cannot be loaded is the failure mode static
+      # linking is supposed to prevent, so prove it loads. Skipped on aarch64
+      # Linux, which is cross-built and cannot run on this host.
+      - name: Smoke test
+        if: matrix.target == 'x86_64' || runner.os == 'macOS'
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install cohere/python/cohere-tng/dist/*.whl
+          python3 -c "import cohere_tng; print('import ok', cohere_tng.__file__)"
+
+      # If OpenSSL were linked dynamically, auditwheel/delocate would have copied
+      # libssl and libcrypto into the wheel. Their absence is the evidence that
+      # `openssl/vendored` actually took effect.
+      - name: Assert no OpenSSL library was bundled
+        shell: bash
+        run: |
+          WHEEL=$(ls cohere/python/cohere-tng/dist/*.whl)
+          echo "Contents of $(basename "$WHEEL"):"
+          python3 -c "import zipfile,sys; [print(' ',n) for n in zipfile.ZipFile(sys.argv[1]).namelist()]" "$WHEEL"
+          if python3 -c "import zipfile,sys; sys.exit(0 if any('libssl' in n or 'libcrypto' in n for n in zipfile.ZipFile(sys.argv[1]).namelist()) else 1)" "$WHEEL"; then
+            echo "::error::OpenSSL was bundled as a shared library; vendored/static linking did not take effect"
+            exit 1
+          fi
+          echo "No OpenSSL shared library in the wheel - statically linked as intended"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: probe-wheel-${{ matrix.os }}-${{ matrix.target }}
+          path: cohere/python/cohere-tng/dist/*.whl
+
+  deps:
+    name: deps (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # `tng` does not compile on Windows yet, so probe the Trustee verifier
+      # crate on its own. It has no dependency on `tng`, which makes this a
+      # clean read on whether the dependency set is Windows-capable.
+      - uses: actions/checkout@v6
+        with:
+          repository: confidential-containers/trustee
+          ref: 50b94a5f0bbadef7d04a8e597234eb46de3782c5
+
+      - uses: dtolnay/rust-toolchain@1.89.0
+
+      # OpenSSL's assembly needs NASM; aws-lc-sys needs cmake, which the Windows
+      # images already carry. Strawberry Perl ships on windows-latest but is not
+      # guaranteed on the arm64 image.
+      - name: Install native build tools
+        shell: pwsh
+        run: |
+          choco install nasm protoc -y --no-progress
+          if (-not (Get-Command perl -ErrorAction SilentlyContinue)) {
+            choco install strawberryperl -y --no-progress
+          }
+          echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
+
+      - name: Check verifier with vendored OpenSSL
+        shell: pwsh
+        run: |
+          cargo check -p verifier --no-default-features `
+            --features nvidia-verifier,openssl/vendored
