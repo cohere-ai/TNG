@@ -29,7 +29,7 @@ async-http-proxy = {version = "1.2.5", features = ["runtime-tokio"]}
 async-stream = "0.3.6"
 async-trait = "0.1.88"
 # `default-features` false to avoid pulling gRPC server's dependencies (clap, tonic-health...).
-attestation-service = {git = "https://github.com/confidential-containers/trustee.git", rev = "50b94a5f0bbadef7d04a8e597234eb46de3782c5", default-features = false}
+attestation-service = {git = "https://github.com/shariqahmed-cohere/trustee.git", rev = "bd68f04248fe7a8abaeabc871abb64f1cf9d95b3", default-features = false}
 atty = "0.2.14"
 auto_enums = {version = "0.8", features = ["std", "tokio1"]}
 axum = {version = "0.8.4", default-features = false}
@@ -74,7 +74,7 @@ itertools = "0.14.0"
 js-sys = "0.3.77"
 # Same rev as `attestation-service`: the AS takes an `Arc<dyn StorageProvider>` it does not
 # construct itself, and does not re-export this crate.
-key-value-storage = {git = "https://github.com/confidential-containers/trustee.git", rev = "50b94a5f0bbadef7d04a8e597234eb46de3782c5", default-features = false}
+key-value-storage = {git = "https://github.com/shariqahmed-cohere/trustee.git", rev = "bd68f04248fe7a8abaeabc871abb64f1cf9d95b3", default-features = false}
 jsonwebtoken = {version = "9", default-features = false}
 # `std` is off deliberately: it pulls `ear`, which drags in openssl and jsonwebtoken/aws-lc-rs.
 # Only `Tee` is used here, and it is available without it.

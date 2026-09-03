@@ -564,7 +564,7 @@ checksum = "21e4227379beff4205943696e6c3e0cd809bacdf3f0edd6e3dd153e2269571a4"
 [[package]]
 name = "attestation-service"
 version = "0.1.0"
-source = "git+https://github.com/confidential-containers/trustee.git?rev=50b94a5f0bbadef7d04a8e597234eb46de3782c5#50b94a5f0bbadef7d04a8e597234eb46de3782c5"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=bd68f04248fe7a8abaeabc871abb64f1cf9d95b3#bd68f04248fe7a8abaeabc871abb64f1cf9d95b3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -757,21 +757,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tss-esapi",
  "zerocopy",
-]
-
-[[package]]
-name = "az-snp-vtpm"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f89af3e2429e460930d02a0db1eda14bef738fca3e153c865835d37b2fecdbcc"
-dependencies = [
- "az-cvm-vtpm",
- "clap",
- "openssl",
- "serde",
- "sev",
- "thiserror 2.0.20",
- "ureq",
 ]
 
 [[package]]
@@ -1954,17 +1939,7 @@ dependencies = [
  "const-oid 0.9.6",
  "der_derive",
  "flagset",
- "pem-rfc7468 0.7.0",
- "zeroize",
-]
-
-[[package]]
-name = "der"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a69dedd701da44b0536442edf09c81a64b0ab97a7a4a5e3d1971f00027cbc63d"
-dependencies = [
- "pem-rfc7468 1.0.0",
+ "pem-rfc7468",
  "zeroize",
 ]
 
@@ -2235,7 +2210,7 @@ version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee27f32b5c5292967d2d4a9d7f1e0b0aed2c15daded5a60300e4abb9d8020bca"
 dependencies = [
- "der 0.7.10",
+ "der",
  "digest 0.10.7",
  "elliptic-curve",
  "rfc6979",
@@ -2277,7 +2252,7 @@ dependencies = [
  "generic-array 0.14.7",
  "group",
  "hkdf",
- "pem-rfc7468 0.7.0",
+ "pem-rfc7468",
  "pkcs8",
  "rand_core 0.6.4",
  "sec1",
@@ -2431,7 +2406,7 @@ dependencies = [
 [[package]]
 name = "eventlog"
 version = "0.1.0"
-source = "git+https://github.com/confidential-containers/trustee.git?rev=50b94a5f0bbadef7d04a8e597234eb46de3782c5#50b94a5f0bbadef7d04a8e597234eb46de3782c5"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=bd68f04248fe7a8abaeabc871abb64f1cf9d95b3#bd68f04248fe7a8abaeabc871abb64f1cf9d95b3"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -4004,7 +3979,7 @@ dependencies = [
 [[package]]
 name = "key-value-storage"
 version = "0.1.0"
-source = "git+https://github.com/confidential-containers/trustee.git?rev=50b94a5f0bbadef7d04a8e597234eb46de3782c5#50b94a5f0bbadef7d04a8e597234eb46de3782c5"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=bd68f04248fe7a8abaeabc871abb64f1cf9d95b3#bd68f04248fe7a8abaeabc871abb64f1cf9d95b3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5215,15 +5190,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pem-rfc7468"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6305423e0e7738146434843d1694d621cce767262b2a86910beab705e4493d9"
-dependencies = [
- "base64ct",
-]
-
-[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5458,7 +5424,7 @@ version = "0.7.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8ffb9f10fa047879315e6625af03c164b16962a5368d724ed16323b68ace47f"
 dependencies = [
- "der 0.7.10",
+ "der",
  "pkcs8",
  "spki",
 ]
@@ -5469,7 +5435,7 @@ version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7"
 dependencies = [
- "der 0.7.10",
+ "der",
  "spki",
 ]
 
@@ -5497,7 +5463,7 @@ dependencies = [
 [[package]]
 name = "policy-engine"
 version = "0.1.0"
-source = "git+https://github.com/confidential-containers/trustee.git?rev=50b94a5f0bbadef7d04a8e597234eb46de3782c5#50b94a5f0bbadef7d04a8e597234eb46de3782c5"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=bd68f04248fe7a8abaeabc871abb64f1cf9d95b3#bd68f04248fe7a8abaeabc871abb64f1cf9d95b3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6383,7 +6349,7 @@ dependencies = [
 [[package]]
 name = "reference-value-provider-service"
 version = "0.1.0"
-source = "git+https://github.com/confidential-containers/trustee.git?rev=50b94a5f0bbadef7d04a8e597234eb46de3782c5#50b94a5f0bbadef7d04a8e597234eb46de3782c5"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=bd68f04248fe7a8abaeabc871abb64f1cf9d95b3#bd68f04248fe7a8abaeabc871abb64f1cf9d95b3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6987,7 +6953,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3e97a565f76233a6003f9f5c54be1d9c5bdfa3eccfb189469f11ec4901c47dc"
 dependencies = [
  "base16ct",
- "der 0.7.10",
+ "der",
  "generic-array 0.14.7",
  "pkcs8",
  "subtle",
@@ -7598,7 +7564,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
- "der 0.7.10",
+ "der",
 ]
 
 [[package]]
@@ -8289,6 +8255,7 @@ dependencies = [
  "bytes",
  "http",
  "http-body-util",
+ "openssl",
  "pyo3",
  "pyo3-async-runtimes",
  "rustls",
@@ -8710,6 +8677,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
+name = "tpm2-protocol"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "526c9d0336fdf0d63182d3d84aa57d21b7da65e9a6d179b5515f7377da614da6"
+
+[[package]]
 name = "tracing"
 version = "0.1.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9070,16 +9043,12 @@ checksum = "972d7902c8735f2695410b8aed7df6ed12a47394aa1c8d7af49f0497b731a94d"
 dependencies = [
  "base64 0.23.1",
  "cookie_store",
- "der 0.8.1",
  "log",
- "native-tls",
  "percent-encoding",
- "rustls-pki-types",
  "serde",
  "serde_json",
  "ureq-proto",
  "utf8-zero",
- "webpki-root-certs",
 ]
 
 [[package]]
@@ -9146,6 +9115,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 
@@ -9175,12 +9145,12 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "verifier"
 version = "0.1.0"
-source = "git+https://github.com/confidential-containers/trustee.git?rev=50b94a5f0bbadef7d04a8e597234eb46de3782c5#50b94a5f0bbadef7d04a8e597234eb46de3782c5"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=bd68f04248fe7a8abaeabc871abb64f1cf9d95b3#bd68f04248fe7a8abaeabc871abb64f1cf9d95b3"
 dependencies = [
  "anyhow",
  "asn1-rs",
  "async-trait",
- "az-snp-vtpm",
+ "az-cvm-vtpm",
  "az-tdx-vtpm",
  "base64 0.23.1",
  "bitflags 2.13.1",
@@ -9207,8 +9177,8 @@ dependencies = [
  "thiserror 2.0.20",
  "time",
  "tokio",
+ "tpm2-protocol",
  "tracing",
- "tss-esapi",
  "url",
  "urlencoding",
  "x509-parser",
@@ -9823,7 +9793,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
 dependencies = [
  "const-oid 0.9.6",
- "der 0.7.10",
+ "der",
  "sha1",
  "signature",
  "spki",
