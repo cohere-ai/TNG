@@ -15,13 +15,20 @@
 
 name: Probe builtin verifiers
 
+# Dispatch-only: the wheel job costs four release builds, two of them on macOS
+# runners, so re-running a single job should not have to repeat the rest.
 on:
   workflow_dispatch:
-  push:
-    branches: [probe/builtin-verifiers]
+    inputs:
+      only:
+        description: Which job to run
+        type: choice
+        default: all
+        options: [all, wheel, deps]
 
 jobs:
   wheel:
+    if: inputs.only == 'all' || inputs.only == 'wheel'
     name: wheel (${{ matrix.os }} ${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -100,6 +107,7 @@ jobs:
           path: cohere/python/cohere-tng/dist/*.whl
 
   deps:
+    if: inputs.only == 'all' || inputs.only == 'deps'
     name: deps (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -120,6 +128,18 @@ jobs:
       # OpenSSL's assembly needs NASM; aws-lc-sys needs cmake, which the Windows
       # images already carry. Strawberry Perl ships on windows-latest but is not
       # guaranteed on the arm64 image.
+      # Cargo resolves the whole manifest before applying features, so it checks
+      # out the Intel DCAP git dependency even though nvidia-verifier never uses
+      # it. A test fixture nested in tools/PoeTools -> nlohmann_json exceeds
+      # MAX_PATH. Cargo fetches via libgit2 by default, so also route through the
+      # git CLI, which honours core.longpaths reliably.
+      - name: Allow long paths for git submodules
+        shell: pwsh
+        run: |
+          git config --system core.longpaths true
+          git config --global core.longpaths true
+          echo "CARGO_NET_GIT_FETCH_WITH_CLI=true" >> $env:GITHUB_ENV
+
       - name: Install native build tools
         shell: pwsh
         run: |
