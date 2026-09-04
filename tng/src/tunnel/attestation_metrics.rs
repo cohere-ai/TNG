@@ -57,6 +57,29 @@ impl AttestationProtocol {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ClientAttestationPhase {
+    Challenge,
+    KeyConfigFetch,
+    TokenDecode,
+    EvidenceDecode,
+    EvidenceConvert,
+    TokenVerify,
+}
+
+impl ClientAttestationPhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Challenge => "challenge",
+            Self::KeyConfigFetch => "key_config_fetch",
+            Self::TokenDecode => "token_decode",
+            Self::EvidenceDecode => "evidence_decode",
+            Self::EvidenceConvert => "evidence_convert",
+            Self::TokenVerify => "token_verify",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AttestationMetrics {
     total: Counter<u64>,
@@ -64,6 +87,7 @@ pub struct AttestationMetrics {
     attributes: Arc<IndexMap<String, String>>,
     evidence_in_flight: Arc<AtomicU64>,
     next_evidence_attempt_id: Arc<AtomicU64>,
+    next_client_attestation_attempt_id: Arc<AtomicU64>,
 }
 
 impl AttestationMetrics {
@@ -85,6 +109,7 @@ impl AttestationMetrics {
             attributes,
             evidence_in_flight: Arc::new(AtomicU64::new(0)),
             next_evidence_attempt_id: Arc::new(AtomicU64::new(0)),
+            next_client_attestation_attempt_id: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -101,6 +126,23 @@ impl AttestationMetrics {
             protocol,
             attempt_id,
             in_flight_at_start,
+            started_at: Instant::now(),
+            succeeded: false,
+        }
+    }
+
+    pub fn start_client_attestation(
+        &self,
+        model: AttestationModel,
+        protocol: AttestationProtocol,
+    ) -> ClientAttestationAttempt {
+        ClientAttestationAttempt {
+            model,
+            protocol,
+            attempt_id: self
+                .next_client_attestation_attempt_id
+                .fetch_add(1, Ordering::SeqCst)
+                + 1,
             started_at: Instant::now(),
             succeeded: false,
         }
@@ -137,6 +179,75 @@ impl AttestationMetrics {
         if !success {
             self.failed.add(1, &attributes);
         }
+    }
+}
+
+pub struct ClientAttestationAttempt {
+    model: AttestationModel,
+    protocol: AttestationProtocol,
+    attempt_id: u64,
+    started_at: Instant,
+    succeeded: bool,
+}
+
+impl ClientAttestationAttempt {
+    pub fn start_phase(&self, phase: ClientAttestationPhase) -> ClientAttestationPhaseAttempt {
+        ClientAttestationPhaseAttempt {
+            model: self.model,
+            protocol: self.protocol,
+            attempt_id: self.attempt_id,
+            phase,
+            started_at: Instant::now(),
+            succeeded: false,
+        }
+    }
+
+    pub fn mark_succeeded(mut self) {
+        self.succeeded = true;
+    }
+}
+
+impl Drop for ClientAttestationAttempt {
+    fn drop(&mut self) {
+        tracing::info!(
+            target: "tng::attestation",
+            event = "client_attestation_completed",
+            attempt_id = self.attempt_id,
+            attestation_model = self.model.as_str(),
+            protocol = self.protocol.as_str(),
+            success = self.succeeded,
+            duration_ms = self.started_at.elapsed().as_secs_f64() * 1000.0,
+        );
+    }
+}
+
+pub struct ClientAttestationPhaseAttempt {
+    model: AttestationModel,
+    protocol: AttestationProtocol,
+    attempt_id: u64,
+    phase: ClientAttestationPhase,
+    started_at: Instant,
+    succeeded: bool,
+}
+
+impl ClientAttestationPhaseAttempt {
+    pub fn mark_succeeded(mut self) {
+        self.succeeded = true;
+    }
+}
+
+impl Drop for ClientAttestationPhaseAttempt {
+    fn drop(&mut self) {
+        tracing::info!(
+            target: "tng::attestation",
+            event = "client_attestation_phase_completed",
+            attempt_id = self.attempt_id,
+            attestation_model = self.model.as_str(),
+            protocol = self.protocol.as_str(),
+            phase = self.phase.as_str(),
+            success = self.succeeded,
+            duration_ms = self.started_at.elapsed().as_secs_f64() * 1000.0,
+        );
     }
 }
 
@@ -294,6 +405,105 @@ mod tests {
         assert_eq!(events[1]["fields"]["in_flight_after"], 0);
 
         assert!(attempt_id1 > attempt_id0);
+    }
+
+    #[test]
+    fn client_attestation_attempt_emits_correlated_phase_and_total_events() {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(BufferMakeWriter(Arc::clone(&buffer)))
+                .with_filter(EnvFilter::new("info")),
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            let metrics = AttestationMetrics::noop();
+            let attempt = metrics.start_client_attestation(
+                AttestationModel::BackgroundCheck,
+                AttestationProtocol::Ohttp,
+            );
+            attempt
+                .start_phase(ClientAttestationPhase::KeyConfigFetch)
+                .mark_succeeded();
+            attempt
+                .start_phase(ClientAttestationPhase::EvidenceConvert)
+                .mark_succeeded();
+            attempt.mark_succeeded();
+        });
+
+        let events = buffer
+            .lock()
+            .unwrap()
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+            .filter(|event| {
+                matches!(
+                    event.pointer("/fields/event").and_then(Value::as_str),
+                    Some("client_attestation_phase_completed" | "client_attestation_completed")
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(events.len(), 3);
+        let attempt_id = events[0]["fields"]["attempt_id"].as_u64().unwrap();
+        assert!(events
+            .iter()
+            .all(|event| event["fields"]["attempt_id"].as_u64() == Some(attempt_id)));
+
+        assert_eq!(
+            events[0]["fields"]["event"],
+            "client_attestation_phase_completed"
+        );
+        assert_eq!(events[0]["fields"]["phase"], "key_config_fetch");
+        assert_eq!(events[1]["fields"]["phase"], "evidence_convert");
+        assert_eq!(events[2]["fields"]["event"], "client_attestation_completed");
+        for event in &events {
+            assert_eq!(event["fields"]["attestation_model"], "background_check");
+            assert_eq!(event["fields"]["protocol"], "ohttp");
+            assert_eq!(event["fields"]["success"], true);
+            assert!(event["fields"]["duration_ms"].as_f64().unwrap() >= 0.0);
+        }
+    }
+
+    #[test]
+    fn dropped_client_attestation_phase_and_attempt_emit_failures() {
+        let buffer = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(BufferMakeWriter(Arc::clone(&buffer)))
+                .with_filter(EnvFilter::new("info")),
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            let metrics = AttestationMetrics::noop();
+            let attempt = metrics
+                .start_client_attestation(AttestationModel::Passport, AttestationProtocol::Ohttp);
+            drop(attempt.start_phase(ClientAttestationPhase::TokenVerify));
+            drop(attempt);
+        });
+
+        let events = buffer
+            .lock()
+            .unwrap()
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
+            .filter(|event| {
+                event
+                    .pointer("/fields/event")
+                    .and_then(Value::as_str)
+                    .is_some_and(|event| event.starts_with("client_attestation_"))
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["fields"]["phase"], "token_verify");
+        assert_eq!(events[0]["fields"]["success"], false);
+        assert_eq!(events[1]["fields"]["event"], "client_attestation_completed");
+        assert_eq!(events[1]["fields"]["success"], false);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

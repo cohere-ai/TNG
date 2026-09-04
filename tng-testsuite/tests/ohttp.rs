@@ -45,6 +45,21 @@ fn evidence_completion_events(logs: &[Value]) -> Vec<EvidenceCompletionEvent> {
         .collect()
 }
 
+fn client_attestation_phases(logs: &[Value], model: &str) -> Vec<String> {
+    event_fields(logs, "client_attestation_phase_completed")
+        .into_iter()
+        .filter(|fields| {
+            fields["attestation_model"].as_str() == Some(model)
+                && fields["protocol"].as_str() == Some("ohttp")
+        })
+        .map(|fields| {
+            assert_eq!(fields["success"], true);
+            assert!(fields["duration_ms"].as_f64().unwrap() >= 0.0);
+            fields["phase"].as_str().unwrap().to_owned()
+        })
+        .collect()
+}
+
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_ingress_mapping() -> Result<()> {
@@ -357,6 +372,7 @@ async fn test_ingress_mapping_server_attest_client_no_ra() -> Result<()> {
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_ingress_mapping_with_load_balancer() -> Result<()> {
+    let capture = capture_structured_logs()?;
     run_test(vec![
         TngInstance::TngServer(
             r#"
@@ -437,6 +453,18 @@ async fn test_ingress_mapping_with_load_balancer() -> Result<()> {
         }.boxed(),
     ])
     .await?;
+
+    let logs = capture.finish()?;
+    assert_eq!(
+        client_attestation_phases(&logs, "passport"),
+        ["key_config_fetch", "token_decode", "token_verify"]
+    );
+    let completion = event_fields(&logs, "client_attestation_completed")
+        .into_iter()
+        .find(|fields| fields["attestation_model"] == "passport")
+        .context("missing passport client-attestation completion event")?;
+    assert_eq!(completion["success"], true);
+    assert!(completion["duration_ms"].as_f64().unwrap() >= 0.0);
 
     Ok(())
 }
@@ -531,6 +559,7 @@ async fn test_ra_model_matrix_server_attest_with_passport() -> Result<()> {
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_ra_model_matrix_server_attest_with_background_check() -> Result<()> {
+    let capture = capture_structured_logs()?;
     run_test(vec![
         TngInstance::TngServer(
             r#"
@@ -607,6 +636,25 @@ async fn test_ra_model_matrix_server_attest_with_background_check() -> Result<()
         }.boxed(),
     ])
     .await?;
+
+    let logs = capture.finish()?;
+    assert_eq!(
+        client_attestation_phases(&logs, "background_check"),
+        [
+            "challenge",
+            "key_config_fetch",
+            "evidence_decode",
+            "evidence_convert",
+            "token_verify",
+        ]
+    );
+    let completion = event_fields(&logs, "client_attestation_completed")
+        .into_iter()
+        .find(|fields| fields["attestation_model"] == "background_check")
+        .context("missing background-check client-attestation completion event")?;
+    assert_eq!(completion["success"], true);
+    assert!(completion["duration_ms"].as_f64().unwrap() >= 0.0);
+
     Ok(())
 }
 
