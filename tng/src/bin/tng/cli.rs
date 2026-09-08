@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{arg, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 
 use crate::build::CLAP_LONG_VERSION;
 
