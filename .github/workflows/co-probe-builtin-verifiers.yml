@@ -49,7 +49,7 @@ jobs:
           ref: ${{ steps.pin.outputs.rev }}
           path: trustee
 
-      - uses: dtolnay/rust-toolchain@1.89.0
+      - uses: dtolnay/rust-toolchain@1.95.0
 
       # Cargo resolves the whole manifest before applying features, so it
       # fetches the Intel DCAP git dependency even though neither verifier here
