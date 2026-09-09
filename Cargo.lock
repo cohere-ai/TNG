@@ -564,7 +564,7 @@ checksum = "21e4227379beff4205943696e6c3e0cd809bacdf3f0edd6e3dd153e2269571a4"
 [[package]]
 name = "attestation-service"
 version = "0.1.0"
-source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=77a26209661a0f51561af68fb9b079cedef7dbcf#77a26209661a0f51561af68fb9b079cedef7dbcf"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=24f04308d44a19cfddb371b5f9520c08cfd28746#24f04308d44a19cfddb371b5f9520c08cfd28746"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2406,7 +2406,7 @@ dependencies = [
 [[package]]
 name = "eventlog"
 version = "0.1.0"
-source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=77a26209661a0f51561af68fb9b079cedef7dbcf#77a26209661a0f51561af68fb9b079cedef7dbcf"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=24f04308d44a19cfddb371b5f9520c08cfd28746#24f04308d44a19cfddb371b5f9520c08cfd28746"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -3979,7 +3979,7 @@ dependencies = [
 [[package]]
 name = "key-value-storage"
 version = "0.1.0"
-source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=77a26209661a0f51561af68fb9b079cedef7dbcf#77a26209661a0f51561af68fb9b079cedef7dbcf"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=24f04308d44a19cfddb371b5f9520c08cfd28746#24f04308d44a19cfddb371b5f9520c08cfd28746"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5463,7 +5463,7 @@ dependencies = [
 [[package]]
 name = "policy-engine"
 version = "0.1.0"
-source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=77a26209661a0f51561af68fb9b079cedef7dbcf#77a26209661a0f51561af68fb9b079cedef7dbcf"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=24f04308d44a19cfddb371b5f9520c08cfd28746#24f04308d44a19cfddb371b5f9520c08cfd28746"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6327,7 +6327,7 @@ dependencies = [
 [[package]]
 name = "reference-value-provider-service"
 version = "0.1.0"
-source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=77a26209661a0f51561af68fb9b079cedef7dbcf#77a26209661a0f51561af68fb9b079cedef7dbcf"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=24f04308d44a19cfddb371b5f9520c08cfd28746#24f04308d44a19cfddb371b5f9520c08cfd28746"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8655,9 +8655,9 @@ checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
 name = "tpm2-protocol"
-version = "1.0.2"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "526c9d0336fdf0d63182d3d84aa57d21b7da65e9a6d179b5515f7377da614da6"
+checksum = "716a304e5da8a068e04c02de12a482666ba4da1a7902299aee55fd30cc4bd0eb"
 
 [[package]]
 name = "tracing"
@@ -9122,7 +9122,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "verifier"
 version = "0.1.0"
-source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=77a26209661a0f51561af68fb9b079cedef7dbcf#77a26209661a0f51561af68fb9b079cedef7dbcf"
+source = "git+https://github.com/shariqahmed-cohere/trustee.git?rev=24f04308d44a19cfddb371b5f9520c08cfd28746#24f04308d44a19cfddb371b5f9520c08cfd28746"
 dependencies = [
  "anyhow",
  "asn1-rs",
