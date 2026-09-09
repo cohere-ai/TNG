@@ -1,8 +1,7 @@
 # TNG
 [![Docker](/../../actions/workflows/build-docker.yml/badge.svg)](/../../actions/workflows/build-docker.yml)
-[![RPM](/../../actions/workflows/build-rpm.yml/badge.svg)](/../../actions/workflows/build-rpm.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![rust version](https://img.shields.io/badge/rustc-1.89.0+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
+[![rust version](https://img.shields.io/badge/rustc-1.95.0+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
 [![codecov](https://codecov.io/gh/inclavare-containers/TNG/graph/badge.svg?token=7CUZW26SH6)](https://codecov.io/gh/inclavare-containers/TNG)
 
 [中文文档](README_zh.md)
@@ -88,15 +87,11 @@ docker run -it --rm --privileged --network host --cgroupns=host \
 ```
 
 
-### Installing TNG via Package or Binary
+### Installing TNG via Binary
 
-You can obtain pre-compiled RPM packages or binary executables from the project's [Releases](https://github.com/inclavare-containers/TNG/releases) page.
-
-- **Binary**: Simply download and extract to run.
-- **RPM Package**: Suitable for distributions supporting RPM (e.g., Anolis OS, CentOS):
+You can obtain pre-compiled binary executables from the project's [Releases](https://github.com/inclavare-containers/TNG/releases) page. Simply download and extract the archive, then run it:
 
 ```sh
-sudo rpm -ivh tng-<version>.rpm
 sudo tng launch --config-file=/etc/tng/config.json
 ```
 
@@ -119,7 +114,7 @@ A pre-configured ingress image is available at `ghcr.io/cohere-ai/tng-ingress` f
 - **Detailed Configuration Manual**: For meanings of each configuration field and common templates, please refer to [docs/configuration.md](docs/configuration.md).
 - **Core Concepts and Workflow**: Detailed introduction to TNG's Ingress/Egress model, remote attestation roles (AA/AS), and encryption protocols like RATS-TLS/OHTTP, please refer to [docs/architecture.md](docs/architecture.md).
 - **Typical Scenarios**: Scenario documents containing topology diagrams and full configuration instructions, please refer to the [docs/scenarios/](docs/scenarios/) directory.
-- **Developer Guide**: Instructions on building (Docker/RPM), deployment, and integration testing, please refer to [docs/developer.md](docs/developer.md).
+- **Developer Guide**: Instructions on building (Docker), deployment, and integration testing, please refer to [docs/developer.md](docs/developer.md).
 - **Version Compatibility**: Detailed version compatibility notes (including data plane implementation changes between major versions), please refer to [docs/version_compatibility.md](docs/version_compatibility.md).
 - **Integration Test Cases**: For more end-to-end test scenarios, refer to the source code under the [tng-testsuite/](tng-testsuite/) directory.
 - **JavaScript SDK**: For acquisition and usage in browser environments, please refer to [tng-wasm/README.md](tng-wasm/README.md).

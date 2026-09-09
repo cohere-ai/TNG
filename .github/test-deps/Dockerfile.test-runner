@@ -24,7 +24,9 @@ RUN curl --proto '=https' --tlsv1.2 -fsSL https://download.01.org/intel-sgx/sgx_
     libsgx-dcap-quote-verify-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.89.0
+# Keep in step with rust-toolchain.toml. The repo is bind-mounted over /workspace at
+# run time, so a mismatch here just makes rustup re-download the toolchain on every run.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.95.0
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="clang"
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=mold"

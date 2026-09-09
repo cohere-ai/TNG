@@ -59,14 +59,8 @@ impl FileWatcher {
 
                             // Close event: the writing process has finished and released the file.
                             // This is the safest moment to reload, as the file should now be complete.
-                            EventKind::Access(AccessKind::Close(_)) => {
-                                if modified {
-                                    modified = false; // Reset flag to avoid duplicate triggers
-                                    true // Trigger reload now
-                                } else {
-                                    false // No prior data change, ignore
-                                }
-                            }
+                            // Taking the flag clears it: reload once, and only if data changed.
+                            EventKind::Access(AccessKind::Close(_)) => std::mem::take(&mut modified),
 
                             // Ignore all other event kinds (e.g., read close, metadata change, etc.)
                             _ => false,

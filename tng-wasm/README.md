@@ -205,18 +205,13 @@ dummyhttp -p 30001 -vvvv
 
 ### 2. Compile and Install TNG on the Server Side
 
-Build the RPM package
+Build and install TNG from source:
 
 ```sh
-make create-tarball
-make rpm-build
+cargo install --locked --path ./tng/ --root /usr/local/
 ```
 
-The artifacts will be placed in `~/rpmbuild/RPMS/*/trusted-network-gateway-*.rpm`, which you can install as follows:
-
-```sh
-yum install ~/rpmbuild/RPMS/*/trusted-network-gateway-*.rpm -y
-```
+Now the `tng` command is available on the server side.
 
 If you want to build the container version of TNG:
 

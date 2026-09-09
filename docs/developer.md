@@ -9,7 +9,6 @@ This guide is intended for developers who need to modify the TNG source code or 
 - **tng-testsuite/**: Integration test suite, providing orchestratable "scenario tasks" covering typical usage such as HTTP proxy, transparent proxy, Socks5, and unidirectional/bidirectional remote attestation.
 - **tng-wasm/**: Browser-side JavaScript SDK, providing interfaces like `tng_fetch`, used in conjunction with OHTTP and remote attestation. For specific usage, see `tng-wasm/README.md`.
 - **docs/**: User and development documentation, including the configuration manual (`configuration.md`) and this developer guide.
-- **rpm/**: RPM packaging scripts and Dockerfiles used for building distribution packages.
 
 If you only want to compile and run TNG locally, you can focus on the `tng/` directory. If you need to debug a complete end-to-end scenario (e.g., "HTTP proxy + unidirectional remote attestation"), it is recommended to prioritize running the corresponding `tng-testsuite` case for reproduction.
 
@@ -17,10 +16,8 @@ If you only want to compile and run TNG locally, you can focus on the `tng/` dir
 
 This project requires two versions of the Rust toolchain:
 
-- `1.89.0`: This is the minimum supported Rust version required to build TNG binaries or RPM packages (whether from source or the released source tarball).
-- `nightly-2025-07-07`: This is the Rust toolchain required for the following scenarios:
-    - Building the TNG JavaScript SDK. For details, see [tng-wasm/README.md](../tng-wasm/README.md).
-    - Creating the source code tarball using the `make create-tarball` command. This is because some of our crate dependencies require a newer Rust toolchain to resolve.
+- `1.95.0`: This is the minimum supported Rust version required to build TNG binaries from source.
+- `nightly-2025-07-07`: This is the Rust toolchain required for building the TNG JavaScript SDK. For details, see [tng-wasm/README.md](../tng-wasm/README.md).
 
 ## Setting Up the Development Environment
 
@@ -88,64 +85,6 @@ EOF
 3. Compile and Install tng
 ```sh
 cargo install --locked --path ./tng/ --root /usr/local/
-```
-
-Now, you can directly use the `tng` command to start a TNG instance.
-
-## Packaging RPM from the Development Environment
-
-Generally, we recommend using the automated build process triggered by git, as described in [build-rpm.yml](/.github/workflows/build-rpm.yml), to package. If you have temporary packaging needs during development, you can use the following process.
-
-1. Install Packaging Dependencies
-
-```sh
-apt install chrpath
-```
-
-2. Build RPM Package
-
-```sh
-cat <<EOF > /tmp/trusted-network-gateway.spec
-%global debug_package %{nil}
-
-Name: trusted-network-gateway
-Version: 1.0.0
-Release: 1
-Summary: Trusted Network Gateway
-Group: Applications/System
-License: ASL 2.0
-URL: www.alibaba.com
-
-Requires: curl iptables openssl
-
-ExclusiveArch: x86_64
-
-%description
-A tool for establishing secure communication tunnels in confidential computing.
-
-%install
-mkdir -p %{buildroot}/usr/bin/
-install -p -m 755 /usr/local/bin/tng %{buildroot}/usr/bin/tng
-
-%files
-/usr/bin/tng
-EOF
-
-rpmbuild -ba /tmp/trusted-network-gateway.spec
-```
-
-The output will be located in the `~/rpmbuild/RPMS/x86_64/` directory. Please copy it to the target environment.
-
-2. On the target environment, install the RPM package
-
-First, uninstall the old version of TNG
-
-```sh
-yum remove trusted-network-gateway -y
-```
-Then, install the new version
-```sh
-yum install -y <path-to-rpm-package-on-target-environment>
 ```
 
 Now, you can directly use the `tng` command to start a TNG instance.
@@ -251,6 +190,8 @@ This will run an attestation-service instance and create an HTTP RESTful listene
 
 1. Install Dependencies
 
+The test-runner image (`.github/test-deps/Dockerfile.test-runner`) carries the full set. Outside it, at minimum:
+
 ```sh
 apt-get update && apt-get install -y curl iptables && update-alternatives --set iptables /usr/sbin/iptables-nft
 ```
@@ -263,7 +204,7 @@ make run-test
 
 ## Build and Deployment
 
-TNG has two common running forms: it can be deployed as a container image or by building an RPM package. The following recommended build process is suitable for release or installation in a target environment.
+TNG is commonly deployed as a container image. The following recommended build process is suitable for release or installation in a target environment.
 
 ### Build and Deploy TNG as a Container Image
 
@@ -288,49 +229,3 @@ docker build -t tng:latest --target release -f Dockerfile .
 ```sh
 docker run -it --rm --privileged --network host --cgroupns=host tng:latest tng launch --config-content='<your config json string>'
 ```
-
-### Build and Deploy TNG as an RPM Package
-
-The following steps describe how to build an RPM package from source and install it in a target environment (applicable to distributions using yum as a package manager).
-
-1. Pull the Code
-
-```sh
-git clone git@github.com:inclavare-containers/tng.git --branch <tag-name>
-cd tng
-git submodule update --init
-```
-
-2. Install Dependencies
-
-Please install the [Rust toolchain](https://rustup.rs/) and Docker (or Podman) first.
-
-3. Create the source tarball required for RPM building
-
-```sh
-make create-tarball
-```
-
-4. Build the RPM Package
-
-You can choose to build the RPM package in a fresh Anolis8 distribution Docker container. This RPM package is compatible with both [Anolis8](https://openanolis.cn/anolisos) and [ALinux3](https://help.aliyun.com/zh/alinux/product-overview/alibaba-cloud-linux-overview) distributions:
-
-```sh
-make rpm-build-in-docker
-```
-
-Alternatively, you can build directly in your current distribution environment:
-
-```sh
-make rpm-build
-```
-
-The build artifacts will be located in the `~/rpmbuild/RPMS/x86_64/` directory.
-
-5. Install the RPM Package
-
-```sh
-rpm -ivh ~/rpmbuild/RPMS/*/trusted-network-gateway-*.rpm
-```
-
-After installation, you can directly use the `tng` command to start a TNG instance.
