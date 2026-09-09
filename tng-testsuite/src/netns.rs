@@ -239,14 +239,17 @@ struct VethPair {
 
 impl VethPair {
     async fn create_veth_pair(handle: &Handle) -> Result<Self> {
-        // Generate a random veth name
+        // Generate a random veth name.
+        //
+        // IFNAMSIZ caps interface names at 15 usable characters. Using
+        // a short `tngveth` prefix to allow for large budget (7 chars) on entropy.
         let random_part: String = rand::rng()
             .sample_iter(&Alphanumeric)
-            .take(2) // Fixed length characters
+            .take(7) // Fixed length characters
             .map(char::from)
             .collect();
-        let veth: String = format!("tngtest-veth{}o", random_part);
-        let veth_2: String = format!("tngtest-veth{}i", random_part);
+        let veth: String = format!("tngveth{}o", random_part);
+        let veth_2: String = format!("tngveth{}i", random_part);
 
         handle
             .link()
