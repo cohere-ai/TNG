@@ -68,7 +68,7 @@ TNG employs advanced encryption protocols to achieve communication security, imp
 
 ### RATS-TLS
 
-**Principle**: Remote attestation mechanisms are integrated into the standard TLS 1.3 protocol handshake to transmit remote attestation evidence materials. A TLS session is officially established or maintained only when the remote attestation verification is successful, proving that the peer's runtime environment is authentic and trustworthy. This means even if an attacker can hijack the network, they cannot impersonate a legitimate TNG instance to communicate in an untrusted environment. TNG binds the remote attestation verification result with the TLS session lifecycle; if the environment is judged untrustworthy, the connection establishment process will terminate immediately.
+**Principle**: After a TLS 1.3 handshake, the two ends run a challenge/evidence exchange on the raw TLS stream before any application data. Certificates are plain key carriers; evidence is bound to the connection through the TLS exporter and, in background check, a nonce issued by the verifier's own attestation service. A TLS session is established only when that exchange succeeds. Session resumption and 0-RTT are disabled. Both ends of a `rats_tls` link must be upgraded together: peers that still carry evidence in the certificate are not interoperable.
 
 **Applicable Scenarios**:
 *   **Arbitrary TCP Traffic**: TNG's design allows it to transparently handle any application-layer traffic based on the TCP protocol. This means whether it's HTTP, database connections (such as MySQL, PostgreSQL), RPC protocols, or any custom TCP protocol, TNG can protect them through RATS-TLS.

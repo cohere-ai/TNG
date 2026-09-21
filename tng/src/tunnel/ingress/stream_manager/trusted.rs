@@ -69,6 +69,7 @@ impl TrustedStreamManager {
                             transport_so_mark,
                             ra_context,
                             runtime.clone(),
+                            common_args.ra_args.rats_tls_pool_ttl(),
                         )
                         .await?,
                     ),

@@ -84,6 +84,22 @@ impl CertVerifier {
         self.verify_cert(&cert).await
     }
 
+    /// Stream-delivered evidence: skip the certificate, DICE extraction, and CBOR envelope.
+    pub fn pending_from_raw_evidence(
+        cbor_tag: u64,
+        raw_evidence: Vec<u8>,
+        expected_claims: Claims,
+    ) -> Result<CertVerifyPendingResult> {
+        if expected_claims.is_empty() {
+            return Err(Error::EmptyExpectedClaims);
+        }
+        Ok(CertVerifyPendingResult {
+            cbor_tag,
+            raw_evidence,
+            report_data: ReportData::Claims(expected_claims),
+        })
+    }
+
     async fn verify_cert(&self, cert: &Certificate) -> Result<CertVerifyPendingResult> {
         /* check self-signed cert */
         verify_cert_signature(cert, cert)?;
@@ -104,11 +120,7 @@ impl CertVerifier {
         // Note: the implementation here is not compatible with the Interoperable RA-TLS now
 
         /* Prepare expected pubkey-hash claim */
-        let spki_bytes = cert
-            .tbs_certificate
-            .subject_public_key_info
-            .to_der()
-            .map_err(Error::DerError)?;
+        let spki_bytes = spki_der_from_cert(cert)?;
         // TODO: Hash algorithm is currently hardcoded to SHA256.
         // Future support should include extracting the hash algorithm from the evidence.
         let pubkey_hash = DefaultCrypto::hash(HashAlgo::Sha256, &spki_bytes);
@@ -219,4 +231,53 @@ fn extract_ext_with_oid<'a>(cert: &'a Certificate, oid: &ObjectIdentifier) -> Op
         let mut it = exts.iter().filter(|ext| ext.extn_id == *oid);
         it.next().map(|ext| ext.extn_value.as_bytes())
     })
+}
+
+fn spki_der_from_cert(cert: &Certificate) -> Result<Vec<u8>> {
+    cert.tbs_certificate
+        .subject_public_key_info
+        .to_der()
+        .map_err(Error::DerError)
+}
+
+/// Extract SPKI DER from an X.509 certificate DER. rustls only hands over DER.
+pub fn spki_der_from_x509_der(cert_der: &[u8]) -> Result<Vec<u8>> {
+    let cert = Certificate::from_der(cert_der).map_err(Error::ParseDerCertError)?;
+    spki_der_from_cert(&cert)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CLAIM_NAME_PUBLIC_KEY_HASH;
+    use super::*;
+
+    #[test]
+    fn pending_from_raw_evidence_preserves_caller_claims() {
+        let mut claims = Claims::new();
+        claims.insert(
+            CLAIM_NAME_PUBLIC_KEY_HASH.into(),
+            serde_json::Value::String("abc".into()),
+        );
+        let pending =
+            CertVerifier::pending_from_raw_evidence(0xC0C000, b"quote".to_vec(), claims.clone())
+                .unwrap();
+        assert_eq!(pending.cbor_tag, 0xC0C000);
+        assert_eq!(pending.raw_evidence, b"quote");
+        assert_eq!(pending.report_data, ReportData::Claims(claims));
+    }
+
+    #[test]
+    fn pending_from_raw_evidence_rejects_empty_claims() {
+        match CertVerifier::pending_from_raw_evidence(1, vec![1], Claims::new()) {
+            Err(Error::EmptyExpectedClaims) => {}
+            Ok(_) => panic!("empty claims must be rejected"),
+            Err(e) => panic!("expected EmptyExpectedClaims, got {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn verify_der_still_rejects_garbage() {
+        let err = CertVerifier::new().verify_der(b"not-a-cert").await;
+        assert!(matches!(err, Err(Error::ParseDerCertError(_))));
+    }
 }

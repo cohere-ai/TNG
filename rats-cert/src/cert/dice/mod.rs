@@ -19,7 +19,7 @@ pub(crate) fn generate_and_sign_dice_cert(
     subject: &str,
     hash_algo: HashAlgo,
     private_key: &AsymmetricPrivateKey,
-    evidence_buffer: &[u8],
+    evidence_buffer: Option<&[u8]>,
     endorsements_buffer: Option<&[u8]>,
 ) -> Result<Certificate> {
     let serial_number = SerialNumber::from(42u32);
@@ -61,9 +61,11 @@ pub(crate) fn generate_and_sign_dice_cert(
             )
             .map_err(Error::CertBuildFailed)?;
 
-            builder
-                .add_extension(&DiceEvidenceExtension(evidence_buffer))
-                .map_err(Error::CertBuildFailed)?;
+            if let Some(evidence_buffer) = evidence_buffer {
+                builder
+                    .add_extension(&DiceEvidenceExtension(evidence_buffer))
+                    .map_err(Error::CertBuildFailed)?;
+            }
 
             if let Some(endorsements_buffer) = endorsements_buffer {
                 builder
@@ -119,7 +121,7 @@ pub mod tests {
             "CN=rats-rs,O=Inclavare Containers",
             HashAlgo::Sha256,
             &key,
-            b"\x01\x02\x03\x04",
+            Some(b"\x01\x02\x03\x04"),
             Some(b"\x05\x06\x07\x08"),
         )?
         .to_pem(LineEnding::LF)
@@ -128,6 +130,26 @@ pub mod tests {
         println!("generated pem:\n{}", pem);
         // you can also view the cert manually with https://certificatedecoder.dev/
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_key_carrier_cert_omits_evidence_extension() -> Result<()> {
+        let key = DefaultCrypto::gen_private_key(AsymmetricAlgo::P256)?;
+        let cert = generate_and_sign_dice_cert(
+            "CN=rats-rs,O=Inclavare Containers",
+            HashAlgo::Sha256,
+            &key,
+            None,
+            None,
+        )?;
+        let exts = cert.tbs_certificate.extensions.unwrap_or_default();
+        assert!(
+            !exts
+                .iter()
+                .any(|e| e.extn_id == crate::cert::dice::extensions::OID_TCG_DICE_TAGGED_EVIDENCE),
+            "key-carrier cert must not carry DICE tagged evidence"
+        );
         Ok(())
     }
 }
