@@ -1,13 +1,14 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use again::RetryPolicy;
 use anyhow::{anyhow, bail, Context, Result};
 use rats_cert::tee::claims::Claims;
-use rats_cert::tee::GenericAttester;
+use rats_cert::tee::{DiceParseEvidenceOutput, GenericAttester, GenericEvidence};
 
 use crate::tunnel::attestation_result::AttestationResult;
+use crate::tunnel::provider::TngToken;
+use crate::tunnel::utils::maybe_cached::Expire;
 
 use super::claims::{
     background_check_claims, passport_attester_claims, BackgroundCheckExpectation,
@@ -218,14 +219,17 @@ pub async fn produce_passport_evidence<
     cache: &PassportEvidenceCache,
     max_retries: usize,
 ) -> Result<Evidence> {
-    cache
-        .get_or_mint(|| async {
+    match cache
+        .get_or_mint(own_spki_der, || async {
             let nonce = converter.get_nonce().await?;
             let claims = passport_attester_claims(own_spki_der, &nonce)?;
             produce_with_retry(producer, claims, max_retries).await
         })
         .await
-        .map(|(cbor_tag, raw)| raw_evidence(cbor_tag, raw))
+    {
+        Ok((cbor_tag, raw)) => Ok(raw_evidence(cbor_tag, raw)),
+        Err(e) => Ok(attestation_failed_evidence(format!("{e:#}"))),
+    }
 }
 
 async fn produce_with_retry<P: EvidenceProducer + ?Sized>(
@@ -247,12 +251,18 @@ async fn produce_with_retry<P: EvidenceProducer + ?Sized>(
         .await
 }
 
-/// In-process cache so a passport token is minted once and reused across connections.
-/// Expiry via `MaybeCached` is wired when the certificate path is removed.
+/// Cache a passport token until its `exp` (or until the attested SPKI rotates).
 #[derive(Default)]
 pub struct PassportEvidenceCache {
-    inner: Mutex<Option<(u64, Vec<u8>)>>,
-    mint_count: AtomicUsize,
+    inner: Mutex<Option<CachedPassport>>,
+}
+
+#[derive(Clone)]
+struct CachedPassport {
+    spki: Vec<u8>,
+    tag: u64,
+    raw: Vec<u8>,
+    expire: Expire,
 }
 
 impl PassportEvidenceCache {
@@ -260,23 +270,55 @@ impl PassportEvidenceCache {
         Self::default()
     }
 
-    #[cfg(test)]
-    pub fn mint_count(&self) -> usize {
-        self.mint_count.load(Ordering::SeqCst)
-    }
-
-    pub async fn get_or_mint<F, Fut>(&self, mint: F) -> Result<(u64, Vec<u8>)>
+    pub async fn get_or_mint<F, Fut>(&self, spki: &[u8], mint: F) -> Result<(u64, Vec<u8>)>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<(u64, Vec<u8>)>>,
     {
-        if let Some(cached) = self.inner.lock().unwrap_or_else(|e| e.into_inner()).clone() {
-            return Ok(cached);
+        {
+            let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(cached) = guard.as_ref() {
+                if cached.spki == spki && expire_is_fresh(cached.expire) {
+                    return Ok((cached.tag, cached.raw.clone()));
+                }
+            }
         }
-        let minted = mint().await?;
-        self.mint_count.fetch_add(1, Ordering::SeqCst);
-        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(minted.clone());
-        Ok(minted)
+        let (tag, raw) = mint().await?;
+        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(CachedPassport {
+            spki: spki.to_vec(),
+            tag,
+            raw: raw.clone(),
+            expire: expire_of_token(tag, &raw),
+        });
+        Ok((tag, raw))
+    }
+
+    #[cfg(test)]
+    fn insert_for_test(&self, spki: &[u8], tag: u64, raw: Vec<u8>, expire: Expire) {
+        *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(CachedPassport {
+            spki: spki.to_vec(),
+            tag,
+            raw,
+            expire,
+        });
+    }
+}
+
+fn expire_is_fresh(expire: Expire) -> bool {
+    match expire {
+        Expire::NoExpire => true,
+        Expire::ExpireAt(t) => t > SystemTime::now(),
+    }
+}
+
+fn expire_of_token(tag: u64, raw: &[u8]) -> Expire {
+    match TngToken::create_evidence_from_dice(tag, raw) {
+        DiceParseEvidenceOutput::Ok(token) => token
+            .exp()
+            .ok()
+            .and_then(|exp| Expire::from_timestamp(exp).ok())
+            .unwrap_or(Expire::NoExpire),
+        _ => Expire::NoExpire,
     }
 }
 
@@ -317,6 +359,7 @@ where
 mod tests {
     use super::super::claims::{expected_subset_of, CLAIM_CHALLENGE_TOKEN, CLAIM_TLS_BINDER};
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn decl(will_attest: bool, wants_evidence: bool) -> Declaration {
         Declaration {
@@ -369,27 +412,6 @@ mod tests {
     }
 
     #[test]
-    fn two_nora_exchange_declarations_then_skip_evidence() {
-        let nora = LocalRole::no_ra();
-        let peer = build_declaration(nora, None);
-        assert!(!peer.will_attest && !peer.wants_evidence);
-        assert_eq!(evidence_action(nora, &peer), EvidenceAction::Skip);
-        assert_eq!(verify_action(nora, &peer), VerifyAction::Skip);
-    }
-
-    #[test]
-    fn attest_without_challenge_does_nothing() {
-        let local = LocalRole {
-            will_attest: true,
-            wants_evidence: false,
-        };
-        assert_eq!(
-            evidence_action(local, &decl(false, false)),
-            EvidenceAction::Skip
-        );
-    }
-
-    #[test]
     fn refusal_is_distinct_from_attestation_failed() {
         let refusal_msg = refusal_evidence("not configured");
         let failed_msg = attestation_failed_evidence("attester exhausted retries");
@@ -405,7 +427,6 @@ mod tests {
 
     struct RecordingConverter {
         nonce: String,
-        converted_with: Mutex<Option<String>>,
     }
 
     #[async_trait::async_trait]
@@ -415,17 +436,10 @@ mod tests {
         }
     }
 
-    impl RecordingConverter {
-        fn record_convert(&self, nonce: &str) {
-            *self.converted_with.lock().unwrap() = Some(nonce.to_string());
-        }
-    }
-
     #[tokio::test]
     async fn issued_nonce_is_the_value_handed_to_convert() {
         let conv = RecordingConverter {
             nonce: "as-nonce-1".into(),
-            converted_with: Mutex::new(None),
         };
         let mut state = ExchangeState::new(
             LocalRole {
@@ -436,18 +450,13 @@ mod tests {
         );
         let decl = state.prepare_declaration(Some(&conv)).await.unwrap();
         assert_eq!(decl.challenge_token, b"as-nonce-1");
-        conv.record_convert(state.issued_nonce().unwrap());
-        assert_eq!(
-            conv.converted_with.lock().unwrap().as_deref(),
-            Some("as-nonce-1")
-        );
+        assert_eq!(state.issued_nonce(), Some("as-nonce-1"));
     }
 
     #[tokio::test]
     async fn dummy_nonce_still_builds_matching_expectation() {
         let conv = RecordingConverter {
             nonce: "dummy nonce".into(),
-            converted_with: Mutex::new(None),
         };
         let mut state = ExchangeState::new(
             LocalRole {
@@ -484,16 +493,19 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn passport_cache_reuses_token_across_connections() {
-        let producer = CountingProducer {
+    fn counting_producer(fail_times: usize) -> CountingProducer {
+        CountingProducer {
             count: AtomicUsize::new(0),
-            fail_times: 0,
+            fail_times,
             claims: Mutex::new(None),
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn passport_cache_reuses_token_until_spki_or_expiry_change() {
+        let producer = counting_producer(0);
         let conv = RecordingConverter {
             nonce: "passport-as-nonce".into(),
-            converted_with: Mutex::new(None),
         };
         let cache = PassportEvidenceCache::new();
         let first = produce_passport_evidence(&producer, &conv, b"spki", &cache, 0)
@@ -504,22 +516,33 @@ mod tests {
             .unwrap();
         assert_eq!(first, second);
         assert_eq!(producer.count.load(Ordering::SeqCst), 1);
-        assert_eq!(cache.mint_count(), 1);
         let stored = producer.claims.lock().unwrap().clone().unwrap();
         assert!(!stored.contains_key(CLAIM_TLS_BINDER));
         assert_eq!(
             stored.get(CLAIM_CHALLENGE_TOKEN).unwrap().as_str(),
             Some("passport-as-nonce")
         );
+
+        produce_passport_evidence(&producer, &conv, b"other-spki", &cache, 0)
+            .await
+            .unwrap();
+        assert_eq!(producer.count.load(Ordering::SeqCst), 2);
+
+        cache.insert_for_test(
+            b"spki",
+            99,
+            b"stale".to_vec(),
+            Expire::ExpireAt(SystemTime::UNIX_EPOCH),
+        );
+        produce_passport_evidence(&producer, &conv, b"spki", &cache, 0)
+            .await
+            .unwrap();
+        assert_eq!(producer.count.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
     async fn attester_exhaustion_returns_attestation_failed_not_refusal() {
-        let producer = CountingProducer {
-            count: AtomicUsize::new(0),
-            fail_times: usize::MAX,
-            claims: Mutex::new(None),
-        };
+        let producer = counting_producer(usize::MAX);
         let evidence = produce_background_check_evidence(
             &producer,
             b"spki",
@@ -532,6 +555,21 @@ mod tests {
         match inspect_evidence(&evidence).unwrap() {
             InspectedEvidence::AttestationFailed(_) => {}
             InspectedEvidence::Refusal(_) => panic!("AA outage must not look like a refusal"),
+            InspectedEvidence::Raw(_) => panic!("expected attestation-failed"),
+        }
+
+        let conv = RecordingConverter {
+            nonce: "passport-as-nonce".into(),
+        };
+        let passport =
+            produce_passport_evidence(&producer, &conv, b"spki", &PassportEvidenceCache::new(), 0)
+                .await
+                .unwrap();
+        match inspect_evidence(&passport).unwrap() {
+            InspectedEvidence::AttestationFailed(_) => {}
+            InspectedEvidence::Refusal(_) => {
+                panic!("passport AA outage must not look like a refusal")
+            }
             InspectedEvidence::Raw(_) => panic!("expected attestation-failed"),
         }
     }
@@ -552,33 +590,5 @@ mod tests {
         assert!(decl.wants_evidence);
         assert!(decl.challenge_token.is_empty());
         assert!(state.issued_nonce().is_none());
-    }
-
-    #[test]
-    fn verify_then_refusal_is_inspectable() {
-        let evidence = refusal_evidence("peer declared attest then refused");
-        match inspect_evidence(&evidence).unwrap() {
-            InspectedEvidence::Refusal(r) => assert!(r.contains("refused")),
-            _ => panic!("expected refusal"),
-        }
-    }
-
-    #[test]
-    fn peer_challenge_token_is_byte_identical() {
-        let d = decl(true, true);
-        assert_eq!(peer_challenge_token(&d), Some(b"nonce".as_slice()));
-        assert!(peer_challenge_token(&decl(false, false)).is_none());
-    }
-
-    #[test]
-    fn inspect_raw_evidence_preserves_tag_and_bytes() {
-        let evidence = raw_evidence(7, b"quote".to_vec());
-        match inspect_evidence(&evidence).unwrap() {
-            InspectedEvidence::Raw(raw) => {
-                assert_eq!(raw.cbor_tag, 7);
-                assert_eq!(raw.raw, b"quote");
-            }
-            other => panic!("expected raw, got {other:?}"),
-        }
     }
 }

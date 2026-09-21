@@ -156,9 +156,6 @@ pub enum Error {
     #[error("gRPC attestation evaluate failed (api_version: {0:?})")]
     AttestationServiceGrpcAttestationEvaluateFailed(GrpcAsVersion, #[source] tonic::Status),
 
-    #[error("gRPC get attestation challenge failed (api_version: {0:?})")]
-    AttestationServiceGrpcGetChallengeFailed(GrpcAsVersion, #[source] tonic::Status),
-
     // AA ttrpc related errors
     #[cfg(feature = "attester-coco")]
     #[error("Failed to get evidence from Attestation Agent")]

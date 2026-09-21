@@ -6,7 +6,7 @@ use std::sync::Arc;
 use crate::tunnel::{
     attestation_exchange::{
         exporter::{export_from_server, spki_from_certified_key},
-        resources_from_ra, run_on_stream, RawEvidenceVerifier,
+        finish_rats_tls, RawEvidenceVerifier,
     },
     attestation_result::AttestationResult,
     ra_context::RaContext,
@@ -66,17 +66,17 @@ impl RatsTlsSecurityLayer {
                     .as_ref()
                     .map(|v| v.common.peer_spki_der())
                     .transpose()?;
-                let resources = resources_from_ra(
+                let (security_layer_stream, attestation_result) = finish_rats_tls(
+                    security_layer_stream,
                     self.ra_context.as_ref(),
                     verifier
                         .as_ref()
                         .map(|v| &v.common as &dyn RawEvidenceVerifier),
                     exporter,
-                    own_spki.as_deref(),
-                    peer_spki.as_deref(),
-                );
-                let (security_layer_stream, attestation_result) =
-                    run_on_stream(security_layer_stream, resources).await?;
+                    own_spki,
+                    peer_spki,
+                )
+                .await?;
 
                 tracing::debug!("New rats-tls connection established");
                 Ok::<_, anyhow::Error>((security_layer_stream, attestation_result))

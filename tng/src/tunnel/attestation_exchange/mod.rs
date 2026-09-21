@@ -12,4 +12,4 @@ pub mod pb {
 }
 
 pub use core::{ChallengeSource, PassportEvidenceCache, RawEvidenceVerifier};
-pub use session::{resources_from_ra, run_on_stream};
+pub use session::finish_rats_tls;

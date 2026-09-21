@@ -5,6 +5,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::ra_context::{AttestContext, RaContext, VerifyContext};
+use rats_cert::tee::AttesterPipeline;
 
 use super::claims::EXPORTER_LEN;
 use super::codec::{read_declaration, read_evidence, write_declaration, write_evidence};
@@ -32,12 +33,13 @@ pub struct ExchangeResources<'a> {
     pub max_retries: usize,
 }
 
-pub fn resources_from_ra<'a>(
+fn resources_from_ra<'a>(
     ra: &'a RaContext,
     verifier: Option<&'a dyn RawEvidenceVerifier>,
     exporter: [u8; EXPORTER_LEN],
     own_spki_der: Option<&'a [u8]>,
     peer_spki_der: Option<&'a [u8]>,
+    passport_producer: Option<&'a dyn EvidenceProducer>,
 ) -> ExchangeResources<'a> {
     let local = LocalRole {
         will_attest: ra.attest_context().is_some(),
@@ -56,13 +58,12 @@ pub fn resources_from_ra<'a>(
     };
     let (producer, attest_converter, passport_cache, max_retries) = match ra.attest_context() {
         Some(AttestContext::Passport {
-            attester,
             converter,
             passport_cache,
             max_retries,
             ..
         }) => (
-            Some(attester as &dyn EvidenceProducer),
+            passport_producer,
             Some(converter as &dyn ChallengeSource),
             Some(passport_cache),
             *max_retries,
@@ -95,7 +96,7 @@ pub fn resources_from_ra<'a>(
     }
 }
 
-pub async fn run_on_stream<S>(
+async fn run_on_stream<S>(
     stream: S,
     resources: ExchangeResources<'_>,
 ) -> Result<(S, Option<AttestationResult>)>
@@ -105,7 +106,7 @@ where
     run_on_stream_with_timeout(stream, resources, EXCHANGE_TIMEOUT).await
 }
 
-pub async fn run_on_stream_with_timeout<S>(
+async fn run_on_stream_with_timeout<S>(
     stream: S,
     resources: ExchangeResources<'_>,
     timeout: Duration,
@@ -117,8 +118,40 @@ where
     match tokio::time::timeout(timeout, run_halves(&mut rd, &mut wr, resources)).await {
         Ok(Ok(result)) => Ok((rd.unsplit(wr), result)),
         Ok(Err(e)) => Err(e),
-        Err(_) => Err(anyhow!("peer sent nothing: attestation exchange timed out")),
+        Err(_) => Err(anyhow!("attestation exchange timed out")),
     }
+}
+
+pub async fn finish_rats_tls<S>(
+    stream: S,
+    ra: &RaContext,
+    verifier: Option<&dyn RawEvidenceVerifier>,
+    exporter: [u8; EXPORTER_LEN],
+    own_spki: Option<Vec<u8>>,
+    peer_spki: Option<Vec<u8>>,
+) -> Result<(S, Option<AttestationResult>)>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let passport_pipeline = match ra.attest_context() {
+        Some(AttestContext::Passport {
+            attester,
+            converter,
+            ..
+        }) => Some(AttesterPipeline::new(attester, converter)),
+        _ => None,
+    };
+    let resources = resources_from_ra(
+        ra,
+        verifier,
+        exporter,
+        own_spki.as_deref(),
+        peer_spki.as_deref(),
+        passport_pipeline
+            .as_ref()
+            .map(|p| p as &dyn EvidenceProducer),
+    );
+    run_on_stream(stream, resources).await
 }
 
 async fn run_halves<R, W>(
@@ -560,10 +593,27 @@ mod tests {
         .await
         .unwrap_err();
         assert!(
-            err.to_string().contains("peer sent nothing"),
+            err.to_string().contains("timed out"),
             "unexpected error: {err:#}"
         );
         drop(peer);
+    }
+
+    #[tokio::test]
+    async fn verifier_closes_when_peer_will_not_attest() {
+        let conv = RecordingConverter { nonce: "n".into() };
+        let verifier = SubsetVerifier;
+        let (a, b) = tokio::io::duplex(1024);
+        let (ra, rb) = tokio::join!(
+            run_on_stream(a, verify_only(&conv, &verifier, SPKI_A, EXP)),
+            run_on_stream(b, nora_resources()),
+        );
+        let err = ra.unwrap_err();
+        assert!(
+            err.to_string().contains("peer declared it will not attest"),
+            "unexpected error: {err:#}"
+        );
+        let _ = rb;
     }
 
     #[tokio::test]
@@ -584,7 +634,7 @@ mod tests {
             err.to_string().contains("truncated"),
             "unexpected error: {err:#}"
         );
-        assert!(!err.to_string().contains("peer sent nothing"));
+        assert!(!err.to_string().contains("timed out"));
     }
 
     #[tokio::test]

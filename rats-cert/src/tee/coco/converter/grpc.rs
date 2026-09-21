@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use serde_json::json;
+use rand::RngCore as _;
 
 use super::super::evidence::{
     tee_to_string, AttestationServiceHashAlgo, CocoAsToken, CocoEvidence,
@@ -86,35 +85,17 @@ impl GenericConverter for CocoGrpcConverter {
     }
 
     async fn get_nonce(&self) -> Result<Self::Nonce> {
-        match self.get_nonce_v1_6_0().await {
-            Ok(nonce) => Ok(nonce),
-            Err(Error::AttestationServiceGrpcGetChallengeFailed(_, status)) => {
-                if let Some(dummy) = dummy_nonce_if_endpoint_absent(&status) {
-                    Ok(dummy)
-                } else {
-                    Err(Error::AttestationServiceGrpcGetChallengeFailed(
-                        GrpcAsVersion::V1_6_0,
-                        status,
-                    ))
-                }
-            }
-            Err(e) => Err(e),
-        }
+        // Trustee GetAttestationChallenge requires tee/tee_params this converter
+        // does not have, and Aborts an empty map. Mint locally like the builtin
+        // converter; CoCo evaluate binds runtime_data from the quote.
+        Ok(local_coco_nonce())
     }
 }
 
-/// Dummy nonce only when the gRPC AS has no challenge method. An AS that does
-/// issue nonces must receive a real one, because it will check for it at conversion.
-pub(crate) fn dummy_nonce_if_endpoint_absent(status: &tonic::Status) -> Option<CoCoNonce> {
-    match status.code() {
-        tonic::Code::Unimplemented | tonic::Code::NotFound => {
-            tracing::warn!(
-                "Connected to an grpc-as instance that does not support challenge token retrieval; falling back to dummy nonce. This may compromise freshness guarantees of evidence."
-            );
-            Some(CoCoNonce::Jwt("dummy nonce".to_string()))
-        }
-        _ => None,
-    }
+fn local_coco_nonce() -> CoCoNonce {
+    let mut buf = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut buf);
+    CoCoNonce::Jwt(URL_SAFE_NO_PAD.encode(buf))
 }
 
 impl CocoGrpcConverter {
@@ -316,95 +297,5 @@ impl CocoGrpcConverter {
         let attestation_token = response.attestation_token;
 
         CocoAsToken::new(attestation_token)
-    }
-
-    async fn get_nonce_v1_6_0(&self) -> Result<CoCoNonce> {
-        let request = tonic::Request::from_parts(
-            self.request_metadata.clone(),
-            tonic::Extensions::new(),
-            as_api::v1_6_0::ChallengeRequest {
-                inner: std::collections::HashMap::new(),
-            },
-        );
-
-        let mut client =
-            {
-                #[cfg(not(all(
-                    target_arch = "wasm32",
-                    target_vendor = "unknown",
-                    target_os = "unknown"
-                )))]
-                {
-                    let endpoint = tonic::transport::Endpoint::new(self.as_addr.to_string())
-                        .map_err(|e| Error::GrpcEndpointCreateFailed {
-                            as_addr: self.as_addr.clone(),
-                            source: e,
-                        })?;
-                    as_api::v1_6_0::attestation_service_client::AttestationServiceClient::new(
-                        endpoint
-                            .connect()
-                            .await
-                            .map_err(|e| Error::GrpcConnectFailed {
-                                as_addr: self.as_addr.clone(),
-                                source: e,
-                            })?,
-                    )
-                }
-                #[cfg(all(
-                    target_arch = "wasm32",
-                    target_vendor = "unknown",
-                    target_os = "unknown"
-                ))]
-                as_api::v1_6_0::attestation_service_client::AttestationServiceClient::new(
-                    tonic_web_wasm_client::Client::new(self.as_addr.to_string()),
-                )
-            };
-
-        let fut = async move {
-            let response: as_api::v1_6_0::ChallengeResponse = client
-                .get_attestation_challenge(request)
-                .await
-                .map_err(|e| {
-                    Error::AttestationServiceGrpcGetChallengeFailed(GrpcAsVersion::V1_6_0, e)
-                })?
-                .into_inner();
-            Ok::<_, Error>(response)
-        };
-
-        #[cfg(all(
-            target_arch = "wasm32",
-            target_vendor = "unknown",
-            target_os = "unknown"
-        ))]
-        let response = tokio_with_wasm::task::spawn(fut)
-            .await
-            .map_err(Error::TaskSpawnFailed)??;
-        #[cfg(not(all(
-            target_arch = "wasm32",
-            target_vendor = "unknown",
-            target_os = "unknown"
-        )))]
-        let response = fut.await?;
-
-        Ok(CoCoNonce::Jwt(response.attestation_challenge))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dummy_nonce_only_on_absent_endpoint() {
-        let unimplemented = tonic::Status::unimplemented("no GetAttestationChallenge");
-        let CoCoNonce::Jwt(n) = dummy_nonce_if_endpoint_absent(&unimplemented)
-            .expect("unimplemented must fall back to dummy");
-        assert_eq!(n, "dummy nonce");
-
-        let not_found = tonic::Status::not_found("challenge");
-        assert!(dummy_nonce_if_endpoint_absent(&not_found).is_some());
-
-        let unavailable = tonic::Status::unavailable("as down");
-        assert!(dummy_nonce_if_endpoint_absent(&unavailable).is_none());
     }
 }
