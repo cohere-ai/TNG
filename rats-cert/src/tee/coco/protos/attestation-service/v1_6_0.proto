@@ -78,6 +78,17 @@ message AttestationResponse {
     string attestation_token = 1;
 }
 
+message ChallengeRequest {
+    // ChallengeRequest uses HashMap to pass variables like:
+    // tee, tee_params etc
+    map<string, string> inner = 1;
+}
+
+message ChallengeResponse {
+    string attestation_challenge = 1;
+}
+
 service AttestationService {
     rpc AttestationEvaluate(AttestationRequest) returns (AttestationResponse) {};
+    rpc GetAttestationChallenge(ChallengeRequest) returns (ChallengeResponse) {};
 }

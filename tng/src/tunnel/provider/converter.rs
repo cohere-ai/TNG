@@ -74,3 +74,13 @@ impl GenericConverter for TngConverter {
         }
     }
 }
+
+#[cfg(unix)]
+#[async_trait::async_trait]
+impl crate::tunnel::attestation_exchange::ChallengeSource for TngConverter {
+    async fn get_nonce(&self) -> anyhow::Result<String> {
+        GenericConverter::get_nonce(self)
+            .await
+            .map_err(|e| anyhow::anyhow!("converter errors while fetching the nonce: {e}"))
+    }
+}

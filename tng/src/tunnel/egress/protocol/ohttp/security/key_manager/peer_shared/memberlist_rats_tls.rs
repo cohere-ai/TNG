@@ -49,6 +49,9 @@ impl<R: Runtime> StreamLayer for RatsTls<R> {
                     None,
                     ra_context.clone(),
                     runtime.clone(),
+                    std::time::Duration::from_secs(
+                        crate::config::ra::DEFAULT_RATS_TLS_POOL_TTL_SECS,
+                    ),
                 )
                 .await
                 .context("Failed to create rats-tls stream forwarder")

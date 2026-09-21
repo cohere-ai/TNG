@@ -14,6 +14,8 @@ use crate::config::ra::AttestArgs;
 use crate::config::ra::VerifierArgs;
 use crate::config::ra::{RaArgs, VerifyArgs};
 #[cfg(unix)]
+use crate::tunnel::attestation_exchange::PassportEvidenceCache;
+#[cfg(unix)]
 use crate::tunnel::attestation_metrics::AttestationMetrics;
 #[cfg(unix)]
 use crate::tunnel::utils::maybe_cached::RefreshStrategy;
@@ -151,6 +153,7 @@ pub enum AttestContext {
         refresh_strategy: RefreshStrategy,
         max_retries: usize,
         metrics: AttestationMetrics,
+        passport_cache: PassportEvidenceCache,
     },
 
     /// Background check mode - just attest via AA (client verifies)
@@ -187,6 +190,7 @@ impl AttestContext {
                     refresh_strategy: attest_args.refresh_strategy(),
                     max_retries: attest_args.max_retries(),
                     metrics,
+                    passport_cache: PassportEvidenceCache::new(),
                 })
             }
             AttestArgs::BackgroundCheck {

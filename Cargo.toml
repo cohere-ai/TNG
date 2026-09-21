@@ -167,31 +167,12 @@ ws_stream_wasm = "=0.7.5"
 x509-cert = {version = "0.2.5", features = ["builder", "pem"]}
 zeroize = "1.8.1"
 
-# These two forks are each a single commit raising a size cap to the value TLS and X.509
-# already permit (16MB). They are required because a DICE cert carrying CoCo evidence is
-# larger than 64KB -- a TDX quote with event logs measures ~71KB -- while rustls contracts
-# handshake messages and certificates to 64KB, and webpki caps nested DER lengths at 64KB.
-# Neither cap comes from a protocol limit; both are self-imposed hardening, and rustls does
-# not expose them for configuration (see rustls#698). TLS 1.3 certificate compression is
-# already enabled via the `brotli` feature, but rustls checks the cap after decompression,
-# so it does not help.
-#
-# Consequence to keep in mind: raising the caps to 16MB also removes the memory-exhaustion
-# guard they provide, so a peer can make us buffer that much during a handshake.
 # `[patch]` tables are not inherited from dependency workspaces, so upstream trustee's own
 # pin has to be repeated here or the SNP verifiers fail to build: sev 7.1.0 does not compile
 # with its `sev` and `serde` features both enabled.
 [patch.crates-io.sev]
 git = "https://github.com/virtee/sev"
 rev = "d487809188c3c92e397bc92e2cb2a85eb982c980"
-
-[patch.crates-io.rustls]
-branch = "v/0.23.27-patched"
-git = "https://github.com/inclavare-containers/rustls.git"
-
-[patch.crates-io.rustls-webpki]
-branch = "v/0.103.3-patched"
-git = "https://github.com/inclavare-containers/webpki.git"
 
 # The native build uses stock reqwest and hyper-util. The inclavare reqwest fork adds
 # set_mark() (see the netfilter note in tng/src/config/ingress.rs) plus wasm stream

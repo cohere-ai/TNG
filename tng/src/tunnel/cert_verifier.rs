@@ -48,35 +48,29 @@ impl TngCommonCertVerifier {
         }
     }
 
-    pub async fn verity_pending_cert(&self) -> Result<AttestationResult> {
+    pub async fn verify_raw_evidence(
+        &self,
+        cbor_tag: u64,
+        raw_evidence: Vec<u8>,
+        expected_claims: rats_cert::tee::claims::Claims,
+    ) -> Result<AttestationResult> {
         let attestation_attempt = self
             .verify_ctx
             .attestation_metrics()
             .start(AttestationOperation::Verify, AttestationProtocol::RatsTls);
-        tracing::debug!("Verifying rats-tls cert");
+        tracing::debug!("Verifying rats-tls raw evidence");
 
-        let pending_cert = self
-            .pending_cert
-            .lock()
-            .take()
-            .context("No rats-tls cert received")?;
+        let pending_result =
+            CertVerifier::pending_from_raw_evidence(cbor_tag, raw_evidence, expected_claims)
+                .map_err(|e| anyhow!("Failed to prepare raw evidence for verification: {e:?}"))?;
 
-        // Step 1: Extract evidence from certificate
-        let pending_result = CertVerifier::new()
-            .verify_der(&pending_cert)
-            .await
-            .map_err(|e| anyhow!("Failed to extract evidence from certificate: {:?}", e))?;
-
-        // Step 2: Based on verify mode, convert evidence to token and verify
         let token = match &*self.verify_ctx {
             VerifyContext::Passport { verifier, .. } => {
-                // Passport: extension must parse as an AS token (not raw evidence).
                 let token = parse_token_from_dice_cert(
                     pending_result.cbor_tag,
                     &pending_result.raw_evidence,
                 )?;
 
-                // Verify the token using pre-instantiated verifier
                 verifier
                     .verify_evidence(&token, &pending_result.report_data)
                     .await
@@ -89,19 +83,16 @@ impl TngCommonCertVerifier {
                 verifier,
                 ..
             } => {
-                // BackgroundCheck: extension must parse as raw evidence (then convert via AS).
                 let evidence = parse_evidence_from_dice_cert(
                     pending_result.cbor_tag,
                     &pending_result.raw_evidence,
                 )?;
 
-                // Convert evidence to token via remote AS
                 let token = converter
                     .convert(&evidence)
                     .await
                     .map_err(|e| anyhow!("Failed to convert evidence to token: {:?}", e))?;
 
-                // Verify the token
                 verifier
                     .verify_evidence(&token, &pending_result.report_data)
                     .await
@@ -111,18 +102,40 @@ impl TngCommonCertVerifier {
             }
         };
 
-        tracing::debug!("rats-rs cert verify finished successfully");
+        tracing::debug!("rats-rs raw evidence verify finished successfully");
         attestation_attempt.mark_succeeded();
 
         Ok(AttestationResult::from_token(token))
+    }
+
+    pub fn peer_spki_der(&self) -> Result<Vec<u8>> {
+        let pending_cert = self
+            .pending_cert
+            .lock()
+            .clone()
+            .context("No rats-tls cert received")?;
+        rats_cert::cert::spki_der_from_x509_der(&pending_cert)
+            .map_err(|e| anyhow!("failed to extract SPKI from peer certificate: {e:?}"))
     }
 
     pub fn verify_cert(
         &self,
         end_entity: &rustls::pki_types::CertificateDer<'_>,
     ) -> std::result::Result<(), rustls::Error> {
-        // We just return ok here, and store the end entity certificate and verify it later.
+        // Keep the leaf for SPKI binding after the post-handshake exchange.
         self.pending_cert.lock().replace(end_entity.to_vec());
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::tunnel::attestation_exchange::RawEvidenceVerifier for TngCommonCertVerifier {
+    async fn verify(
+        &self,
+        cbor_tag: u64,
+        raw: Vec<u8>,
+        expected: rats_cert::tee::claims::Claims,
+    ) -> Result<AttestationResult> {
+        self.verify_raw_evidence(cbor_tag, raw, expected).await
     }
 }

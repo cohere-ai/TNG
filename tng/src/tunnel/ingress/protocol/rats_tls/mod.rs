@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::{
     tunnel::{
@@ -31,6 +32,7 @@ impl RatsTlsStreamForwarder {
         transport_so_mark: Option<u32>,
         ra_context: Arc<RaContext>,
         runtime: TokioRuntime,
+        pool_ttl: Duration,
     ) -> Result<Self> {
         Ok(Self {
             security_layer: RatsTlsSecurityLayer::new(
@@ -38,6 +40,7 @@ impl RatsTlsStreamForwarder {
                 transport_so_mark,
                 ra_context,
                 runtime,
+                pool_ttl,
             )
             .await?,
         })

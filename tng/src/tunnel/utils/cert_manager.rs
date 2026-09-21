@@ -1,9 +1,8 @@
 use again::RetryPolicy;
 use anyhow::{Context as _, Result};
 use rats_cert::{
-    cert::create::CertBuilder,
+    cert::create::generate_key_carrier_cert,
     crypto::{AsymmetricAlgo, HashAlgo},
-    tee::{claims::Claims, AttesterPipeline, GenericConverter},
 };
 use std::{pin::Pin, sync::Arc, time::Duration};
 
@@ -56,77 +55,16 @@ impl CertManager {
     }
 
     async fn fetch_new_cert_inner(
-        attest_ctx: &AttestContext,
+        _attest_ctx: &AttestContext,
     ) -> Result<(rustls::sign::CertifiedKey, Expire)> {
-        tracing::debug!("Generate new cert with rats-rs");
+        tracing::debug!("Generate new rats-tls key-carrier certificate");
 
-        let (der_cert, privkey, expired) = match attest_ctx {
-            AttestContext::Passport {
-                attester,
-                converter,
-                ..
-            } => {
-                let challenge_token = converter
-                    .get_nonce()
-                    .await
-                    .context("Failed to fetch challenge token (nonce) from Attestation Service")?;
-                tracing::debug!("Fetched challenge token from AS for RA-TLS cert freshness");
-
-                let mut claims = Claims::new();
-                claims.insert(
-                    "challenge_token".to_string(),
-                    serde_json::Value::String(challenge_token),
-                );
-
-                let attester_pipeline = AttesterPipeline::new(attester, converter);
-                let cert_bundle = CertBuilder::new(attester_pipeline, HashAlgo::Sha256)
-                    .with_claims(claims)
-                    .with_subject("CN=TNG,O=Inclavare Containers")
-                    .build(AsymmetricAlgo::P256)
-                    .await?;
-
-                tracing::debug!(cert = cert_bundle.cert_to_pem()?, "Generated new cert");
-
-                let evidence_expire = Expire::from_timestamp(cert_bundle.evidence().exp()?)?;
-                let cert_expire = Expire::ExpireAt(
-                    cert_bundle
-                        .cert()
-                        .tbs_certificate
-                        .validity
-                        .not_after
-                        .to_system_time(),
-                );
-
-                (
-                    cert_bundle.cert_to_der()?,
-                    cert_bundle.private_key().to_pkcs8_pem()?,
-                    std::cmp::min(evidence_expire, cert_expire),
-                )
-            }
-            AttestContext::BackgroundCheck { attester, .. } => {
-                let cert_bundle = CertBuilder::new(attester, HashAlgo::Sha256)
-                    .with_subject("CN=TNG,O=Inclavare Containers")
-                    .build(AsymmetricAlgo::P256)
-                    .await?;
-
-                tracing::debug!(cert = cert_bundle.cert_to_pem()?, "Generated new cert");
-
-                let cert_expire = Expire::ExpireAt(
-                    cert_bundle
-                        .cert()
-                        .tbs_certificate
-                        .validity
-                        .not_after
-                        .to_system_time(),
-                );
-
-                (
-                    cert_bundle.cert_to_der()?,
-                    cert_bundle.private_key().to_pkcs8_pem()?,
-                    cert_expire,
-                )
-            }
-        };
+        let (der_cert, privkey, not_after) = generate_key_carrier_cert(
+            "CN=TNG,O=Inclavare Containers",
+            HashAlgo::Sha256,
+            AsymmetricAlgo::P256,
+        )?;
+        let expired = Expire::ExpireAt(not_after);
 
         let crypto_provider = rustls::crypto::CryptoProvider::get_default()
             .context("rustls crypto provider not installed")?;
@@ -156,15 +94,26 @@ mod tests {
 
     use super::*;
 
+    fn dummy_aa() -> (String, std::os::unix::net::UnixListener) {
+        let path = std::env::temp_dir().join(format!(
+            "tng-aa-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind dummy aa");
+        (format!("unix://{}", path.display()), listener)
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_cert_gen_with_nonzero_interval() -> Result<()> {
         run_test_with_tokio_runtime(|runtime| async move {
+            let (aa_addr, _listener) = dummy_aa();
             let attest_ctx = AttestContext::from_attest_args(&AttestArgs::BackgroundCheck {
-                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds {
-                    aa_addr:
-                        "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
-                            .to_owned(),
-                }),
+                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
                 refresh_interval: Some(3),
                 max_retries: None,
             })
@@ -214,12 +163,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
     async fn test_cert_gen_with_zero_interval() -> Result<()> {
         run_test_with_tokio_runtime(|runtime| async move {
+            let (aa_addr, _listener) = dummy_aa();
             let attest_ctx = AttestContext::from_attest_args(&AttestArgs::BackgroundCheck {
-                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds {
-                    aa_addr:
-                        "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
-                            .to_owned(),
-                }),
+                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
                 refresh_interval: Some(0),
                 max_retries: None,
             })
@@ -244,25 +190,13 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-    async fn test_passport_cert_embeds_challenge_token_nonce() -> Result<()> {
-        use crate::config::ra::{CocoConverterArgs, ConverterArgs};
+    async fn test_key_carrier_cert_has_no_dice_evidence() -> Result<()> {
         use rats_cert::cert::verify::CertVerifier;
-        use rats_cert::tee::GenericEvidence;
-        use std::collections::HashMap;
 
         run_test_with_tokio_runtime(|runtime| async move {
-            let attest_ctx = AttestContext::from_attest_args(&AttestArgs::Passport {
-                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds {
-                    aa_addr:
-                        "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
-                            .to_owned(),
-                }),
-                converter: ConverterArgs::Coco(CocoConverterArgs::Restful {
-                    as_addr: "http://127.0.0.1:8080".to_owned(),
-                    policy_ids: vec!["default".to_string()],
-                    as_headers: HashMap::new(),
-                    as_ca_certs: vec![],
-                }),
+            let (aa_addr, _listener) = dummy_aa();
+            let attest_ctx = AttestContext::from_attest_args(&AttestArgs::BackgroundCheck {
+                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
                 refresh_interval: Some(0),
                 max_retries: None,
             })
@@ -271,24 +205,21 @@ mod tests {
 
             let certified_key = cert_manager.get_latest_cert().await?;
             let cert_der = certified_key.cert.first().expect("cert chain is empty");
-            let pending = CertVerifier::new()
-                .verify_der(cert_der.as_ref())
-                .await
-                .context("Failed to parse DICE cert")?;
-
-            let token = crate::tunnel::provider::TngToken::create_evidence_from_dice(
-                pending.cbor_tag,
-                &pending.raw_evidence,
-            );
-            let token: crate::tunnel::provider::TngToken = rats_cert::errors::Result::from(token)
-                .context("Failed to parse AS token from DICE extension")?;
-
-            let claims = token.get_claims().context("Failed to get token claims")?;
             assert!(
-                claims.keys().any(|k| k.contains("challenge_token")),
-                "AS token should contain challenge_token, got keys: {:?}",
-                claims.keys().collect::<Vec<_>>()
+                cert_der.len() < 2048,
+                "key-carrier cert should be a few hundred bytes, got {}",
+                cert_der.len()
             );
+            match CertVerifier::new().verify_der(cert_der.as_ref()).await {
+                Ok(_) => bail!("key-carrier cert must not carry DICE evidence"),
+                Err(e) => {
+                    let msg = format!("{e:?}");
+                    assert!(
+                        msg.contains("CertExtractExtensionFailed") || msg.contains("extension"),
+                        "unexpected verify error: {msg}"
+                    );
+                }
+            }
 
             Ok(())
         })
