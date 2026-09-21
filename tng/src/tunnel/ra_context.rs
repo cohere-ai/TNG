@@ -145,6 +145,7 @@ impl RaContext {
 ///
 /// Holds attester and converter instances for server attestation.
 #[cfg(unix)]
+#[allow(clippy::large_enum_variant)] // Passport holds a converter; BackgroundCheck does not.
 pub enum AttestContext {
     /// Passport mode - attest via AA, convert via remote AS
     Passport {
