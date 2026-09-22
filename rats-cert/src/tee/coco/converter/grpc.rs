@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use rand::RngCore as _;
 
 use super::super::evidence::{
     tee_to_string, AttestationServiceHashAlgo, CocoAsToken, CocoEvidence,
@@ -85,17 +84,12 @@ impl GenericConverter for CocoGrpcConverter {
     }
 
     async fn get_nonce(&self) -> Result<Self::Nonce> {
-        // Trustee GetAttestationChallenge requires tee/tee_params this converter
-        // does not have, and Aborts an empty map. Mint locally like the builtin
-        // converter; CoCo evaluate binds runtime_data from the quote.
-        Ok(local_coco_nonce())
+        // grpc-as does not support the /challenge api, so we return a dummy nonce here
+        tracing::warn!(
+            "Connected to an grpc-as instance that does not support challenge token retrieval; falling back to dummy nonce. This may compromise freshness guarantees of evidence."
+        );
+        Ok(CoCoNonce::Jwt("dummy nonce".to_string()))
     }
-}
-
-fn local_coco_nonce() -> CoCoNonce {
-    let mut buf = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut buf);
-    CoCoNonce::Jwt(URL_SAFE_NO_PAD.encode(buf))
 }
 
 impl CocoGrpcConverter {

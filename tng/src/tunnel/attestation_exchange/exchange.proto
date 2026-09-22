@@ -2,32 +2,41 @@ syntax = "proto3";
 
 package tng.rats_tls.attestation_exchange;
 
-message Declaration {
-  bool will_attest = 1;
-  bool wants_evidence = 2;
-  // Empty when this side does not want evidence, or when verifying a passport.
-  bytes challenge_token = 3;
-  // TLS-Exporter context; empty for round zero (KTD3).
-  bytes certificate_request_context = 4;
-}
-
-message Evidence {
-  oneof payload {
-    RawEvidence evidence = 1;
-    Refusal refusal = 2;
-    AttestationFailed attestation_failed = 3;
+message Request {
+  oneof body {
+    None none = 1;
+    BackgroundCheck background_check = 2;
+    Passport passport = 3;
   }
 }
 
-message RawEvidence {
-  uint64 cbor_tag = 1;
-  bytes raw = 2;
+message BackgroundCheck {
+  bytes nonce = 1;
 }
 
-message Refusal {
+message Passport {}
+
+message Response {
+  oneof body {
+    None ack = 1;
+    Evidence evidence = 2;
+    Token token = 3;
+    Error error = 4;
+  }
+}
+
+message None {}
+
+message Error {
   string reason = 1;
 }
 
-message AttestationFailed {
-  string reason = 1;
+message Evidence {
+  string provider = 1;
+  string json = 2;
+}
+
+message Token {
+  string provider = 1;
+  string jwt = 2;
 }

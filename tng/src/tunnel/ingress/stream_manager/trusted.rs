@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Result};
 
@@ -13,6 +14,7 @@ use crate::tunnel::service_metrics::AttestationMetrics;
 use crate::CommonStreamTrait;
 use crate::{
     config::ingress::CommonArgs,
+    config::ra::DEFAULT_RATS_TLS_POOL_TTL_SECS,
     tunnel::{attestation_result::AttestationResult, utils::runtime::TokioRuntime},
 };
 
@@ -69,7 +71,7 @@ impl TrustedStreamManager {
                             transport_so_mark,
                             ra_context,
                             runtime.clone(),
-                            common_args.ra_args.rats_tls_pool_ttl(),
+                            Duration::from_secs(DEFAULT_RATS_TLS_POOL_TTL_SECS),
                         )
                         .await?,
                     ),

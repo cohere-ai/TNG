@@ -42,11 +42,6 @@ pub struct RaArgsUnchecked {
     /// Verification parameters configuration (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify: Option<VerifyArgs>,
-
-    /// How long a pooled rats_tls ingress session may be reused, in seconds.
-    /// Independent of `refresh_interval`. Default 600. `0` disables reuse.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rats_tls_pool_ttl: Option<u64>,
 }
 
 impl<'de> Deserialize<'de> for RaArgsUnchecked {
@@ -60,8 +55,6 @@ impl<'de> Deserialize<'de> for RaArgsUnchecked {
             no_ra: bool,
             attest: Option<serde_json::Value>,
             verify: Option<serde_json::Value>,
-            #[serde(default)]
-            rats_tls_pool_ttl: Option<u64>,
         }
 
         let raw = Raw::deserialize(deserializer)?;
@@ -92,7 +85,6 @@ impl<'de> Deserialize<'de> for RaArgsUnchecked {
             no_ra: raw.no_ra,
             attest,
             verify,
-            rats_tls_pool_ttl: raw.rats_tls_pool_ttl,
         })
     }
 }
@@ -108,13 +100,6 @@ pub enum RaArgs {
 }
 
 impl RaArgsUnchecked {
-    pub fn rats_tls_pool_ttl(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(
-            self.rats_tls_pool_ttl
-                .unwrap_or(DEFAULT_RATS_TLS_POOL_TTL_SECS),
-        )
-    }
-
     pub fn into_checked(self) -> Result<RaArgs, TngError> {
         let ra_args = if self.no_ra {
             // Sanity check
@@ -685,7 +670,7 @@ pub enum CocoVerifierArgs {
 #[cfg(unix)]
 const EVIDENCE_REFRESH_INTERVAL_SECOND: u64 = 10 * 60; // 10 minutes
 
-/// Default reuse bound for a pooled rats_tls ingress session, in seconds.
+/// Default reuse bound for a pooled rats_tls session, in seconds.
 pub const DEFAULT_RATS_TLS_POOL_TTL_SECS: u64 = 10 * 60;
 
 /// Attestation parameters configuration enum.

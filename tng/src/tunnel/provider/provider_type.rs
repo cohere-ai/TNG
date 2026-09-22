@@ -39,6 +39,15 @@ impl ProviderType {
             s.parse()
         }
     }
+
+    /// RA-TLS exchange: empty or unknown provider is an error (no CoCo default).
+    pub fn from_required_wire_str(s: &str) -> anyhow::Result<Self> {
+        let s = s.trim();
+        if s.is_empty() {
+            anyhow::bail!("empty provider");
+        }
+        s.parse()
+    }
 }
 
 impl fmt::Display for ProviderType {
@@ -99,6 +108,17 @@ mod tests {
     #[test]
     fn from_optional_wire_str_rejects_unknown() {
         assert!(ProviderType::from_optional_wire_str("notaprovider").is_err());
+    }
+
+    #[test]
+    fn from_required_wire_str_rejects_empty_and_unknown() {
+        assert!(ProviderType::from_required_wire_str("").is_err());
+        assert!(ProviderType::from_required_wire_str("   ").is_err());
+        assert!(ProviderType::from_required_wire_str("notaprovider").is_err());
+        assert_eq!(
+            ProviderType::from_required_wire_str("ita").unwrap(),
+            ProviderType::Ita
+        );
     }
 
     #[test]

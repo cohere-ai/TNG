@@ -84,22 +84,6 @@ impl CertVerifier {
         self.verify_cert(&cert).await
     }
 
-    /// Stream-delivered evidence: skip the certificate, DICE extraction, and CBOR envelope.
-    pub fn pending_from_raw_evidence(
-        cbor_tag: u64,
-        raw_evidence: Vec<u8>,
-        expected_claims: Claims,
-    ) -> Result<CertVerifyPendingResult> {
-        if expected_claims.is_empty() {
-            return Err(Error::EmptyExpectedClaims);
-        }
-        Ok(CertVerifyPendingResult {
-            cbor_tag,
-            raw_evidence,
-            report_data: ReportData::Claims(expected_claims),
-        })
-    }
-
     async fn verify_cert(&self, cert: &Certificate) -> Result<CertVerifyPendingResult> {
         /* check self-signed cert */
         verify_cert_signature(cert, cert)?;
@@ -248,35 +232,10 @@ pub fn spki_der_from_x509_der(cert_der: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::CLAIM_NAME_PUBLIC_KEY_HASH;
     use super::*;
 
-    #[test]
-    fn pending_from_raw_evidence_preserves_caller_claims() {
-        let mut claims = Claims::new();
-        claims.insert(
-            CLAIM_NAME_PUBLIC_KEY_HASH.into(),
-            serde_json::Value::String("abc".into()),
-        );
-        let pending =
-            CertVerifier::pending_from_raw_evidence(0xC0C000, b"quote".to_vec(), claims.clone())
-                .unwrap();
-        assert_eq!(pending.cbor_tag, 0xC0C000);
-        assert_eq!(pending.raw_evidence, b"quote");
-        assert_eq!(pending.report_data, ReportData::Claims(claims));
-    }
-
-    #[test]
-    fn pending_from_raw_evidence_rejects_empty_claims() {
-        match CertVerifier::pending_from_raw_evidence(1, vec![1], Claims::new()) {
-            Err(Error::EmptyExpectedClaims) => {}
-            Ok(_) => panic!("empty claims must be rejected"),
-            Err(e) => panic!("expected EmptyExpectedClaims, got {e}"),
-        }
-    }
-
     #[tokio::test]
-    async fn verify_der_still_rejects_garbage() {
+    async fn verify_der_rejects_garbage() {
         let err = CertVerifier::new().verify_der(b"not-a-cert").await;
         assert!(matches!(err, Err(Error::ParseDerCertError(_))));
     }

@@ -4,35 +4,17 @@ use std::time::{Duration, SystemTime};
 use again::RetryPolicy;
 use anyhow::{anyhow, bail, Context, Result};
 use rats_cert::tee::claims::Claims;
-use rats_cert::tee::{DiceParseEvidenceOutput, GenericAttester, GenericEvidence};
+use rats_cert::tee::{GenericAttester, GenericConverter, ReportData};
 
 use crate::tunnel::attestation_result::AttestationResult;
-use crate::tunnel::provider::TngToken;
+use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
 use crate::tunnel::utils::maybe_cached::Expire;
 
 use super::claims::{
     background_check_claims, passport_attester_claims, BackgroundCheckExpectation,
     PassportExpectation,
 };
-use super::pb::{
-    evidence::Payload, AttestationFailed, Declaration, Evidence, RawEvidence, Refusal,
-};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LocalRole {
-    pub will_attest: bool,
-    pub wants_evidence: bool,
-}
-
-impl LocalRole {
-    #[cfg(test)]
-    pub fn no_ra() -> Self {
-        Self {
-            will_attest: false,
-            wants_evidence: false,
-        }
-    }
-}
+use super::pb::{request, response, BackgroundCheck, Evidence, Passport, Request, Response, Token};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VerifyMode {
@@ -41,77 +23,44 @@ pub enum VerifyMode {
     None,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum EvidenceAction {
-    Produce,
-    Refuse,
-    Skip,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum VerifyAction {
-    RequireEvidence,
-    ClosePeerWillNotAttest,
-    Skip,
-}
-
-pub fn evidence_action(local: LocalRole, peer: &Declaration) -> EvidenceAction {
-    if !peer.wants_evidence {
-        EvidenceAction::Skip
-    } else if local.will_attest {
-        EvidenceAction::Produce
-    } else {
-        EvidenceAction::Refuse
-    }
-}
-
-pub fn verify_action(local: LocalRole, peer: &Declaration) -> VerifyAction {
-    if !local.wants_evidence {
-        VerifyAction::Skip
-    } else if peer.will_attest {
-        VerifyAction::RequireEvidence
-    } else {
-        VerifyAction::ClosePeerWillNotAttest
-    }
-}
-
-pub fn build_declaration(local: LocalRole, challenge_token: Option<&[u8]>) -> Declaration {
-    Declaration {
-        will_attest: local.will_attest,
-        wants_evidence: local.wants_evidence,
-        challenge_token: challenge_token.unwrap_or(&[]).to_vec(),
-        certificate_request_context: vec![],
-    }
-}
-
 /// Per-connection state: the nonce issued for this connection, if any, is retained until convert.
 pub struct ExchangeState {
-    local: LocalRole,
     verify_mode: VerifyMode,
     issued_nonce: Option<String>,
 }
 
 impl ExchangeState {
-    pub fn new(local: LocalRole, verify_mode: VerifyMode) -> Self {
+    pub fn new(verify_mode: VerifyMode) -> Self {
         Self {
-            local,
             verify_mode,
             issued_nonce: None,
         }
     }
 
-    pub async fn prepare_declaration<C>(&mut self, converter: Option<&C>) -> Result<Declaration>
+    pub async fn prepare_request<C>(&mut self, converter: Option<&C>) -> Result<Request>
     where
         C: ChallengeSource + ?Sized,
     {
-        if self.verify_mode == VerifyMode::BackgroundCheck {
-            let converter = converter.context("background-check verifier has no converter")?;
-            self.issued_nonce = Some(converter.get_nonce().await?);
+        match self.verify_mode {
+            VerifyMode::BackgroundCheck => {
+                let converter = converter.context("background-check verifier has no converter")?;
+                let nonce = converter.get_nonce().await?;
+                if nonce.is_empty() {
+                    bail!("background-check converter returned empty nonce");
+                }
+                let req = Request {
+                    body: Some(request::Body::BackgroundCheck(BackgroundCheck {
+                        nonce: nonce.as_bytes().to_vec(),
+                    })),
+                };
+                self.issued_nonce = Some(nonce);
+                Ok(req)
+            }
+            VerifyMode::Passport => Ok(Request {
+                body: Some(request::Body::Passport(Passport {})),
+            }),
+            VerifyMode::None => Ok(none_request()),
         }
-        Ok(build_declaration(
-            self.local,
-            self.issued_nonce.as_deref().map(str::as_bytes),
-        ))
     }
 
     #[cfg(test)]
@@ -150,93 +99,137 @@ pub trait ChallengeSource: Send + Sync {
 
 #[async_trait::async_trait]
 pub trait EvidenceProducer: Send + Sync {
-    async fn produce(&self, claims: Claims) -> Result<(u64, Vec<u8>)>;
+    async fn produce(&self, claims: Claims) -> Result<Evidence>;
 }
 
 #[async_trait::async_trait]
-pub trait RawEvidenceVerifier: Send + Sync {
-    async fn verify(
+pub trait TokenProducer: Send + Sync {
+    async fn produce(&self, claims: Claims) -> Result<TngToken>;
+}
+
+#[async_trait::async_trait]
+pub trait ExchangeVerifier: Send + Sync {
+    async fn verify_evidence(
         &self,
-        cbor_tag: u64,
-        raw: Vec<u8>,
+        provider: &str,
+        json: &str,
+        expected: Claims,
+    ) -> Result<AttestationResult>;
+
+    async fn verify_token(
+        &self,
+        provider: &str,
+        jwt: &str,
         expected: Claims,
     ) -> Result<AttestationResult>;
 }
 
-pub fn peer_challenge_token(peer: &Declaration) -> Option<&[u8]> {
-    if peer.challenge_token.is_empty() {
-        None
-    } else {
-        Some(peer.challenge_token.as_slice())
+pub fn none_request() -> Request {
+    Request {
+        body: Some(request::Body::None(super::pb::None {})),
     }
 }
 
-pub fn refusal_evidence(reason: impl Into<String>) -> Evidence {
-    Evidence {
-        payload: Some(Payload::Refusal(Refusal {
+pub fn ack_response() -> Response {
+    Response {
+        body: Some(response::Body::Ack(super::pb::None {})),
+    }
+}
+
+pub fn error_response(reason: impl Into<String>) -> Response {
+    Response {
+        body: Some(response::Body::Error(super::pb::Error {
             reason: reason.into(),
         })),
     }
 }
 
-pub fn attestation_failed_evidence(reason: impl Into<String>) -> Evidence {
-    Evidence {
-        payload: Some(Payload::AttestationFailed(AttestationFailed {
-            reason: reason.into(),
+pub fn evidence_response(provider: impl Into<String>, json: impl Into<String>) -> Response {
+    Response {
+        body: Some(response::Body::Evidence(Evidence {
+            provider: provider.into(),
+            json: json.into(),
         })),
     }
 }
 
-pub fn raw_evidence(cbor_tag: u64, raw: Vec<u8>) -> Evidence {
-    Evidence {
-        payload: Some(Payload::Evidence(RawEvidence { cbor_tag, raw })),
+pub fn token_response(provider: impl Into<String>, jwt: impl Into<String>) -> Response {
+    Response {
+        body: Some(response::Body::Token(Token {
+            provider: provider.into(),
+            jwt: jwt.into(),
+        })),
     }
 }
 
 pub async fn produce_background_check_evidence<P: EvidenceProducer + ?Sized>(
     producer: &P,
     own_spki_der: &[u8],
-    challenge_token: &[u8],
+    nonce: &[u8],
     exporter: &[u8],
     max_retries: usize,
-) -> Result<Evidence> {
-    let token =
-        std::str::from_utf8(challenge_token).context("challenge_token is not valid UTF-8")?;
+) -> Result<Response> {
+    if nonce.is_empty() {
+        return Ok(error_response("missing nonce"));
+    }
+    let token = match std::str::from_utf8(nonce) {
+        Ok(t) => t,
+        Err(_) => return Ok(error_response("challenge_token is not valid UTF-8")),
+    };
     let claims = background_check_claims(own_spki_der, token, exporter)?;
-    match produce_with_retry(producer, claims, max_retries).await {
-        Ok((cbor_tag, raw)) => Ok(raw_evidence(cbor_tag, raw)),
-        Err(e) => Ok(attestation_failed_evidence(format!("{e:#}"))),
+    match produce_evidence_with_retry(producer, claims, max_retries).await {
+        Ok(evidence) => Ok(evidence_response(evidence.provider, evidence.json)),
+        Err(e) => Ok(error_response(format!("{e:#}"))),
     }
 }
 
-pub async fn produce_passport_evidence<
-    P: EvidenceProducer + ?Sized,
-    C: ChallengeSource + ?Sized,
->(
+pub async fn produce_passport_token<P: TokenProducer + ?Sized, C: ChallengeSource + ?Sized>(
     producer: &P,
     converter: &C,
     own_spki_der: &[u8],
     cache: &PassportEvidenceCache,
     max_retries: usize,
-) -> Result<Evidence> {
+) -> Result<Response> {
     match cache
         .get_or_mint(own_spki_der, || async {
             let nonce = converter.get_nonce().await?;
             let claims = passport_attester_claims(own_spki_der, &nonce)?;
-            produce_with_retry(producer, claims, max_retries).await
+            produce_token_with_retry(producer, claims, max_retries).await
         })
         .await
     {
-        Ok((cbor_tag, raw)) => Ok(raw_evidence(cbor_tag, raw)),
-        Err(e) => Ok(attestation_failed_evidence(format!("{e:#}"))),
+        Ok(token) => Ok(token_response(
+            token.provider_type().as_str(),
+            token.as_str(),
+        )),
+        Err(e) => Ok(error_response(format!("{e:#}"))),
     }
 }
 
-async fn produce_with_retry<P: EvidenceProducer + ?Sized>(
+async fn produce_evidence_with_retry<P: EvidenceProducer + ?Sized>(
     producer: &P,
     claims: Claims,
     max_retries: usize,
-) -> Result<(u64, Vec<u8>)> {
+) -> Result<Evidence> {
+    let policy = RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(max_retries);
+    policy
+        .retry(|| {
+            let claims = claims.clone();
+            async move {
+                producer
+                    .produce(claims)
+                    .await
+                    .context("Failed to generate attestation evidence")
+            }
+        })
+        .await
+}
+
+async fn produce_token_with_retry<P: TokenProducer + ?Sized>(
+    producer: &P,
+    claims: Claims,
+    max_retries: usize,
+) -> Result<TngToken> {
     let policy = RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(max_retries);
     policy
         .retry(|| {
@@ -257,11 +250,10 @@ pub struct PassportEvidenceCache {
     inner: Mutex<Option<CachedPassport>>,
 }
 
-#[derive(Clone)]
 struct CachedPassport {
     spki: Vec<u8>,
-    tag: u64,
-    raw: Vec<u8>,
+    provider: ProviderType,
+    jwt: String,
     expire: Expire,
 }
 
@@ -270,88 +262,102 @@ impl PassportEvidenceCache {
         Self::default()
     }
 
-    pub async fn get_or_mint<F, Fut>(&self, spki: &[u8], mint: F) -> Result<(u64, Vec<u8>)>
+    pub async fn get_or_mint<F, Fut>(&self, spki: &[u8], mint: F) -> Result<TngToken>
     where
         F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = Result<(u64, Vec<u8>)>>,
+        Fut: std::future::Future<Output = Result<TngToken>>,
     {
         {
             let guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(cached) = guard.as_ref() {
-                if cached.spki == spki && expire_is_fresh(cached.expire) {
-                    return Ok((cached.tag, cached.raw.clone()));
+                if cached.spki == spki && is_unexpired(cached.expire) {
+                    return TngToken::from_wire(cached.provider, cached.jwt.clone());
                 }
             }
         }
-        let (tag, raw) = mint().await?;
+        let token = mint().await?;
         *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(CachedPassport {
             spki: spki.to_vec(),
-            tag,
-            raw: raw.clone(),
-            expire: expire_of_token(tag, &raw),
+            provider: token.provider_type(),
+            jwt: token.as_str().to_string(),
+            expire: token_expire(&token),
         });
-        Ok((tag, raw))
+        Ok(token)
     }
 
     #[cfg(test)]
-    fn insert_for_test(&self, spki: &[u8], tag: u64, raw: Vec<u8>, expire: Expire) {
+    fn insert_for_test(&self, spki: &[u8], provider: ProviderType, jwt: String, expire: Expire) {
         *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(CachedPassport {
             spki: spki.to_vec(),
-            tag,
-            raw,
+            provider,
+            jwt,
             expire,
         });
     }
 }
 
-fn expire_is_fresh(expire: Expire) -> bool {
+fn is_unexpired(expire: Expire) -> bool {
     match expire {
         Expire::NoExpire => true,
         Expire::ExpireAt(t) => t > SystemTime::now(),
     }
 }
 
-fn expire_of_token(tag: u64, raw: &[u8]) -> Expire {
-    match TngToken::create_evidence_from_dice(tag, raw) {
-        DiceParseEvidenceOutput::Ok(token) => token
-            .exp()
-            .ok()
-            .and_then(|exp| Expire::from_timestamp(exp).ok())
-            .unwrap_or(Expire::NoExpire),
-        _ => Expire::NoExpire,
+fn token_expire(token: &TngToken) -> Expire {
+    token
+        .exp()
+        .ok()
+        .and_then(|exp| Expire::from_timestamp(exp).ok())
+        .unwrap_or(Expire::NoExpire)
+}
+
+pub fn produced_error_reason(response: &Response) -> Option<&str> {
+    match response.body.as_ref() {
+        Some(response::Body::Error(e)) => Some(e.reason.as_str()),
+        _ => None,
     }
 }
 
-pub fn inspect_evidence(evidence: &Evidence) -> Result<InspectedEvidence<'_>> {
-    match evidence.payload.as_ref() {
-        Some(Payload::Evidence(raw)) => Ok(InspectedEvidence::Raw(raw)),
-        Some(Payload::Refusal(r)) => Ok(InspectedEvidence::Refusal(&r.reason)),
-        Some(Payload::AttestationFailed(r)) => Ok(InspectedEvidence::AttestationFailed(&r.reason)),
-        None => Err(anyhow!("evidence message has empty payload")),
+#[async_trait::async_trait]
+impl<C> ChallengeSource for C
+where
+    C: GenericConverter<Nonce = String> + Send + Sync,
+{
+    async fn get_nonce(&self) -> Result<String> {
+        GenericConverter::get_nonce(self)
+            .await
+            .map_err(|e| anyhow!("converter errors while fetching the nonce: {e}"))
     }
-}
-
-#[derive(Debug)]
-pub enum InspectedEvidence<'a> {
-    Raw(&'a RawEvidence),
-    Refusal(&'a str),
-    AttestationFailed(&'a str),
 }
 
 #[async_trait::async_trait]
 impl<A> EvidenceProducer for A
 where
-    A: GenericAttester + Send + Sync,
+    A: GenericAttester<Evidence = TngEvidence> + Send + Sync,
 {
-    async fn produce(&self, claims: Claims) -> Result<(u64, Vec<u8>)> {
+    async fn produce(&self, claims: Claims) -> Result<Evidence> {
         let evidence = self
-            .get_evidence(&rats_cert::tee::ReportData::Claims(claims))
+            .get_evidence(&ReportData::Claims(claims))
             .await
             .map_err(|e| anyhow!("attester failed: {e}"))?;
-        let tag = rats_cert::tee::GenericEvidence::get_dice_cbor_tag(&evidence);
-        let raw = rats_cert::tee::GenericEvidence::get_dice_raw_evidence(&evidence)
-            .map_err(|e| anyhow!("serialize evidence: {e}"))?;
-        Ok((tag, raw))
+        let json = serde_json::to_string(&evidence.serialize_to_json()?)
+            .context("serialize evidence JSON")?;
+        Ok(Evidence {
+            provider: evidence.provider_type().as_str().to_string(),
+            json,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl<A> TokenProducer for A
+where
+    A: GenericAttester<Evidence = TngToken> + Send + Sync,
+{
+    async fn produce(&self, claims: Claims) -> Result<TngToken> {
+        self.get_evidence(&ReportData::Claims(claims))
+            .await
+            .map_err(|e| anyhow!("attester failed: {e}"))
     }
 }
 
@@ -360,70 +366,6 @@ mod tests {
     use super::super::claims::{expected_subset_of, CLAIM_CHALLENGE_TOKEN, CLAIM_TLS_BINDER};
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    fn decl(will_attest: bool, wants_evidence: bool) -> Declaration {
-        Declaration {
-            will_attest,
-            wants_evidence,
-            challenge_token: if wants_evidence {
-                b"nonce".to_vec()
-            } else {
-                vec![]
-            },
-            certificate_request_context: vec![],
-        }
-    }
-
-    #[test]
-    fn verify_peer_will_not_attest_closes() {
-        let local = LocalRole {
-            will_attest: false,
-            wants_evidence: true,
-        };
-        assert_eq!(
-            verify_action(local, &decl(false, false)),
-            VerifyAction::ClosePeerWillNotAttest
-        );
-    }
-
-    #[test]
-    fn non_attesting_side_refuses_challenge() {
-        let local = LocalRole {
-            will_attest: false,
-            wants_evidence: false,
-        };
-        assert_eq!(
-            evidence_action(local, &decl(true, true)),
-            EvidenceAction::Refuse
-        );
-    }
-
-    #[test]
-    fn non_verifying_side_skips_challenge() {
-        let local = LocalRole {
-            will_attest: true,
-            wants_evidence: false,
-        };
-        assert_eq!(verify_action(local, &decl(true, true)), VerifyAction::Skip);
-        assert_eq!(
-            evidence_action(local, &decl(false, false)),
-            EvidenceAction::Skip
-        );
-    }
-
-    #[test]
-    fn refusal_is_distinct_from_attestation_failed() {
-        let refusal_msg = refusal_evidence("not configured");
-        let failed_msg = attestation_failed_evidence("attester exhausted retries");
-        let refusal = inspect_evidence(&refusal_msg).unwrap();
-        let failed = inspect_evidence(&failed_msg).unwrap();
-        match (refusal, failed) {
-            (InspectedEvidence::Refusal(a), InspectedEvidence::AttestationFailed(b)) => {
-                assert_ne!(a, b);
-            }
-            other => panic!("expected distinct variants, got mismatch: {other:?}"),
-        }
-    }
 
     struct RecordingConverter {
         nonce: String,
@@ -441,60 +383,78 @@ mod tests {
         let conv = RecordingConverter {
             nonce: "as-nonce-1".into(),
         };
-        let mut state = ExchangeState::new(
-            LocalRole {
-                will_attest: false,
-                wants_evidence: true,
-            },
-            VerifyMode::BackgroundCheck,
-        );
-        let decl = state.prepare_declaration(Some(&conv)).await.unwrap();
-        assert_eq!(decl.challenge_token, b"as-nonce-1");
+        let mut state = ExchangeState::new(VerifyMode::BackgroundCheck);
+        let req = state.prepare_request(Some(&conv)).await.unwrap();
+        match req.body {
+            Some(request::Body::BackgroundCheck(bc)) => {
+                assert_eq!(bc.nonce, b"as-nonce-1");
+            }
+            other => panic!("expected background_check, got {other:?}"),
+        }
         assert_eq!(state.issued_nonce(), Some("as-nonce-1"));
-    }
-
-    #[tokio::test]
-    async fn dummy_nonce_still_builds_matching_expectation() {
-        let conv = RecordingConverter {
-            nonce: "dummy nonce".into(),
-        };
-        let mut state = ExchangeState::new(
-            LocalRole {
-                will_attest: true,
-                wants_evidence: true,
-            },
-            VerifyMode::BackgroundCheck,
-        );
-        let _ = state.prepare_declaration(Some(&conv)).await.unwrap();
         let expected = state
             .expected_claims(b"spki", b"0123456789abcdef0123456789abcdef")
             .unwrap();
         let actual =
-            background_check_claims(b"spki", "dummy nonce", b"0123456789abcdef0123456789abcdef")
+            background_check_claims(b"spki", "as-nonce-1", b"0123456789abcdef0123456789abcdef")
                 .unwrap();
         assert!(expected_subset_of(&expected, &actual));
     }
 
-    struct CountingProducer {
+    struct CountingEvidenceProducer {
         count: AtomicUsize,
         fail_times: usize,
         claims: Mutex<Option<Claims>>,
     }
 
     #[async_trait::async_trait]
-    impl EvidenceProducer for CountingProducer {
-        async fn produce(&self, claims: Claims) -> Result<(u64, Vec<u8>)> {
+    impl EvidenceProducer for CountingEvidenceProducer {
+        async fn produce(&self, claims: Claims) -> Result<Evidence> {
+            let n = self.count.fetch_add(1, Ordering::SeqCst);
+            if n < self.fail_times {
+                bail!("attester down");
+            }
+            *self.claims.lock().unwrap() = Some(claims.clone());
+            Ok(Evidence {
+                provider: "coco".into(),
+                json: serde_json::to_string(&claims)?,
+            })
+        }
+    }
+
+    struct CountingTokenProducer {
+        count: AtomicUsize,
+        fail_times: usize,
+        claims: Mutex<Option<Claims>>,
+    }
+
+    fn test_jwt() -> String {
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+            .to_string()
+    }
+
+    #[async_trait::async_trait]
+    impl TokenProducer for CountingTokenProducer {
+        async fn produce(&self, claims: Claims) -> Result<TngToken> {
             let n = self.count.fetch_add(1, Ordering::SeqCst);
             if n < self.fail_times {
                 bail!("attester down");
             }
             *self.claims.lock().unwrap() = Some(claims);
-            Ok((99, b"evidence".to_vec()))
+            TngToken::from_wire(ProviderType::Coco, test_jwt())
         }
     }
 
-    fn counting_producer(fail_times: usize) -> CountingProducer {
-        CountingProducer {
+    fn counting_evidence(fail_times: usize) -> CountingEvidenceProducer {
+        CountingEvidenceProducer {
+            count: AtomicUsize::new(0),
+            fail_times,
+            claims: Mutex::new(None),
+        }
+    }
+
+    fn counting_token(fail_times: usize) -> CountingTokenProducer {
+        CountingTokenProducer {
             count: AtomicUsize::new(0),
             fail_times,
             claims: Mutex::new(None),
@@ -503,15 +463,15 @@ mod tests {
 
     #[tokio::test]
     async fn passport_cache_reuses_token_until_spki_or_expiry_change() {
-        let producer = counting_producer(0);
+        let producer = counting_token(0);
         let conv = RecordingConverter {
             nonce: "passport-as-nonce".into(),
         };
         let cache = PassportEvidenceCache::new();
-        let first = produce_passport_evidence(&producer, &conv, b"spki", &cache, 0)
+        let first = produce_passport_token(&producer, &conv, b"spki", &cache, 0)
             .await
             .unwrap();
-        let second = produce_passport_evidence(&producer, &conv, b"spki", &cache, 0)
+        let second = produce_passport_token(&producer, &conv, b"spki", &cache, 0)
             .await
             .unwrap();
         assert_eq!(first, second);
@@ -523,26 +483,26 @@ mod tests {
             Some("passport-as-nonce")
         );
 
-        produce_passport_evidence(&producer, &conv, b"other-spki", &cache, 0)
+        produce_passport_token(&producer, &conv, b"other-spki", &cache, 0)
             .await
             .unwrap();
         assert_eq!(producer.count.load(Ordering::SeqCst), 2);
 
         cache.insert_for_test(
             b"spki",
-            99,
-            b"stale".to_vec(),
+            ProviderType::Coco,
+            test_jwt(),
             Expire::ExpireAt(SystemTime::UNIX_EPOCH),
         );
-        produce_passport_evidence(&producer, &conv, b"spki", &cache, 0)
+        produce_passport_token(&producer, &conv, b"spki", &cache, 0)
             .await
             .unwrap();
         assert_eq!(producer.count.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
-    async fn attester_exhaustion_returns_attestation_failed_not_refusal() {
-        let producer = counting_producer(usize::MAX);
+    async fn attester_exhaustion_returns_error_not_credentials() {
+        let producer = counting_evidence(usize::MAX);
         let evidence = produce_background_check_evidence(
             &producer,
             b"spki",
@@ -552,43 +512,35 @@ mod tests {
         )
         .await
         .unwrap();
-        match inspect_evidence(&evidence).unwrap() {
-            InspectedEvidence::AttestationFailed(_) => {}
-            InspectedEvidence::Refusal(_) => panic!("AA outage must not look like a refusal"),
-            InspectedEvidence::Raw(_) => panic!("expected attestation-failed"),
-        }
+        assert!(produced_error_reason(&evidence).is_some());
 
         let conv = RecordingConverter {
             nonce: "passport-as-nonce".into(),
         };
-        let passport =
-            produce_passport_evidence(&producer, &conv, b"spki", &PassportEvidenceCache::new(), 0)
-                .await
-                .unwrap();
-        match inspect_evidence(&passport).unwrap() {
-            InspectedEvidence::AttestationFailed(_) => {}
-            InspectedEvidence::Refusal(_) => {
-                panic!("passport AA outage must not look like a refusal")
-            }
-            InspectedEvidence::Raw(_) => panic!("expected attestation-failed"),
-        }
+        let token_producer = counting_token(usize::MAX);
+        let passport = produce_passport_token(
+            &token_producer,
+            &conv,
+            b"spki",
+            &PassportEvidenceCache::new(),
+            0,
+        )
+        .await
+        .unwrap();
+        assert!(produced_error_reason(&passport).is_some());
     }
 
     #[tokio::test]
-    async fn prepare_declaration_on_passport_sends_no_token() {
-        let mut state = ExchangeState::new(
-            LocalRole {
-                will_attest: false,
-                wants_evidence: true,
-            },
-            VerifyMode::Passport,
-        );
-        let decl = state
-            .prepare_declaration(None::<&RecordingConverter>)
+    async fn prepare_request_on_passport_sends_no_nonce() {
+        let mut state = ExchangeState::new(VerifyMode::Passport);
+        let req = state
+            .prepare_request(None::<&RecordingConverter>)
             .await
             .unwrap();
-        assert!(decl.wants_evidence);
-        assert!(decl.challenge_token.is_empty());
+        match req.body {
+            Some(request::Body::Passport(_)) => {}
+            other => panic!("expected passport, got {other:?}"),
+        }
         assert!(state.issued_nonce().is_none());
     }
 }

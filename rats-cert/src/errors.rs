@@ -327,9 +327,6 @@ pub enum Error {
     #[error("Certificate extract extension failed")]
     CertExtractExtensionFailed,
 
-    #[error("Expected claims must not be empty")]
-    EmptyExpectedClaims,
-
     #[error("Certificate verify public key hash failed")]
     CertVerifyPublicKeyHashFailed,
 
