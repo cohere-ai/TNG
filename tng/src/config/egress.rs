@@ -245,6 +245,11 @@ pub struct PeerSharedArgs {
     #[serde(default = "default_join_retry_interval")]
     pub join_retry_interval: u64,
 
+    /// How long a pooled rats-tls session to a serf peer may be reused, in seconds.
+    /// Default 600. `0` disables reuse. Temporary until live reattest on these connections.
+    #[serde(default = "default_rats_tls_pool_ttl")]
+    pub rats_tls_pool_ttl: u64,
+
     /// Define how this node proves its identity when connecting to others, and how to verify
     /// the identity of remote peers.
     #[serde(flatten)]
@@ -269,6 +274,10 @@ fn default_join_max_attempts() -> u32 {
 
 fn default_join_retry_interval() -> u64 {
     5
+}
+
+fn default_rats_tls_pool_ttl() -> u64 {
+    crate::config::ra::DEFAULT_RATS_TLS_POOL_TTL_SECS
 }
 
 fn default_activation_delay() -> u64 {

@@ -44,16 +44,6 @@ pub fn background_check_claims(
     Ok(claims)
 }
 
-pub fn passport_attester_claims(spki_der: &[u8], own_as_nonce: &str) -> Result<Claims> {
-    let mut claims = Claims::new();
-    insert_pubkey_hash(&mut claims, spki_der)?;
-    claims.insert(
-        CLAIM_CHALLENGE_TOKEN.to_string(),
-        serde_json::Value::String(own_as_nonce.to_string()),
-    );
-    Ok(claims)
-}
-
 impl BackgroundCheckExpectation<'_> {
     pub fn to_claims(&self) -> Result<Claims> {
         background_check_claims(self.peer_spki_der, self.issued_nonce, self.exporter)
@@ -73,6 +63,16 @@ pub fn tls_binder(spki_der: &[u8], exporter: &[u8]) -> Vec<u8> {
     material.extend_from_slice(spki_der);
     material.extend_from_slice(exporter);
     DefaultCrypto::hash(HashAlgo::Sha256, &material)
+}
+
+pub fn passport_attester_claims(spki_der: &[u8], own_as_nonce: &str) -> Result<Claims> {
+    let mut claims = Claims::new();
+    insert_pubkey_hash(&mut claims, spki_der)?;
+    claims.insert(
+        CLAIM_CHALLENGE_TOKEN.to_string(),
+        serde_json::Value::String(own_as_nonce.to_string()),
+    );
+    Ok(claims)
 }
 
 #[cfg(test)]

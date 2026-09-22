@@ -127,7 +127,7 @@ impl PeerSharedKeyManager {
         let net_opts =
             NetTransportOptions::<_, SocketAddrResolver<InstrumentedTokioRuntime>, _>::with_stream_layer_options(
                 node_id,
-                ((ra_context, runtime.clone()), inner),
+                ((ra_context, runtime.clone(), Duration::from_secs(peer_shared.rats_tls_pool_ttl)), inner),
             )
             .with_bind_addresses(
                 [{

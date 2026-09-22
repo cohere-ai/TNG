@@ -28,10 +28,7 @@ use tracing::{Instrument, Span};
 
 use crate::{
     tunnel::{
-        attestation_exchange::{
-            exporter::{export_from_client, spki_from_certified_key},
-            finish_rats_tls, RawEvidenceVerifier,
-        },
+        attestation_exchange::finish_rats_tls_client,
         attestation_result::AttestationResult,
         endpoint::TngEndpoint,
         ingress::protocol::rats_tls::wrapping::RatsTlsWrappingLayer,
@@ -233,24 +230,11 @@ impl tower::Service<Uri> for SecurityConnector {
                         )
                         .await?;
 
-                    let exporter = export_from_client(&security_layer_stream, Some(&[]))?;
-                    let own_spki = attested_key
-                        .as_ref()
-                        .map(|key| spki_from_certified_key(key))
-                        .transpose()?;
-                    let peer_spki = verifier
-                        .as_ref()
-                        .map(|v| v.common.peer_spki_der())
-                        .transpose()?;
-                    let (security_layer_stream, attestation_result) = finish_rats_tls(
+                    let (security_layer_stream, attestation_result) = finish_rats_tls_client(
                         security_layer_stream,
                         ra_context.as_ref(),
-                        verifier
-                            .as_ref()
-                            .map(|v| &v.common as &dyn RawEvidenceVerifier),
-                        exporter,
-                        own_spki,
-                        peer_spki,
+                        verifier.as_ref().map(|v| &v.common),
+                        attested_key.as_deref(),
                     )
                     .await?;
 
@@ -363,7 +347,6 @@ impl<T: hyper::rt::Write + hyper::rt::Read + Unpin> hyper::rt::Write
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::ra::{RaArgsUnchecked, DEFAULT_RATS_TLS_POOL_TTL_SECS};
     use crate::tests::run_test_with_tokio_runtime;
 
     async fn layer(runtime: TokioRuntime, ttl: Duration) -> RatsTlsSecurityLayer {
@@ -423,47 +406,5 @@ mod tests {
             Ok(())
         })
         .await
-    }
-
-    #[test]
-    fn verify_only_config_gets_default_pool_ttl() {
-        let json = serde_json::json!({
-            "verify": {
-                "as_addr": "http://127.0.0.1:8080",
-                "policy_ids": ["default"]
-            }
-        });
-        let ra: RaArgsUnchecked = serde_json::from_value(json).unwrap();
-        assert!(ra.attest.is_none());
-        assert_eq!(
-            ra.rats_tls_pool_ttl().as_secs(),
-            DEFAULT_RATS_TLS_POOL_TTL_SECS
-        );
-    }
-
-    #[test]
-    fn refresh_interval_zero_does_not_change_pool_ttl() {
-        let json = serde_json::json!({
-            "attest": {
-                "aa_addr": "unix:///tmp/tng-no-aa.sock",
-                "refresh_interval": 0
-            }
-        });
-        let ra: RaArgsUnchecked = serde_json::from_value(json).unwrap();
-        assert_eq!(
-            ra.attest.as_ref().and_then(|a| match a {
-                crate::config::ra::AttestArgs::BackgroundCheck {
-                    refresh_interval, ..
-                } => *refresh_interval,
-                crate::config::ra::AttestArgs::Passport {
-                    refresh_interval, ..
-                } => *refresh_interval,
-            }),
-            Some(0)
-        );
-        assert_eq!(
-            ra.rats_tls_pool_ttl().as_secs(),
-            DEFAULT_RATS_TLS_POOL_TTL_SECS
-        );
     }
 }

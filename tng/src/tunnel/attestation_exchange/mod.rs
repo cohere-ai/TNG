@@ -11,5 +11,5 @@ pub mod pb {
     ));
 }
 
-pub use core::{ChallengeSource, PassportEvidenceCache, RawEvidenceVerifier};
-pub use session::finish_rats_tls;
+pub use core::{ExchangeVerifier, PassportEvidenceCache};
+pub use session::{finish_rats_tls_client, finish_rats_tls_server};

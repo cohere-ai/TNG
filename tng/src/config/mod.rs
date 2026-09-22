@@ -122,7 +122,6 @@ pub mod tests {
                                 trusted_certs_paths: Some(vec!["/tmp/as.pem".to_owned()]),
                             }),
                         }),
-                        rats_tls_pool_ttl: None,
                     },
                 }
             }],
@@ -156,7 +155,6 @@ pub mod tests {
                             max_retries: None,
                         }),
                         verify: None,
-                        rats_tls_pool_ttl: None,
                     },
                 }
             }],

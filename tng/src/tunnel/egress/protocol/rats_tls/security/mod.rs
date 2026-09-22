@@ -4,10 +4,7 @@ mod rustls_config;
 use std::sync::Arc;
 
 use crate::tunnel::{
-    attestation_exchange::{
-        exporter::{export_from_server, spki_from_certified_key},
-        finish_rats_tls, RawEvidenceVerifier,
-    },
+    attestation_exchange::finish_rats_tls_server,
     attestation_result::AttestationResult,
     ra_context::RaContext,
     stream::CommonStreamTrait,
@@ -57,24 +54,11 @@ impl RatsTlsSecurityLayer {
             async {
                 let security_layer_stream = tls_acceptor.accept(stream).await?;
 
-                let exporter = export_from_server(&security_layer_stream, Some(&[]))?;
-                let own_spki = attested_key
-                    .as_ref()
-                    .map(|key| spki_from_certified_key(key))
-                    .transpose()?;
-                let peer_spki = verifier
-                    .as_ref()
-                    .map(|v| v.common.peer_spki_der())
-                    .transpose()?;
-                let (security_layer_stream, attestation_result) = finish_rats_tls(
+                let (security_layer_stream, attestation_result) = finish_rats_tls_server(
                     security_layer_stream,
                     self.ra_context.as_ref(),
-                    verifier
-                        .as_ref()
-                        .map(|v| &v.common as &dyn RawEvidenceVerifier),
-                    exporter,
-                    own_spki,
-                    peer_spki,
+                    verifier.as_ref().map(|v| &v.common),
+                    attested_key.as_deref(),
                 )
                 .await?;
 
