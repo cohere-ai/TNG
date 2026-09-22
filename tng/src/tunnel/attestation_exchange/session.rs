@@ -127,7 +127,10 @@ pub async fn finish_rats_tls_server<IO>(
     ra: &RaContext,
     verifier: Option<&TngCommonCertVerifier>,
     attested_key: Option<&CertifiedKey>,
-) -> Result<(tokio_rustls::server::TlsStream<IO>, Option<AttestationResult>)>
+) -> Result<(
+    tokio_rustls::server::TlsStream<IO>,
+    Option<AttestationResult>,
+)>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
 {
@@ -140,7 +143,10 @@ pub async fn finish_rats_tls_client<IO>(
     ra: &RaContext,
     verifier: Option<&TngCommonCertVerifier>,
     attested_key: Option<&CertifiedKey>,
-) -> Result<(tokio_rustls::client::TlsStream<IO>, Option<AttestationResult>)>
+) -> Result<(
+    tokio_rustls::client::TlsStream<IO>,
+    Option<AttestationResult>,
+)>
 where
     IO: AsyncRead + AsyncWrite + Unpin,
 {
