@@ -304,11 +304,10 @@ fn is_unexpired(expire: Expire) -> bool {
 }
 
 fn token_expire(token: &TngToken) -> Expire {
-    token
-        .exp()
-        .ok()
-        .and_then(|exp| Expire::from_timestamp(exp).ok())
-        .unwrap_or(Expire::NoExpire)
+    match token.exp() {
+        Ok(exp) => Expire::ExpireAt(SystemTime::UNIX_EPOCH + Duration::from_secs(exp)),
+        Err(_) => Expire::NoExpire,
+    }
 }
 
 pub fn produced_error_reason(response: &Response) -> Option<&str> {
