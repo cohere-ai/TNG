@@ -14,7 +14,6 @@ use crate::tunnel::service_metrics::AttestationMetrics;
 use crate::CommonStreamTrait;
 use crate::{
     config::ingress::CommonArgs,
-    config::ra::DEFAULT_RATS_TLS_POOL_TTL_SECS,
     tunnel::{attestation_result::AttestationResult, utils::runtime::TokioRuntime},
 };
 
@@ -71,7 +70,9 @@ impl TrustedStreamManager {
                             transport_so_mark,
                             ra_context,
                             runtime.clone(),
-                            Duration::from_secs(DEFAULT_RATS_TLS_POOL_TTL_SECS),
+                            // Keep the pooled rats-tls session for the life of the process.
+                            // Age-out/reattest is only for serf peer_shared (`rats_tls_pool_ttl`).
+                            Duration::MAX,
                         )
                         .await?,
                     ),

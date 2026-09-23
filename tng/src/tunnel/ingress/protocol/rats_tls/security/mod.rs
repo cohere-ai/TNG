@@ -133,7 +133,6 @@ impl RatsTlsSecurityLayer {
                 tracing::debug!(session_id = c.id, "Reuse existed rats-tls session");
                 return Ok(c.clone());
             }
-            // Evict without closing: in-flight clones of the hyper client drain naturally.
             write.remove(pool_key);
         }
 
