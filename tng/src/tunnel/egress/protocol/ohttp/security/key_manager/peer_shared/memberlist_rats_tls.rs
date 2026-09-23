@@ -1,4 +1,4 @@
-use std::{io, marker::PhantomData, net::SocketAddr, sync::Arc};
+use std::{io, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use async_stream::stream;
@@ -38,10 +38,10 @@ impl<R: Runtime> StreamLayer for RatsTls<R> {
     type Runtime = R;
     type Listener = RatsTlsListener<R>;
     type Stream = RatsTlsStream<R>;
-    type Options = (Arc<RaContext>, TokioRuntime);
+    type Options = (Arc<RaContext>, TokioRuntime, Duration);
 
     #[inline]
-    async fn new((ra_context, runtime): Self::Options) -> io::Result<Self> {
+    async fn new((ra_context, runtime, pool_ttl): Self::Options) -> io::Result<Self> {
         Ok(Self {
             forwarder: Arc::new(
                 RatsTlsStreamForwarder::new(
@@ -49,6 +49,7 @@ impl<R: Runtime> StreamLayer for RatsTls<R> {
                     None,
                     ra_context.clone(),
                     runtime.clone(),
+                    pool_ttl,
                 )
                 .await
                 .context("Failed to create rats-tls stream forwarder")

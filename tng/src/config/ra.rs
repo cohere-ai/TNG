@@ -670,6 +670,9 @@ pub enum CocoVerifierArgs {
 #[cfg(unix)]
 const EVIDENCE_REFRESH_INTERVAL_SECOND: u64 = 10 * 60; // 10 minutes
 
+/// Default reuse bound for a pooled rats_tls session, in seconds.
+pub const DEFAULT_RATS_TLS_POOL_TTL_SECS: u64 = 10 * 60;
+
 /// Attestation parameters configuration enum.
 /// Note: refresh_interval lives here at the model level for consistency with
 /// ConverterArgs/VerifierArgs (all plain enums). If desired, it could be moved

@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package tng.rats_tls.attestation_exchange;
+
+message Request {
+  oneof body {
+    None none = 1;
+    BackgroundCheck background_check = 2;
+    Passport passport = 3;
+  }
+}
+
+message BackgroundCheck {
+  bytes nonce = 1;
+}
+
+message Passport {}
+
+message Response {
+  oneof body {
+    None ack = 1;
+    Evidence evidence = 2;
+    Token token = 3;
+    Error error = 4;
+  }
+}
+
+message None {}
+
+message Error {
+  string reason = 1;
+}
+
+message Evidence {
+  string provider = 1;
+  string json = 2;
+}
+
+message Token {
+  string provider = 1;
+  string jwt = 2;
+}

@@ -121,7 +121,7 @@ pub mod tests {
                                 as_headers: Default::default(),
                                 trusted_certs_paths: Some(vec!["/tmp/as.pem".to_owned()]),
                             }),
-                        })
+                        }),
                     },
                 }
             }],

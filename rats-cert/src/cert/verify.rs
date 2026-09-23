@@ -104,11 +104,7 @@ impl CertVerifier {
         // Note: the implementation here is not compatible with the Interoperable RA-TLS now
 
         /* Prepare expected pubkey-hash claim */
-        let spki_bytes = cert
-            .tbs_certificate
-            .subject_public_key_info
-            .to_der()
-            .map_err(Error::DerError)?;
+        let spki_bytes = spki_der_from_cert(cert)?;
         // TODO: Hash algorithm is currently hardcoded to SHA256.
         // Future support should include extracting the hash algorithm from the evidence.
         let pubkey_hash = DefaultCrypto::hash(HashAlgo::Sha256, &spki_bytes);
@@ -219,4 +215,28 @@ fn extract_ext_with_oid<'a>(cert: &'a Certificate, oid: &ObjectIdentifier) -> Op
         let mut it = exts.iter().filter(|ext| ext.extn_id == *oid);
         it.next().map(|ext| ext.extn_value.as_bytes())
     })
+}
+
+fn spki_der_from_cert(cert: &Certificate) -> Result<Vec<u8>> {
+    cert.tbs_certificate
+        .subject_public_key_info
+        .to_der()
+        .map_err(Error::DerError)
+}
+
+/// Extract SPKI DER from an X.509 certificate DER. rustls only hands over DER.
+pub fn spki_der_from_x509_der(cert_der: &[u8]) -> Result<Vec<u8>> {
+    let cert = Certificate::from_der(cert_der).map_err(Error::ParseDerCertError)?;
+    spki_der_from_cert(&cert)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn verify_der_rejects_garbage() {
+        let err = CertVerifier::new().verify_der(b"not-a-cert").await;
+        assert!(matches!(err, Err(Error::ParseDerCertError(_))));
+    }
 }

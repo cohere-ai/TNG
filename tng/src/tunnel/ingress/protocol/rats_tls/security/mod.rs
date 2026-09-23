@@ -12,6 +12,7 @@ use std::{
         Arc,
     },
     task::Poll,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result};
@@ -27,6 +28,7 @@ use tracing::{Instrument, Span};
 
 use crate::{
     tunnel::{
+        attestation_exchange::finish_rats_tls_client,
         attestation_result::AttestationResult,
         endpoint::TngEndpoint,
         ingress::protocol::rats_tls::wrapping::RatsTlsWrappingLayer,
@@ -42,6 +44,7 @@ use super::transport::{RatsTlsTransportLayerConnector, RatsTlsTransportLayerCrea
 pub struct RatsTlsClient {
     pub id: u64,
     pub hyper: HyperClientType,
+    created_at: Instant,
 }
 
 pub struct RatsTlsSecurityLayer {
@@ -49,7 +52,9 @@ pub struct RatsTlsSecurityLayer {
     pool: RwLock<ClientPool>,
     transport_layer_creator: RatsTlsTransportLayerCreator,
     tls_config_generator: Arc<TlsConfigGenerator>,
+    ra_context: Arc<RaContext>,
     runtime: TokioRuntime,
+    pool_ttl: Duration,
 }
 
 impl RatsTlsSecurityLayer {
@@ -58,20 +63,23 @@ impl RatsTlsSecurityLayer {
         transport_so_mark: Option<u32>,
         ra_context: Arc<RaContext>,
         runtime: TokioRuntime,
+        pool_ttl: Duration,
     ) -> Result<Self> {
         let transport_layer_creator = RatsTlsTransportLayerCreator::new(
             #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
             transport_so_mark,
         );
         let tls_config_generator =
-            Arc::new(TlsConfigGenerator::new(ra_context, runtime.clone()).await?);
+            Arc::new(TlsConfigGenerator::new(ra_context.clone(), runtime.clone()).await?);
 
         Ok(Self {
             next_id: AtomicU64::new(0),
             pool: RwLock::new(HashMap::new()),
             transport_layer_creator,
             tls_config_generator,
+            ra_context,
             runtime,
+            pool_ttl,
         })
     }
 
@@ -85,12 +93,13 @@ impl RatsTlsSecurityLayer {
 
         Ok(SecurityConnector {
             tls_config_generator: self.tls_config_generator.clone(),
+            ra_context: self.ra_context.clone(),
             transport_layer_connector,
             security_layer_span: Span::current(),
         })
     }
 
-    async fn get_client(&self, pool_key: &PoolKey) -> Result<RatsTlsClient> {
+    pub(crate) async fn get_client(&self, pool_key: &PoolKey) -> Result<RatsTlsClient> {
         self.get_client_with_span(pool_key, Span::current())
             .instrument(tracing::info_span!(
                 "security",
@@ -104,53 +113,45 @@ impl RatsTlsSecurityLayer {
         pool_key: &PoolKey,
         parent_span: Span,
     ) -> Result<RatsTlsClient> {
-        // Try to get the client from pool
         let client = {
             let read = self.pool.read().await;
             read.get(pool_key).cloned()
         };
 
-        let client = match client {
-            Some(c) => {
+        if let Some(c) = client {
+            if c.created_at.elapsed() < self.pool_ttl {
                 Span::current().record("session_id", c.id);
                 tracing::debug!(session_id = c.id, "Reuse existed rats-tls session");
-                c
+                return Ok(c);
             }
-            None => {
-                // If client not exist then we need to create one
-                let mut write = self.pool.write().await;
-                // Check if client has been created by other "task"
-                match write.get(pool_key) {
-                    Some(c) => {
-                        Span::current().record("session_id", c.id);
-                        tracing::debug!(session_id = c.id, "Reuse existed rats-tls session");
-                        c.clone()
-                    }
-                    None => {
-                        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-                        Span::current().record("session_id", id);
-                        tracing::debug!(
-                            session_id = id,
-                            "No rats-tls session found, create a new one"
-                        );
+        }
 
-                        // Prepare the security connector
-                        let connector = self
-                            .create_security_connector(pool_key, parent_span)
-                            .await?;
-
-                        // Build the hyper client from the security connector.
-                        let client = RatsTlsClient {
-                            id,
-                            hyper: Client::builder(self.runtime.clone()).build(connector),
-                        };
-                        write.insert(pool_key.to_owned(), client.clone());
-                        client
-                    }
-                }
+        let mut write = self.pool.write().await;
+        if let Some(c) = write.get(pool_key) {
+            if c.created_at.elapsed() < self.pool_ttl {
+                Span::current().record("session_id", c.id);
+                tracing::debug!(session_id = c.id, "Reuse existed rats-tls session");
+                return Ok(c.clone());
             }
+            write.remove(pool_key);
+        }
+
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        Span::current().record("session_id", id);
+        tracing::debug!(
+            session_id = id,
+            "No rats-tls session found, create a new one"
+        );
+
+        let connector = self
+            .create_security_connector(pool_key, parent_span)
+            .await?;
+        let client = RatsTlsClient {
+            id,
+            hyper: Client::builder(self.runtime.clone()).build(connector),
+            created_at: Instant::now(),
         };
-
+        write.insert(pool_key.to_owned(), client.clone());
         Ok(client)
     }
 
@@ -169,11 +170,19 @@ impl RatsTlsSecurityLayer {
             .instrument(tracing::info_span!("wrapping"))
             .await
     }
+
+    #[cfg(test)]
+    pub(crate) async fn force_expire(&self, pool_key: &PoolKey) {
+        if let Some(c) = self.pool.write().await.get_mut(pool_key) {
+            c.created_at = Instant::now() - Duration::from_secs(10);
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct SecurityConnector {
     tls_config_generator: Arc<TlsConfigGenerator>,
+    ra_context: Arc<RaContext>,
     transport_layer_connector: RatsTlsTransportLayerConnector,
     security_layer_span: Span,
 }
@@ -197,10 +206,15 @@ impl tower::Service<Uri> for SecurityConnector {
 
     fn call(&mut self, uri: Uri /* Not use this as destination endpoint */) -> Self::Future {
         let tls_config_generator = self.tls_config_generator.clone();
+        let ra_context = self.ra_context.clone();
         let mut transport_layer_connector = self.transport_layer_connector.clone();
         Box::pin(
             async move {
-                let OnetimeTlsClientConfig(tls_client_config, verifier) = tls_config_generator
+                let OnetimeTlsClientConfig {
+                    config: tls_client_config,
+                    verifier,
+                    attested_key,
+                } = tls_config_generator
                     .get_one_time_rustls_client_config()
                     .await?;
 
@@ -208,30 +222,25 @@ impl tower::Service<Uri> for SecurityConnector {
 
                 tracing::debug!("Creating rats-tls connection");
                 async {
-                    let security_layer_stream = TokioIo::new(
-                        TlsConnector::from(Arc::new(tls_client_config))
-                            .connect(
-                                ServerName::try_from(uri.host().context("Host is empty")?)?
-                                    .to_owned(),
-                                transport_layer_stream.into_inner(),
-                            )
-                            .await?,
-                    );
+                    let security_layer_stream = TlsConnector::from(Arc::new(tls_client_config))
+                        .connect(
+                            ServerName::try_from(uri.host().context("Host is empty")?)?.to_owned(),
+                            transport_layer_stream.into_inner(),
+                        )
+                        .await?;
 
-                    let attestation_result = match verifier {
-                        Some(verifier) => Some(
-                            verifier
-                                .verity_pending_cert()
-                                .await
-                                .context("No attestation result found")?,
-                        ),
-                        None => None,
-                    };
+                    let (security_layer_stream, attestation_result) = finish_rats_tls_client(
+                        security_layer_stream,
+                        ra_context.as_ref(),
+                        verifier.as_ref().map(|v| &v.common),
+                        attested_key.as_deref(),
+                    )
+                    .await?;
 
                     tracing::debug!("New rats-tls connection established");
                     Ok::<_, anyhow::Error>(
                         StreamWithAttestationResult::wrap_with_attestation_result(
-                            security_layer_stream,
+                            TokioIo::new(security_layer_stream),
                             attestation_result,
                         ),
                     )
@@ -331,5 +340,70 @@ impl<T: hyper::rt::Write + hyper::rt::Read + Unpin> hyper::rt::Write
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<Result<usize, std::io::Error>> {
         self.project().inner.poll_write_vectored(cx, bufs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::run_test_with_tokio_runtime;
+
+    async fn layer(runtime: TokioRuntime, ttl: Duration) -> RatsTlsSecurityLayer {
+        RatsTlsSecurityLayer::new(
+            #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+            None,
+            Arc::new(RaContext::NoRa),
+            runtime,
+            ttl,
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn reuses_entry_younger_than_ttl() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let layer = layer(runtime, Duration::from_secs(60)).await;
+            let key = PoolKey::new(TngEndpoint::new("127.0.0.1", 1));
+            let first = layer.get_client(&key).await?;
+            let second = layer.get_client(&key).await?;
+            assert_eq!(first.id, second.id);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn expired_entry_is_replaced_without_dropping_inflight_clone() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let layer = layer(runtime, Duration::from_millis(1)).await;
+            let key = PoolKey::new(TngEndpoint::new("127.0.0.1", 2));
+            let first = layer.get_client(&key).await?;
+            layer.force_expire(&key).await;
+            let inflight = first.clone();
+            let second = layer.get_client(&key).await?;
+            assert_ne!(first.id, second.id);
+            assert_eq!(inflight.id, first.id);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn concurrent_gets_after_expiry_create_one_replacement() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let layer = Arc::new(layer(runtime, Duration::from_millis(1)).await);
+            let key = PoolKey::new(TngEndpoint::new("127.0.0.1", 3));
+            let _ = layer.get_client(&key).await?;
+            layer.force_expire(&key).await;
+            let a = layer.clone();
+            let b = layer.clone();
+            let key_a = key.clone();
+            let key_b = key.clone();
+            let (ca, cb) = tokio::join!(a.get_client(&key_a), b.get_client(&key_b));
+            assert_eq!(ca?.id, cb?.id);
+            Ok(())
+        })
+        .await
     }
 }

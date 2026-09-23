@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use serde_json::json;
 
 use super::super::evidence::{
     tee_to_string, AttestationServiceHashAlgo, CocoAsToken, CocoEvidence,
