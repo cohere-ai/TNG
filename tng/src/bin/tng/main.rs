@@ -1,5 +1,7 @@
 #![deny(clippy::unwrap_used)]
 #![deny(clippy::expect_used)]
+// The builtin-AS release future's layout exceeds rustc's default query depth.
+#![recursion_limit = "256"]
 
 use std::{fs::File, io::BufReader};
 
