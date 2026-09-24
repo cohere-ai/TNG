@@ -8,12 +8,23 @@ license.workspace = true
 name = "tng_python"
 crate-type = ["cdylib"]
 
+[features]
+# In-process attestation service. Off by default so a plain wheel stays free of
+# OpenSSL and the verifier stack; enabling either rung links OpenSSL statically
+# via `openssl/vendored`, which keeps the wheel self-contained on every target.
+builtin-verifier-azsnp = ["dep:openssl", "tng/coco-builtin-as-azsnp"]
+builtin-verifier-nvidia = ["dep:openssl", "tng/coco-builtin-as-nvidia"]
+
 [dependencies]
 anyhow = { workspace = true }
 axum = { workspace = true, default-features = false }
 bytes = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
+# Not called from this crate. Declared solely so `builtin-verifier-*` can turn on
+# `vendored`, which feature unification then applies to the OpenSSL that Trustee's
+# verifiers link transitively.
+openssl = { version = "0.10", features = ["vendored"], optional = true }
 pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
 pyo3-async-runtimes = { version = "0.23", features = ["tokio-runtime"] }
 rustls = { workspace = true }

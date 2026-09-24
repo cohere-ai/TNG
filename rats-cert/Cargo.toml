@@ -138,8 +138,7 @@ rsa = {workspace = true}
 rstest = {workspace = true}
 serial_test = {workspace = true}
 tempfile = {workspace = true}
-# Held at 0.16.1 in the lockfile: 0.16.4 raises its MSRV to rustc 1.95, past this repo's 1.89.
-test-with = {version = "0.16.1", default-features = false}
+test-with = {version = "0.16.4", default-features = false}
 tokio = {workspace = true, features = ["rt", "rt-multi-thread", "macros"]}
 tracing-subscriber = {workspace = true}
 wiremock = "0.6"

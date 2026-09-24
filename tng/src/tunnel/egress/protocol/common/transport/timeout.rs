@@ -1,3 +1,8 @@
+// `pin_project` derives a `StateProj` enum that mirrors `State`'s variant names. An
+// `#[allow]` on `State` itself does not reach that generated item, so the lint is
+// silenced for the whole module instead.
+#![allow(clippy::enum_variant_names)]
+
 use std::future::Future;
 
 use pin_project::pin_project;
@@ -14,7 +19,6 @@ pub struct FirstByteReadTimeoutStream<
 }
 
 #[pin_project(project = StateProj)]
-#[allow(clippy::enum_variant_names)]
 enum State {
     BeforeFirstRead,
     InFirstRead(#[pin] tokio::time::Sleep),

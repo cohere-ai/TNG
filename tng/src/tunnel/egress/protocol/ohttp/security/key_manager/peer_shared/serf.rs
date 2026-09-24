@@ -349,7 +349,7 @@ async fn join_serf_cluster(serf: &Serf, peers: &[String]) -> Result<(), TngError
         // Since a hostname (e.g., via DNS) may resolve to multiple IPs (A/AAAA records),
         // we try each one to maximize the chance of successful connectivity.
         // It's sufficient to successfully join via at least one address.
-        let count_success = futures::stream::iter(socket_addrs.into_iter()).filter_map(|socket_addr| async move {
+        let count_success = futures::stream::iter(socket_addrs).filter_map(|socket_addr| async move {
             tracing::debug!(
                 ?peer,
                 resolved_address = %socket_addr,
