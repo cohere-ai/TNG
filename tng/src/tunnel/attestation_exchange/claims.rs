@@ -9,8 +9,8 @@ pub const CLAIM_PUBKEY_HASH: &str = "pubkey-hash";
 pub const CLAIM_CHALLENGE_TOKEN: &str = "challenge_token";
 pub const CLAIM_TLS_BINDER: &str = "tls-binder";
 
-/// TLS-Exporter label from `draft-fossati-seat-expat` §5.1.
-pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-SEAT-Attestation";
+/// TLS-Exporter label from https://datatracker.ietf.org/doc/html/draft-fossati-seat-expat-04#section-5.1
+pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-cmw-attestation";
 pub const EXPORTER_LEN: usize = 32;
 
 /// Inputs required to build a background-check expectation. All fields are required so a

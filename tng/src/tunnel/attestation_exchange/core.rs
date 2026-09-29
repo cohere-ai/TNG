@@ -124,6 +124,9 @@ pub trait ExchangeVerifier: Send + Sync {
     ) -> Result<AttestationResult>;
 }
 
+/// Sent in place of the local error chain, which must not reach an unverified peer.
+pub const ATTESTATION_UNAVAILABLE: &str = "attestation unavailable";
+
 pub fn none_request() -> Request {
     Request {
         body: Some(request::Body::None(super::pb::None {})),
@@ -179,7 +182,10 @@ pub async fn produce_background_check_evidence<P: EvidenceProducer + ?Sized>(
     let claims = background_check_claims(own_spki_der, token, exporter)?;
     match produce_evidence_with_retry(producer, claims, max_retries).await {
         Ok(evidence) => Ok(evidence_response(evidence.provider, evidence.json)),
-        Err(e) => Ok(error_response(format!("{e:#}"))),
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to produce background-check evidence");
+            Ok(error_response(ATTESTATION_UNAVAILABLE))
+        }
     }
 }
 
@@ -202,7 +208,10 @@ pub async fn produce_passport_token<P: TokenProducer + ?Sized, C: ChallengeSourc
             token.provider_type().as_str(),
             token.as_str(),
         )),
-        Err(e) => Ok(error_response(format!("{e:#}"))),
+        Err(e) => {
+            tracing::error!(error = ?e, "Failed to produce passport token");
+            Ok(error_response(ATTESTATION_UNAVAILABLE))
+        }
     }
 }
 
@@ -511,7 +520,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(produced_error_reason(&evidence).is_some());
+        assert_eq!(
+            produced_error_reason(&evidence),
+            Some(ATTESTATION_UNAVAILABLE)
+        );
 
         let conv = RecordingConverter {
             nonce: "passport-as-nonce".into(),
@@ -526,7 +538,10 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(produced_error_reason(&passport).is_some());
+        assert_eq!(
+            produced_error_reason(&passport),
+            Some(ATTESTATION_UNAVAILABLE)
+        );
     }
 
     #[tokio::test]

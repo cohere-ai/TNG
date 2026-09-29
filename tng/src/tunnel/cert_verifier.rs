@@ -8,7 +8,6 @@ use rats_cert::tee::ReportData;
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
 use crate::tunnel::ra_context::VerifyContext;
-use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 
 #[derive(Debug)]
 pub struct TngCommonCertVerifier {
@@ -52,10 +51,6 @@ impl crate::tunnel::attestation_exchange::ExchangeVerifier for TngCommonCertVeri
         json: &str,
         expected: rats_cert::tee::claims::Claims,
     ) -> Result<AttestationResult> {
-        let attestation_attempt = self
-            .verify_ctx
-            .attestation_metrics()
-            .start(AttestationOperation::Verify, AttestationProtocol::RatsTls);
         tracing::debug!("Verifying rats-tls evidence");
 
         let provider = ProviderType::from_required_wire_str(provider)?;
@@ -88,7 +83,6 @@ impl crate::tunnel::attestation_exchange::ExchangeVerifier for TngCommonCertVeri
         };
 
         tracing::debug!("rats-tls evidence verify finished successfully");
-        attestation_attempt.mark_succeeded();
         Ok(AttestationResult::from_token(token))
     }
 
@@ -98,10 +92,6 @@ impl crate::tunnel::attestation_exchange::ExchangeVerifier for TngCommonCertVeri
         jwt: &str,
         expected: rats_cert::tee::claims::Claims,
     ) -> Result<AttestationResult> {
-        let attestation_attempt = self
-            .verify_ctx
-            .attestation_metrics()
-            .start(AttestationOperation::Verify, AttestationProtocol::RatsTls);
         tracing::debug!("Verifying rats-tls token");
 
         let provider = ProviderType::from_required_wire_str(provider)?;
@@ -121,7 +111,6 @@ impl crate::tunnel::attestation_exchange::ExchangeVerifier for TngCommonCertVeri
         }
 
         tracing::debug!("rats-tls token verify finished successfully");
-        attestation_attempt.mark_succeeded();
         Ok(AttestationResult::from_token(token))
     }
 }

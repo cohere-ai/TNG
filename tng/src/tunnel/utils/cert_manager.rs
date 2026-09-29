@@ -7,13 +7,10 @@ use rats_cert::{
 use std::{pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
+    tunnel::ra_context::AttestContext,
     tunnel::utils::{
         maybe_cached::{Expire, MaybeCached},
         runtime::TokioRuntime,
-    },
-    tunnel::{
-        ra_context::AttestContext,
-        service_metrics::{AttestationOperation, AttestationProtocol},
     },
 };
 
@@ -39,19 +36,13 @@ impl CertManager {
     ) -> Result<(rustls::sign::CertifiedKey, Expire)> {
         let retry_policy =
             RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(attest_ctx.max_retries());
-        let result = retry_policy
+        retry_policy
             .retry(|| async {
                 Self::fetch_new_cert_inner(attest_ctx)
                     .await
                     .context("Failed to generate new cert")
             })
-            .await;
-        attest_ctx.attestation_metrics().record(
-            AttestationOperation::Generate,
-            AttestationProtocol::RatsTls,
-            result.is_ok(),
-        );
-        result
+            .await
     }
 
     async fn fetch_new_cert_inner(

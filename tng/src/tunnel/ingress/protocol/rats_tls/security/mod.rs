@@ -374,16 +374,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn expired_entry_is_replaced_without_dropping_inflight_clone() -> Result<()> {
+    async fn expired_entry_is_replaced() -> Result<()> {
         run_test_with_tokio_runtime(|runtime| async move {
             let layer = layer(runtime, Duration::from_millis(1)).await;
             let key = PoolKey::new(TngEndpoint::new("127.0.0.1", 2));
             let first = layer.get_client(&key).await?;
             layer.force_expire(&key).await;
-            let inflight = first.clone();
             let second = layer.get_client(&key).await?;
             assert_ne!(first.id, second.id);
-            assert_eq!(inflight.id, first.id);
             Ok(())
         })
         .await

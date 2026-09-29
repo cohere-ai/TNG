@@ -4,10 +4,14 @@ use anyhow::{anyhow, bail, Context, Result};
 use rustls::sign::CertifiedKey;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+use crate::tunnel::attestation_metrics::AttestationAttempt;
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::cert_verifier::TngCommonCertVerifier;
 use crate::tunnel::provider::ProviderType;
 use crate::tunnel::ra_context::{AttestContext, RaContext, VerifyContext};
+use crate::tunnel::service_metrics::{
+    AttestationMetrics, AttestationOperation, AttestationProtocol,
+};
 use rats_cert::tee::AttesterPipeline;
 
 use super::claims::EXPORTER_LEN;
@@ -34,6 +38,25 @@ pub struct ExchangeResources<'a> {
     pub peer_spki_der: Option<&'a [u8]>,
     pub exporter: [u8; EXPORTER_LEN],
     pub max_retries: usize,
+    pub attestation_metrics: Option<&'a AttestationMetrics>,
+}
+
+impl ExchangeResources<'_> {
+    fn start_if(
+        &self,
+        applies: bool,
+        operation: AttestationOperation,
+    ) -> Option<AttestationAttempt> {
+        self.attestation_metrics
+            .filter(|_| applies)
+            .map(|metrics| metrics.start(operation, AttestationProtocol::RatsTls))
+    }
+}
+
+fn mark_succeeded(attempt: Option<AttestationAttempt>) {
+    if let Some(attempt) = attempt {
+        attempt.mark_succeeded();
+    }
 }
 
 fn resources_from_ra<'a>(
@@ -93,6 +116,7 @@ fn resources_from_ra<'a>(
         peer_spki_der,
         exporter,
         max_retries,
+        attestation_metrics: ra.attestation_metrics(),
     }
 }
 
@@ -195,14 +219,32 @@ where
     W: AsyncWrite + Unpin,
 {
     let mut state = ExchangeState::new(resources.verify_mode);
+    let challenge = resources.start_if(
+        resources.verify_mode == VerifyMode::BackgroundCheck,
+        AttestationOperation::Challenge,
+    );
     let my_req = state
         .prepare_request(resources.verifier_converter)
         .await
         .context("converter errors while fetching the nonce")?;
+    mark_succeeded(challenge);
 
     let (_, peer_req) = tokio::try_join!(write_request(wr, &my_req), read_request(rd))?;
 
+    let generate = resources.start_if(
+        matches!(
+            peer_req.body,
+            Some(request::Body::BackgroundCheck(_) | request::Body::Passport(_))
+        ),
+        AttestationOperation::Generate,
+    );
     let outgoing = produce_outgoing(&resources, &peer_req).await?;
+    if matches!(
+        outgoing.body,
+        Some(response::Body::Evidence(_) | response::Body::Token(_))
+    ) {
+        mark_succeeded(generate);
+    }
     let failed_reason = produced_error_reason(&outgoing).map(str::to_string);
 
     let (_, incoming) = tokio::try_join!(write_response(wr, &outgoing), read_response(rd))?;
@@ -211,7 +253,13 @@ where
         bail!("attestation failed after retries: {reason}");
     }
 
-    verify_incoming(&state, &resources, incoming).await
+    let verify = resources.start_if(
+        resources.verify_mode != VerifyMode::None,
+        AttestationOperation::Verify,
+    );
+    let result = verify_incoming(&state, &resources, incoming).await?;
+    mark_succeeded(verify);
+    Ok(result)
 }
 
 async fn produce_outgoing(resources: &ExchangeResources<'_>, peer: &Request) -> Result<Response> {
@@ -367,6 +415,7 @@ mod tests {
             peer_spki_der: None,
             exporter: EXP,
             max_retries: 0,
+            attestation_metrics: None,
         }
     }
 
