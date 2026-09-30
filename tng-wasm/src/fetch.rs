@@ -200,19 +200,19 @@ fn bind_attestation_result(
     attestation_result: AttestationResult,
     ra_args: &RaArgs,
 ) -> Result<web_sys::Response, JsValue> {
+    let verify_args = match ra_args {
+        RaArgs::VerifyOnly(list) => list.iter().find(|v| v.key() == attestation_result.key()),
+        RaArgs::NoRa => None,
+        #[allow(unreachable_patterns)]
+        _ => None,
+    };
+
     let mut attest_info = AttestationInfo {
         as_addr: None,
         policy_ids: None,
         as_provider: None,
         ita_jwks_addr: None,
         attestation_result,
-    };
-
-    let verify_args = match ra_args {
-        RaArgs::VerifyOnly(v) => Some(v),
-        RaArgs::NoRa => None,
-        #[allow(unreachable_patterns)]
-        _ => None,
     };
 
     if let Some(verify_args) = verify_args {

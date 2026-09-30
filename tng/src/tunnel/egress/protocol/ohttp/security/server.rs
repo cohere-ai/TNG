@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use axum::{
-    extract::{FromRequest, Request, State},
+    extract::{FromRequest, Query, Request, State},
     middleware::Next,
     response::{IntoResponse, Response},
     Json, Router,
@@ -20,7 +20,7 @@ use crate::{
     error::TngError,
     tunnel::ohttp::protocol::{
         header::{OhttpApi, OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE},
-        AttestationVerifyRequest, KeyConfigRequest,
+        AttestationChallengeQuery, AttestationVerifyRequest, KeyConfigRequest,
     },
     TokioRuntime,
 };
@@ -176,7 +176,10 @@ async fn handler(
         }
         OhttpApi::Tunnel => api.process_encrypted_request(request, context).await,
         OhttpApi::BackgroundCheckChallenge => api
-            .get_attestation_challenge()
+            .get_attestation_challenge(
+                Query::<AttestationChallengeQuery>::try_from_uri(request.uri())
+                    .map_err(TngError::InvalidRequestQuery)?,
+            )
             .await
             .map(IntoResponse::into_response),
         OhttpApi::BackgroundCheckVerify => api

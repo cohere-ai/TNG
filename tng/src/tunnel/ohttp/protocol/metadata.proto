@@ -51,10 +51,13 @@ message AttestedPublicKey {
   // Used by the server to establish secure channel only.
   bytes pk_s = 2;
 
-  // Which attestation-service / token provider produced `attestation_result`
-  // (same string values as OHTTP `as_provider`, e.g. "coco").
-  // Unset or empty means legacy clients that predate this field (CoCo only).
-  string as_provider = 3;
+  // Which attestation-service / token provider produced `attestation_result`,
+  // e.g. "coco" or "ita".
+  string provider = 3;
+
+  // How `attestation_result` was obtained: "passport" or "background_check".
+  // Together with `provider` it selects the server's verifier.
+  string model = 4;
 }
 
 // Hint for the server to identify the key configuration needed to decrypt the

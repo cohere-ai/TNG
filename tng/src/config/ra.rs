@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::error::TngError;
+use crate::tunnel::proposal::Model;
+use crate::tunnel::provider::ProviderType;
 #[cfg(unix)]
 use crate::tunnel::utils::maybe_cached::RefreshStrategy;
 
@@ -39,9 +41,10 @@ pub struct RaArgsUnchecked {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attest: Option<AttestArgs>,
 
-    /// Verification parameters configuration (optional)
+    /// Verification parameters configuration (optional): one object, or a list of them to
+    /// accept several kinds of peer
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub verify: Option<VerifyArgs>,
+    pub verify: Option<Vec<VerifyArgs>>,
 }
 
 impl<'de> Deserialize<'de> for RaArgsUnchecked {
@@ -72,11 +75,20 @@ impl<'de> Deserialize<'de> for RaArgsUnchecked {
 
         let verify = raw
             .verify
-            .map(|mut v| {
-                if let Some(obj) = v.as_object_mut() {
-                    inject_tag_defaults(obj);
-                }
-                serde_json::from_value::<VerifyArgs>(v)
+            .map(|v| {
+                let entries = match v {
+                    serde_json::Value::Array(entries) => entries,
+                    single => vec![single],
+                };
+                entries
+                    .into_iter()
+                    .map(|mut v| {
+                        if let Some(obj) = v.as_object_mut() {
+                            inject_tag_defaults(obj);
+                        }
+                        serde_json::from_value::<VerifyArgs>(v)
+                    })
+                    .collect::<std::result::Result<Vec<_>, _>>()
             })
             .transpose()
             .map_err(serde::de::Error::custom)?;
@@ -93,9 +105,9 @@ impl<'de> Deserialize<'de> for RaArgsUnchecked {
 pub enum RaArgs {
     #[cfg(unix)]
     AttestOnly(AttestArgs),
-    VerifyOnly(VerifyArgs),
+    VerifyOnly(Vec<VerifyArgs>),
     #[cfg(unix)]
-    AttestAndVerify(AttestArgs, VerifyArgs),
+    AttestAndVerify(AttestArgs, Vec<VerifyArgs>),
     NoRa,
 }
 
@@ -119,6 +131,11 @@ impl RaArgsUnchecked {
 
             RaArgs::NoRa
         } else {
+            if self.verify.as_ref().is_some_and(Vec::is_empty) {
+                return Err(TngError::InvalidParameter(anyhow!(
+                    "'verify' must not be an empty list"
+                )));
+            }
             match (self.attest, self.verify) {
                 (None, None) => {
                     return Err(TngError::InvalidParameter(anyhow!("At least one of 'attest' and 'verify' field and '\"no_ra\": true' should be set for 'add_egress'")));
@@ -200,14 +217,14 @@ impl RaArgsUnchecked {
         }
 
         // Sanity check for the verify_args.
-        {
-            let verify_args = match &ra_args {
-                RaArgs::VerifyOnly(verify_args) => verify_args,
-                #[cfg(unix)]
-                RaArgs::AttestAndVerify(_, verify_args) => verify_args,
-                _ => return Ok(ra_args),
-            };
-
+        let verify_list = match &ra_args {
+            RaArgs::VerifyOnly(verify_list) => verify_list,
+            #[cfg(unix)]
+            RaArgs::AttestAndVerify(_, verify_list) => verify_list,
+            _ => return Ok(ra_args),
+        };
+        check_verify_keys_unique(verify_list)?;
+        for verify_args in verify_list {
             // Check token_verify
             match verify_args {
                 VerifyArgs::Passport { verifier }
@@ -749,6 +766,57 @@ pub enum VerifyArgs {
     },
 }
 
+impl VerifyArgs {
+    /// What a peer answering this entry names on the wire, and so what selects it.
+    pub fn key(&self) -> (Model, ProviderType) {
+        match self {
+            Self::Passport { verifier } => (Model::Passport, verifier.provider_type()),
+            Self::BackgroundCheck { converter, .. } => {
+                (Model::BackgroundCheck, converter.provider_type())
+            }
+        }
+    }
+}
+
+impl ConverterArgs {
+    fn provider_type(&self) -> ProviderType {
+        match self {
+            Self::Coco(_) => ProviderType::Coco,
+            #[cfg(feature = "__coco-builtin-as")]
+            Self::CocoBuiltin { .. } => ProviderType::Coco,
+            Self::Ita(_) => ProviderType::Ita,
+        }
+    }
+}
+
+impl VerifierArgs {
+    fn provider_type(&self) -> ProviderType {
+        match self {
+            Self::Coco(_) => ProviderType::Coco,
+            #[cfg(feature = "__coco-builtin-as")]
+            Self::CocoBuiltin => ProviderType::Coco,
+            Self::Ita(_) => ProviderType::Ita,
+        }
+    }
+}
+
+fn check_verify_keys_unique(verify_list: &[VerifyArgs]) -> Result<(), TngError> {
+    let mut seen = std::collections::HashSet::new();
+    for (model, provider) in verify_list.iter().map(VerifyArgs::key) {
+        if !seen.insert((model, provider)) {
+            let builtin_note = if provider == ProviderType::Coco {
+                " Note that 'coco_builtin' counts as provider 'coco', because the peer's evidence comes from a CoCo attestation agent either way."
+            } else {
+                ""
+            };
+            return Err(TngError::InvalidParameter(anyhow!(
+                "Two 'verify' entries accept '{model}' attestation from provider '{provider}'. A peer only names the model and provider it used, so at most one entry may accept each pair; put several policies or trust anchors in one entry instead.{builtin_note}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -797,6 +865,38 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn single_verify(ra_args: &RaArgsUnchecked) -> Option<&VerifyArgs> {
+        match ra_args.verify.as_deref() {
+            Some([single]) => Some(single),
+            Some(list) => panic!("expected one verify entry, got {}", list.len()),
+            None => None,
+        }
+    }
+
+    #[test]
+    fn test_verify_list_form() {
+        let passport = json!({"model": "passport", "as_provider": "ita", "policy_ids": ["p"]});
+        let bgcheck = json!({"as_addr": "http://localhost:8080", "policy_ids": ["p"]});
+
+        let ra: RaArgsUnchecked =
+            serde_json::from_value(json!({"verify": [bgcheck, passport]})).unwrap();
+        let keys: Vec<_> = ra.verify.iter().flatten().map(VerifyArgs::key).collect();
+        assert_eq!(
+            keys,
+            [
+                (Model::BackgroundCheck, ProviderType::Coco),
+                (Model::Passport, ProviderType::Ita)
+            ]
+        );
+        ra.into_checked().unwrap();
+
+        for bad in [json!([]), json!([bgcheck, bgcheck])] {
+            let ra: RaArgsUnchecked = serde_json::from_value(json!({"verify": bad})).unwrap();
+            ra.into_checked()
+                .expect_err(&format!("{bad} should be rejected"));
+        }
+    }
 
     #[test]
     fn test_background_check_attest_without_model() {
@@ -1004,7 +1104,7 @@ mod tests {
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
                 ConverterArgs::Coco(CocoConverterArgs::Restful {
                     as_addr,
@@ -1034,7 +1134,7 @@ mod tests {
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
                 ConverterArgs::Coco(CocoConverterArgs::Restful {
                     as_addr,
@@ -1063,7 +1163,7 @@ mod tests {
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::Passport { verifier }) => match verifier {
                 VerifierArgs::Coco(CocoVerifierArgs::Restful { policy_ids, .. }) => {
                     assert_eq!(policy_ids, &vec!["policy1", "policy2"]);
@@ -1224,7 +1324,7 @@ mod tests {
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
                 ConverterArgs::Coco(CocoConverterArgs::Restful {
                     as_addr,
@@ -1259,7 +1359,7 @@ mod tests {
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
                 ConverterArgs::Coco(CocoConverterArgs::Grpc { as_addr, .. }) => {
                     assert_eq!(as_addr, "http://localhost:5000");
@@ -1290,7 +1390,7 @@ mod tests {
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::BackgroundCheck {
                 converter,
                 verifier,
@@ -1350,7 +1450,7 @@ mod tests {
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::BackgroundCheck {
                 converter: ConverterArgs::CocoBuiltin { policy_dir, .. },
                 ..
@@ -1461,7 +1561,7 @@ mod tests {
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::BackgroundCheck {
                 converter,
                 verifier,
@@ -1501,7 +1601,7 @@ mod tests {
 
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::Passport { verifier }) => match verifier {
                 VerifierArgs::Ita(ita) => {
                     assert_eq!(ita.ita_jwks_addr, jwks_addr);
@@ -1527,7 +1627,7 @@ mod tests {
         let ra_args: RaArgsUnchecked = serde_json::from_value(json).expect("Failed to deserialize");
         std::env::remove_var(ITA_API_KEY_ENV);
 
-        match &ra_args.verify {
+        match single_verify(&ra_args) {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
                 ConverterArgs::Ita(ita) => {
                     assert_eq!(ita.as_addr, DEFAULT_ITA_API_URL);
@@ -1559,7 +1659,7 @@ mod tests {
         let back: RaArgsUnchecked =
             serde_json::from_str(&serialized).expect("Failed to re-deserialize");
 
-        match &back.verify {
+        match single_verify(&back) {
             Some(VerifyArgs::BackgroundCheck { converter, .. }) => match converter {
                 ConverterArgs::Ita(ita) => {
                     assert_eq!(ita.as_addr, as_addr);

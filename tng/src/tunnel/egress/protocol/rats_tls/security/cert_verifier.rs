@@ -11,7 +11,7 @@ use rustls::{
 use tokio_rustls::rustls::RootCertStore;
 
 use crate::tunnel::{
-    cert_verifier::TngCommonCertVerifier, ra_context::VerifyContext, utils::certs::TNG_DUMMY_CERT,
+    cert_verifier::TngCommonCertVerifier, ra_context::VerifyContextSet, utils::certs::TNG_DUMMY_CERT,
 };
 
 #[derive(Debug)]
@@ -21,7 +21,7 @@ pub struct TngClientCertVerifier {
 }
 
 impl TngClientCertVerifier {
-    pub fn new(verify_ctx: Arc<VerifyContext>) -> Result<Self> {
+    pub fn new(verify_ctx: Arc<VerifyContextSet>) -> Result<Self> {
         let mut cert = TNG_DUMMY_CERT.as_bytes();
         let certs = rustls_pemfile::certs(&mut cert).collect::<Result<Vec<_>, _>>()?;
         let mut roots = RootCertStore::empty();

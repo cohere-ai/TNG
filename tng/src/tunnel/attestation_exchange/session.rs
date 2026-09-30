@@ -7,28 +7,52 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use crate::tunnel::attestation_metrics::AttestationAttempt;
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::cert_verifier::TngCommonCertVerifier;
+use crate::tunnel::challenge::ChallengeSource;
+use crate::tunnel::proposal::{AttestProposal, Model};
 use crate::tunnel::provider::ProviderType;
-use crate::tunnel::ra_context::{AttestContext, RaContext, VerifyContext};
+use crate::tunnel::ra_context::{AttestContext, RaContext, VerifyContextSet};
+use crate::tunnel::select_proposal::{find_proposal, pick_proposal};
 use crate::tunnel::service_metrics::{
     AttestationMetrics, AttestationOperation, AttestationProtocol,
 };
 use rats_cert::tee::AttesterPipeline;
 
-use super::claims::EXPORTER_LEN;
+use super::claims::{BackgroundCheckExpectation, PassportExpectation, EXPORTER_LEN};
 use super::codec::{read_request, read_response, write_request, write_response};
 use super::core::{
     ack_response, error_response, produce_background_check_evidence, produce_passport_token,
-    produced_error_reason, ChallengeSource, EvidenceProducer, ExchangeState, ExchangeVerifier,
-    PassportEvidenceCache, TokenProducer, VerifyMode,
+    produced_error_reason, EvidenceProducer, ExchangeVerifier, PassportEvidenceCache,
+    TokenProducer,
 };
 use super::exporter::{export_from_client, export_from_server, spki_from_certified_key};
-use super::pb::{request, response, Request, Response};
+use super::pb::{self, response, Request, Response};
 
 pub const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Builds this side's proposals, with fresh nonces, at the start of every exchange.
+#[async_trait::async_trait]
+pub trait ProposalMaker: Send + Sync {
+    async fn fresh_proposals(&self) -> Result<Vec<AttestProposal>>;
+}
+
+#[async_trait::async_trait]
+impl ProposalMaker for VerifyContextSet {
+    async fn fresh_proposals(&self) -> Result<Vec<AttestProposal>> {
+        let metrics = self.attestation_metrics();
+        self.make_proposals(|| {
+            Some(metrics.start(
+                AttestationOperation::Challenge,
+                AttestationProtocol::RatsTls,
+            ))
+        })
+        .await
+    }
+}
+
 pub struct ExchangeResources<'a> {
-    pub verify_mode: VerifyMode,
-    pub verifier_converter: Option<&'a dyn ChallengeSource>,
+    /// `None` when this side does not verify its peer.
+    pub proposal_maker: Option<&'a dyn ProposalMaker>,
+    pub attest_key: Option<(Model, ProviderType)>,
     pub attest_converter: Option<&'a dyn ChallengeSource>,
     pub evidence_producer: Option<&'a dyn EvidenceProducer>,
     pub token_producer: Option<&'a dyn TokenProducer>,
@@ -67,17 +91,6 @@ fn resources_from_ra<'a>(
     peer_spki_der: Option<&'a [u8]>,
     token_producer: Option<&'a dyn TokenProducer>,
 ) -> ExchangeResources<'a> {
-    let verify_mode = match ra.verify_context() {
-        Some(VerifyContext::BackgroundCheck { .. }) => VerifyMode::BackgroundCheck,
-        Some(VerifyContext::Passport { .. }) => VerifyMode::Passport,
-        None => VerifyMode::None,
-    };
-    let verifier_converter = match ra.verify_context() {
-        Some(VerifyContext::BackgroundCheck { converter, .. }) => {
-            Some(converter as &dyn ChallengeSource)
-        }
-        _ => None,
-    };
     let (evidence_producer, attest_converter, passport_cache, max_retries) =
         match ra.attest_context() {
             Some(AttestContext::Passport {
@@ -105,8 +118,8 @@ fn resources_from_ra<'a>(
         };
 
     ExchangeResources {
-        verify_mode,
-        verifier_converter,
+        proposal_maker: ra.verify_set().map(|v| v as &dyn ProposalMaker),
+        attest_key: ra.attest_context().map(AttestContext::proposal_key),
         attest_converter,
         evidence_producer,
         token_producer,
@@ -218,24 +231,18 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut state = ExchangeState::new(resources.verify_mode);
-    let challenge = resources.start_if(
-        resources.verify_mode == VerifyMode::BackgroundCheck,
-        AttestationOperation::Challenge,
-    );
-    let my_req = state
-        .prepare_request(resources.verifier_converter)
-        .await
-        .context("converter errors while fetching the nonce")?;
-    mark_succeeded(challenge);
+    let my_proposals = match resources.proposal_maker {
+        Some(maker) => maker.fresh_proposals().await?,
+        None => vec![],
+    };
+    let my_req = Request {
+        proposals: my_proposals.iter().map(proposal_to_pb).collect(),
+    };
 
     let (_, peer_req) = tokio::try_join!(write_request(wr, &my_req), read_request(rd))?;
 
     let generate = resources.start_if(
-        matches!(
-            peer_req.body,
-            Some(request::Body::BackgroundCheck(_) | request::Body::Passport(_))
-        ),
+        !peer_req.proposals.is_empty(),
         AttestationOperation::Generate,
     );
     let outgoing = produce_outgoing(&resources, &peer_req).await?;
@@ -250,64 +257,96 @@ where
     let (_, incoming) = tokio::try_join!(write_response(wr, &outgoing), read_response(rd))?;
 
     if let Some(reason) = failed_reason {
-        bail!("attestation failed after retries: {reason}");
+        bail!("failed to attest to peer: {reason}");
     }
 
-    let verify = resources.start_if(
-        resources.verify_mode != VerifyMode::None,
-        AttestationOperation::Verify,
-    );
-    let result = verify_incoming(&state, &resources, incoming).await?;
+    let verify = resources.start_if(!my_proposals.is_empty(), AttestationOperation::Verify);
+    let result = verify_incoming(&my_proposals, &resources, incoming).await?;
     mark_succeeded(verify);
     Ok(result)
 }
 
+fn proposal_to_pb(proposal: &AttestProposal) -> pb::AttestProposal {
+    let kind = match proposal {
+        AttestProposal::BackgroundCheck {
+            provider,
+            challenge_token,
+        } => pb::attest_proposal::Kind::BackgroundCheck(pb::BackgroundCheck {
+            provider: provider.as_str().to_owned(),
+            challenge_token: challenge_token.clone(),
+        }),
+        AttestProposal::Passport { provider } => {
+            pb::attest_proposal::Kind::Passport(pb::Passport {
+                provider: provider.as_str().to_owned(),
+            })
+        }
+    };
+    pb::AttestProposal { kind: Some(kind) }
+}
+
+fn proposal_from_pb(proposal: &pb::AttestProposal) -> Result<AttestProposal> {
+    match proposal.kind.as_ref().context("proposal has no kind")? {
+        pb::attest_proposal::Kind::BackgroundCheck(bc) => Ok(AttestProposal::BackgroundCheck {
+            provider: ProviderType::from_required_wire_str(&bc.provider)?,
+            challenge_token: bc.challenge_token.clone(),
+        }),
+        pb::attest_proposal::Kind::Passport(p) => Ok(AttestProposal::Passport {
+            provider: ProviderType::from_required_wire_str(&p.provider)?,
+        }),
+    }
+}
+
 async fn produce_outgoing(resources: &ExchangeResources<'_>, peer: &Request) -> Result<Response> {
-    match peer.body.as_ref() {
-        None => bail!("request message has empty body"),
-        Some(request::Body::None(_)) => Ok(ack_response()),
-        Some(request::Body::BackgroundCheck(bc)) => {
-            let producer = match resources.evidence_producer {
-                Some(p) => p,
-                None => return Ok(error_response("not configured to attest")),
-            };
-            let own_spki = match resources.own_spki_der {
-                Some(s) => s,
-                None => {
-                    return Ok(error_response(
-                        "attesting side has no snapshotted certificate",
-                    ))
-                }
+    if peer.proposals.is_empty() {
+        return Ok(ack_response());
+    }
+    let proposals = match peer
+        .proposals
+        .iter()
+        .map(proposal_from_pb)
+        .collect::<Result<Vec<_>>>()
+    {
+        Ok(proposals) => proposals,
+        Err(e) => {
+            tracing::warn!(error = ?e, "peer sent a malformed attestation proposal");
+            return Ok(error_response("malformed attestation proposal"));
+        }
+    };
+    let Some(own_key) = resources.attest_key else {
+        return Ok(error_response("not configured to attest"));
+    };
+    let proposal = match pick_proposal(own_key, &proposals) {
+        Ok(proposal) => proposal,
+        Err(e) => return Ok(error_response(e.to_string())),
+    };
+    let Some(own_spki) = resources.own_spki_der else {
+        return Ok(error_response(
+            "attesting side has no snapshotted certificate",
+        ));
+    };
+    match proposal {
+        AttestProposal::BackgroundCheck {
+            challenge_token, ..
+        } => {
+            let Some(producer) = resources.evidence_producer else {
+                return Ok(error_response("not configured to attest"));
             };
             produce_background_check_evidence(
                 producer,
                 own_spki,
-                &bc.nonce,
+                challenge_token,
                 &resources.exporter,
                 resources.max_retries,
             )
             .await
         }
-        Some(request::Body::Passport(_)) => {
-            let producer = match resources.token_producer {
-                Some(p) => p,
-                None => return Ok(error_response("not configured to attest")),
-            };
-            let cache = match resources.passport_cache {
-                Some(c) => c,
-                None => return Ok(error_response("not configured to attest")),
-            };
-            let converter = match resources.attest_converter {
-                Some(c) => c,
-                None => return Ok(error_response("not configured to attest")),
-            };
-            let own_spki = match resources.own_spki_der {
-                Some(s) => s,
-                None => {
-                    return Ok(error_response(
-                        "attesting side has no snapshotted certificate",
-                    ))
-                }
+        AttestProposal::Passport { .. } => {
+            let (Some(producer), Some(cache), Some(converter)) = (
+                resources.token_producer,
+                resources.passport_cache,
+                resources.attest_converter,
+            ) else {
+                return Ok(error_response("not configured to attest"));
             };
             produce_passport_token(producer, converter, own_spki, cache, resources.max_retries)
                 .await
@@ -316,68 +355,57 @@ async fn produce_outgoing(resources: &ExchangeResources<'_>, peer: &Request) -> 
 }
 
 async fn verify_incoming(
-    state: &ExchangeState,
+    my_proposals: &[AttestProposal],
     resources: &ExchangeResources<'_>,
     incoming: Response,
 ) -> Result<Option<AttestationResult>> {
-    match (resources.verify_mode, incoming.body) {
-        (VerifyMode::None, Some(response::Body::Ack(_))) => Ok(None),
-        (VerifyMode::None, Some(response::Body::Evidence(_) | response::Body::Token(_))) => {
-            bail!("unsolicited credentials")
-        }
-        (VerifyMode::None, Some(response::Body::Error(e))) => {
-            bail!("peer sent an error: {}", e.reason)
-        }
-        (VerifyMode::BackgroundCheck, Some(response::Body::Evidence(ev))) => {
-            ProviderType::from_required_wire_str(&ev.provider)?;
-            let verifier = resources
-                .verifier
-                .context("verifying side has no verifier")?;
-            let peer_spki = resources
-                .peer_spki_der
-                .context("verifying side has no peer certificate")?;
-            let expected = state.expected_claims(peer_spki, &resources.exporter)?;
-            let result = verifier
-                .verify_evidence(&ev.provider, &ev.json, expected)
-                .await
-                .context("evidence conversion or verification failed")?;
-            Ok(Some(result))
-        }
-        (VerifyMode::BackgroundCheck, Some(response::Body::Token(_))) => {
-            bail!("verifier rejects token when it sent background_check")
-        }
-        (VerifyMode::BackgroundCheck, Some(response::Body::Ack(_))) => {
-            bail!("peer did not attest")
-        }
-        (VerifyMode::BackgroundCheck, Some(response::Body::Error(e))) => {
-            bail!("peer attestation failed: {}", e.reason)
-        }
-        (VerifyMode::Passport, Some(response::Body::Token(t))) => {
-            ProviderType::from_required_wire_str(&t.provider)?;
-            let verifier = resources
-                .verifier
-                .context("verifying side has no verifier")?;
-            let peer_spki = resources
-                .peer_spki_der
-                .context("verifying side has no peer certificate")?;
-            let expected = state.expected_claims(peer_spki, &resources.exporter)?;
-            let result = verifier
-                .verify_token(&t.provider, &t.jwt, expected)
-                .await
-                .context("evidence conversion or verification failed")?;
-            Ok(Some(result))
-        }
-        (VerifyMode::Passport, Some(response::Body::Evidence(_))) => {
-            bail!("verifier rejects evidence when it sent passport")
-        }
-        (VerifyMode::Passport, Some(response::Body::Ack(_))) => {
-            bail!("peer did not attest")
-        }
-        (VerifyMode::Passport, Some(response::Body::Error(e))) => {
-            bail!("peer attestation failed: {}", e.reason)
-        }
-        (_, None) => bail!("response message has empty body"),
+    let body = incoming.body.context("response message has empty body")?;
+    if my_proposals.is_empty() {
+        return match body {
+            response::Body::Ack(_) => Ok(None),
+            response::Body::Evidence(_) | response::Body::Token(_) => {
+                bail!("unsolicited credentials")
+            }
+            response::Body::Error(e) => bail!("peer sent an error: {}", e.reason),
+        };
     }
+
+    let verifier = || resources.verifier.context("verifying side has no verifier");
+    let peer_spki = || {
+        resources
+            .peer_spki_der
+            .context("verifying side has no peer certificate")
+    };
+    let result = match body {
+        response::Body::Evidence(ev) => {
+            let provider = ProviderType::from_required_wire_str(&ev.provider)?;
+            let issued_nonce = find_proposal(my_proposals, Model::BackgroundCheck, provider)?
+                .challenge_token()
+                .context("background-check proposal carries no nonce")?;
+            let expected = BackgroundCheckExpectation {
+                peer_spki_der: peer_spki()?,
+                issued_nonce,
+                exporter: &resources.exporter,
+            }
+            .to_claims()?;
+            verifier()?
+                .verify_evidence(provider, &ev.json, expected)
+                .await
+        }
+        response::Body::Token(t) => {
+            let provider = ProviderType::from_required_wire_str(&t.provider)?;
+            find_proposal(my_proposals, Model::Passport, provider)?;
+            let expected = PassportExpectation {
+                peer_spki_der: peer_spki()?,
+            }
+            .to_claims()?;
+            verifier()?.verify_token(provider, &t.jwt, expected).await
+        }
+        response::Body::Ack(_) => bail!("peer did not attest"),
+        response::Body::Error(e) => bail!("peer attestation failed: {}", e.reason),
+    }
+    .context("evidence conversion or verification failed")?;
+    Ok(Some(result))
 }
 
 #[cfg(test)]
@@ -387,25 +415,24 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::super::claims::expected_subset_of;
-    use super::super::core::{
-        ack_response, error_response, evidence_response, none_request, token_response,
-    };
-    use super::super::pb::{request, response, BackgroundCheck};
-    use crate::tunnel::provider::{ProviderType, TngToken};
+    use super::super::core::{evidence_response, token_response};
+    use crate::tunnel::provider::TngToken;
+    use crate::tunnel::select_proposal::NO_COMPATIBLE_PROPOSAL;
 
     const SPKI: &[u8] = b"spki-a";
     const EXP: [u8; EXPORTER_LEN] = [7u8; EXPORTER_LEN];
 
     fn dummy_result() -> AttestationResult {
         AttestationResult::from_token(
+            Model::Passport,
             TngToken::from_wire(ProviderType::Coco, "fake.jwt.token".into()).unwrap(),
         )
     }
 
-    fn resources<'a>(verify_mode: VerifyMode) -> ExchangeResources<'a> {
+    fn resources<'a>() -> ExchangeResources<'a> {
         ExchangeResources {
-            verify_mode,
-            verifier_converter: None,
+            proposal_maker: None,
+            attest_key: None,
             attest_converter: None,
             evidence_producer: None,
             token_producer: None,
@@ -419,23 +446,32 @@ mod tests {
         }
     }
 
-    struct RecordingConverter {
-        nonce: String,
-    }
+    struct FixedProposals(Vec<AttestProposal>);
 
     #[async_trait::async_trait]
-    impl ChallengeSource for RecordingConverter {
-        async fn get_nonce(&self) -> Result<String> {
-            Ok(self.nonce.clone())
+    impl ProposalMaker for FixedProposals {
+        async fn fresh_proposals(&self) -> Result<Vec<AttestProposal>> {
+            Ok(self.0.clone())
         }
+    }
+
+    fn coco_bc(nonce: &str) -> AttestProposal {
+        AttestProposal::BackgroundCheck {
+            provider: ProviderType::Coco,
+            challenge_token: nonce.into(),
+        }
+    }
+
+    fn coco_bc_proposals() -> FixedProposals {
+        FixedProposals(vec![coco_bc("n")])
     }
 
     struct ClaimsEchoProducer;
 
     #[async_trait::async_trait]
     impl EvidenceProducer for ClaimsEchoProducer {
-        async fn produce(&self, claims: Claims) -> Result<super::super::pb::Evidence> {
-            Ok(super::super::pb::Evidence {
+        async fn produce(&self, claims: Claims) -> Result<pb::Evidence> {
+            Ok(pb::Evidence {
                 provider: "coco".into(),
                 json: serde_json::to_string(&claims)?,
             })
@@ -448,7 +484,7 @@ mod tests {
     impl ExchangeVerifier for SubsetVerifier {
         async fn verify_evidence(
             &self,
-            _provider: &str,
+            _provider: ProviderType,
             json: &str,
             expected: Claims,
         ) -> Result<AttestationResult> {
@@ -462,7 +498,7 @@ mod tests {
 
         async fn verify_token(
             &self,
-            _provider: &str,
+            _provider: ProviderType,
             jwt: &str,
             _expected: Claims,
         ) -> Result<AttestationResult> {
@@ -474,25 +510,19 @@ mod tests {
     }
 
     fn verify_only<'a>(
-        converter: &'a dyn ChallengeSource,
+        proposals: &'a FixedProposals,
         verifier: &'a dyn ExchangeVerifier,
     ) -> ExchangeResources<'a> {
-        let mut r = resources(VerifyMode::BackgroundCheck);
-        r.verifier_converter = Some(converter);
-        r.verifier = Some(verifier);
-        r.peer_spki_der = Some(SPKI);
-        r
-    }
-
-    fn passport_verify_only<'a>(verifier: &'a dyn ExchangeVerifier) -> ExchangeResources<'a> {
-        let mut r = resources(VerifyMode::Passport);
+        let mut r = resources();
+        r.proposal_maker = Some(proposals);
         r.verifier = Some(verifier);
         r.peer_spki_der = Some(SPKI);
         r
     }
 
     fn attest_only<'a>(producer: &'a dyn EvidenceProducer) -> ExchangeResources<'a> {
-        let mut r = resources(VerifyMode::None);
+        let mut r = resources();
+        r.attest_key = Some((Model::BackgroundCheck, ProviderType::Coco));
         r.evidence_producer = Some(producer);
         r.own_spki_der = Some(SPKI);
         r
@@ -501,7 +531,7 @@ mod tests {
     fn assert_err_contains<T: std::fmt::Debug>(res: Result<T>, needle: &str) {
         let err = res.unwrap_err();
         assert!(
-            err.to_string().contains(needle),
+            format!("{err:#}").contains(needle),
             "unexpected error: {err:#}"
         );
     }
@@ -524,14 +554,45 @@ mod tests {
         (local_res.map(|(_, result)| result), got)
     }
 
+    /// Plays an attester-side peer that sends `peer_req` and returns the response it receives.
+    async fn attester_answer(
+        resources: ExchangeResources<'_>,
+        peer_req: Request,
+    ) -> (Result<Option<AttestationResult>>, Response) {
+        let (mut peer, local) = tokio::io::duplex(4096);
+        let local_fut = run_on_stream(local, resources);
+        let peer_fut = async {
+            write_request(&mut peer, &peer_req).await.unwrap();
+            let _ = read_request(&mut peer).await.unwrap();
+            let resp = read_response(&mut peer).await.unwrap();
+            write_response(&mut peer, &ack_response()).await.unwrap();
+            resp
+        };
+        let (local_res, resp) = tokio::join!(local_fut, peer_fut);
+        (local_res.map(|(_, result)| result), resp)
+    }
+
+    fn proposing(proposals: &[AttestProposal]) -> Request {
+        Request {
+            proposals: proposals.iter().map(proposal_to_pb).collect(),
+        }
+    }
+
+    fn error_reason(resp: Response) -> String {
+        match resp.body {
+            Some(response::Body::Error(e)) => e.reason,
+            other => panic!("expected error, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn verifier_accepts_background_check_evidence() {
-        let conv = RecordingConverter { nonce: "n".into() };
+        let proposals = coco_bc_proposals();
         let producer = ClaimsEchoProducer;
         let verifier = SubsetVerifier;
         let (client, server) = tokio::io::duplex(65536);
         let (rc, rs) = tokio::join!(
-            run_on_stream(client, verify_only(&conv, &verifier)),
+            run_on_stream(client, verify_only(&proposals, &verifier)),
             run_on_stream(server, attest_only(&producer)),
         );
         assert!(rc.unwrap().1.is_some());
@@ -539,12 +600,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn multi_proposal_verifier_accepts_either_matching_answer() {
+        let proposals = FixedProposals(vec![
+            coco_bc("n"),
+            AttestProposal::Passport {
+                provider: ProviderType::Ita,
+            },
+        ]);
+        let producer = ClaimsEchoProducer;
+        let verifier = SubsetVerifier;
+        let two_proposals = || verify_only(&proposals, &verifier);
+
+        let (client, server) = tokio::io::duplex(65536);
+        let (rc, rs) = tokio::join!(
+            run_on_stream(client, two_proposals()),
+            run_on_stream(server, attest_only(&producer)),
+        );
+        assert!(rc.unwrap().1.is_some());
+        assert!(rs.unwrap().1.is_none());
+
+        let (res, got) = against_peer(
+            two_proposals(),
+            Request::default(),
+            token_response("ita", "fake.jwt.token"),
+        )
+        .await;
+        assert!(res.unwrap().is_some());
+        assert_eq!(got.proposals.len(), 2);
+
+        // No nonce was issued for ita, so ita evidence cannot be checked against one.
+        let (res, _) = against_peer(
+            two_proposals(),
+            Request::default(),
+            evidence_response("ita", "{}"),
+        )
+        .await;
+        assert_err_contains(res, "not proposed");
+    }
+
+    #[tokio::test]
     async fn none_none_then_application_data() {
         let (a, b) = tokio::io::duplex(1024);
-        let (ra, rb) = tokio::join!(
-            run_on_stream(a, resources(VerifyMode::None)),
-            run_on_stream(b, resources(VerifyMode::None)),
-        );
+        let (ra, rb) = tokio::join!(run_on_stream(a, resources()), run_on_stream(b, resources()),);
         let (mut a, res_a) = ra.unwrap();
         let (mut b, res_b) = rb.unwrap();
         assert!(res_a.is_none());
@@ -558,11 +655,11 @@ mod tests {
 
     #[tokio::test]
     async fn verifier_fail_closes_on_peer_error_or_ack() {
-        let conv = RecordingConverter { nonce: "n".into() };
+        let proposals = coco_bc_proposals();
         let verifier = SubsetVerifier;
         let (res, _) = against_peer(
-            verify_only(&conv, &verifier),
-            none_request(),
+            verify_only(&proposals, &verifier),
+            Request::default(),
             error_response("changed my mind"),
         )
         .await;
@@ -571,8 +668,8 @@ mod tests {
         assert!(!err.contains("timed out"), "{err}");
 
         let (res, _) = against_peer(
-            verify_only(&conv, &verifier),
-            none_request(),
+            verify_only(&proposals, &verifier),
+            Request::default(),
             ack_response(),
         )
         .await;
@@ -580,35 +677,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn verifier_rejects_wrong_response_arm() {
-        let conv = RecordingConverter { nonce: "n".into() };
+    async fn verifier_rejects_unasked_answer() {
+        let bc_proposals = coco_bc_proposals();
+        let passport_proposals = FixedProposals(vec![AttestProposal::Passport {
+            provider: ProviderType::Coco,
+        }]);
         let verifier = SubsetVerifier;
         let (res, _) = against_peer(
-            verify_only(&conv, &verifier),
-            none_request(),
+            verify_only(&bc_proposals, &verifier),
+            Request::default(),
             token_response("coco", "fake.jwt.token"),
         )
         .await;
-        assert_err_contains(res, "verifier rejects token when it sent background_check");
+        assert_err_contains(res, "not proposed");
 
-        let (res, got) = against_peer(
-            passport_verify_only(&verifier),
-            none_request(),
+        let (res, _) = against_peer(
+            verify_only(&passport_proposals, &verifier),
+            Request::default(),
             evidence_response("coco", "{}"),
         )
         .await;
-        assert!(matches!(got.body, Some(request::Body::Passport(_))));
-        assert_err_contains(res, "verifier rejects evidence when it sent passport");
+        assert_err_contains(res, "not proposed");
     }
 
     #[tokio::test]
     async fn bad_provider_fail_closes() {
-        let conv = RecordingConverter { nonce: "n".into() };
+        let proposals = coco_bc_proposals();
         let verifier = SubsetVerifier;
         for provider in ["", "notaprovider"] {
             let (res, _) = against_peer(
-                verify_only(&conv, &verifier),
-                none_request(),
+                verify_only(&proposals, &verifier),
+                Request::default(),
                 evidence_response(provider, "{}"),
             )
             .await;
@@ -621,49 +720,51 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_nonce_fail_closes_as_missing_nonce() {
+    async fn attester_fail_closes_on_unanswerable_proposals() {
         let producer = ClaimsEchoProducer;
-        let (mut peer, local) = tokio::io::duplex(1024);
-        let local_fut = run_on_stream(local, attest_only(&producer));
-        let peer_fut = async {
-            write_request(
-                &mut peer,
-                &Request {
-                    body: Some(request::Body::BackgroundCheck(BackgroundCheck {
-                        nonce: vec![],
-                    })),
-                },
-            )
-            .await
-            .unwrap();
-            let _ = read_request(&mut peer).await.unwrap();
-            let resp = read_response(&mut peer).await.unwrap();
-            match resp.body {
-                Some(response::Body::Error(e)) => {
-                    assert!(e.reason.contains("missing nonce"), "{}", e.reason);
-                }
-                other => panic!("expected error, got {other:?}"),
-            }
-            write_response(&mut peer, &ack_response()).await.unwrap();
+        let cases = [
+            (proposing(&[coco_bc("")]), "missing nonce"),
+            (
+                proposing(&[AttestProposal::Passport {
+                    provider: ProviderType::Ita,
+                }]),
+                NO_COMPATIBLE_PROPOSAL,
+            ),
+            (proposing(&[coco_bc("a"), coco_bc("b")]), "duplicate"),
+        ];
+        for (req, needle) in cases {
+            let (res, resp) = attester_answer(attest_only(&producer), req).await;
+            let reason = error_reason(resp);
+            assert!(reason.contains(needle), "{reason}");
+            assert_err_contains(res, needle);
+        }
+
+        let unknown_provider = Request {
+            proposals: vec![pb::AttestProposal {
+                kind: Some(pb::attest_proposal::Kind::Passport(pb::Passport {
+                    provider: "bad_provider".into(),
+                })),
+            }],
         };
-        let (local_res, _) = tokio::join!(local_fut, peer_fut);
-        assert_err_contains(local_res, "missing nonce");
+        let (res, resp) = attester_answer(attest_only(&producer), unknown_provider).await;
+        assert_eq!(error_reason(resp), "malformed attestation proposal");
+        assert_err_contains(res, "malformed attestation proposal");
     }
 
     #[tokio::test]
     async fn response_not_written_until_requests_exchanged() {
         let (mut peer, local) = tokio::io::duplex(1024);
-        let local_fut = run_on_stream(local, resources(VerifyMode::None));
+        let local_fut = run_on_stream(local, resources());
         let peer_fut = async {
             let req = read_request(&mut peer).await.unwrap();
-            assert!(matches!(req.body, Some(request::Body::None(_))));
+            assert!(req.proposals.is_empty());
             let extra =
                 tokio::time::timeout(Duration::from_millis(50), read_response(&mut peer)).await;
             assert!(
                 extra.is_err(),
                 "response written before peer request was sent"
             );
-            write_request(&mut peer, &none_request()).await.unwrap();
+            write_request(&mut peer, &Request::default()).await.unwrap();
             write_response(&mut peer, &ack_response()).await.unwrap();
             let resp = read_response(&mut peer).await.unwrap();
             assert!(matches!(resp.body, Some(response::Body::Ack(_))));
