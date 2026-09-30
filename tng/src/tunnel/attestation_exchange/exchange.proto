@@ -2,19 +2,26 @@ syntax = "proto3";
 
 package tng.rats_tls.attestation_exchange;
 
+// One proposal per verifier this side holds; empty when it does not verify its peer.
 message Request {
-  oneof body {
-    None none = 1;
-    BackgroundCheck background_check = 2;
-    Passport passport = 3;
+  repeated AttestProposal proposals = 1;
+}
+
+message AttestProposal {
+  oneof kind {
+    BackgroundCheck background_check = 1;
+    Passport passport = 2;
   }
 }
 
 message BackgroundCheck {
-  bytes nonce = 1;
+  string provider = 1;
+  string challenge_token = 2;
 }
 
-message Passport {}
+message Passport {
+  string provider = 1;
+}
 
 message Response {
   oneof body {

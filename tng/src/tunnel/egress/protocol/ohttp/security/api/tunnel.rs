@@ -8,6 +8,9 @@ use futures::{AsyncWriteExt, StreamExt as _, TryStreamExt as _};
 use prost::Message as _;
 use rats_cert::tee::{GenericVerifier as _, ReportData};
 
+use std::str::FromStr as _;
+
+use crate::tunnel::proposal::Model;
 use crate::tunnel::provider::{ProviderType, TngToken};
 use tokio::io::AsyncReadExt;
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;
@@ -27,7 +30,6 @@ use crate::tunnel::ohttp::protocol::metadata::{
     AttestedPublicKey, Metadata, NoAuth, METADATA_MAX_LEN,
 };
 use crate::tunnel::ohttp::protocol::userdata::ClientUserData;
-use crate::tunnel::ra_context::VerifyContext;
 use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 
 impl OhttpServerApi {
@@ -100,7 +102,7 @@ impl OhttpServerApi {
         );
 
         // Check metadata
-        let attestation_required = self.ra_context.verify_context().is_some();
+        let attestation_required = self.ra_context.verify_set().is_some();
         let attestation_result = self
             .validate_client_attestation_consistency(metadata.client_auth)
             .await;
@@ -205,34 +207,32 @@ impl OhttpServerApi {
         &self,
         client_auth: Option<ClientAuth>,
     ) -> Result<()> {
-        match (client_auth, self.ra_context.verify_context()) {
+        match (client_auth, self.ra_context.verify_set()) {
             (
                 Some(ClientAuth::AttestedPublicKey(AttestedPublicKey {
                     attestation_result,
                     pk_s,
-                    as_provider,
+                    provider,
+                    model,
                 })),
-                Some(verify_ctx),
+                Some(verify_set),
             ) => {
-                match verify_ctx {
-                    VerifyContext::Passport { verifier, .. }
-                    | VerifyContext::BackgroundCheck { verifier, .. } => {
-                        let provider = ProviderType::from_optional_wire_str(&as_provider)?;
-                        let token =
-                            TngToken::deserialize_from_wire_str(provider, &attestation_result)?;
+                let provider = ProviderType::from_required_wire_str(&provider)?;
+                let model = Model::from_str(&model)?;
+                let token = TngToken::deserialize_from_wire_str(provider, &attestation_result)?;
 
-                        let userdata = ClientUserData {
-                            // The challenge_token is not required to be check here, since it is already checked by attestation service. So that we skip the comparesion of challenge_token here.
-                            challenge_token: None,
-                            pk_s: BASE64_STANDARD.encode(&pk_s),
-                        }
-                        .to_claims()?;
-
-                        verifier
-                            .verify_evidence(&token, &ReportData::Claims(userdata))
-                            .await?;
-                    }
+                let userdata = ClientUserData {
+                    // The challenge_token is not required to be check here, since it is already checked by attestation service. So that we skip the comparesion of challenge_token here.
+                    challenge_token: None,
+                    pk_s: BASE64_STANDARD.encode(&pk_s),
                 }
+                .to_claims()?;
+
+                verify_set
+                    .entry(model, provider)?
+                    .verifier()
+                    .verify_evidence(&token, &ReportData::Claims(userdata))
+                    .await?;
             }
             (Some(ClientAuth::NoAuth(NoAuth {})), None) => {
                 // Peace and love - no attestation required and client didn't provide any

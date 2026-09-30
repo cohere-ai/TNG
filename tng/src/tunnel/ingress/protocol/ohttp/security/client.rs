@@ -24,6 +24,7 @@ use rats_cert::tee::ReportData;
 use rats_cert::tee::{GenericConverter, GenericVerifier as _};
 
 use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
+use crate::tunnel::select_proposal::find_proposal;
 #[cfg(unix)]
 use tokio::io::AsyncReadExt;
 use tokio_util::{
@@ -56,7 +57,7 @@ use crate::{
         ohttp::protocol::{
             metadata::{metadata::ClientAuth, Metadata, NoAuth, METADATA_MAX_LEN},
             userdata::ServerUserData,
-            AttestationChallengeResponse, AttestationRequest, AttestationVerifyRequest,
+            AttestationChallengeQuery, AttestationChallengeResponse, AttestationVerifyRequest,
             AttestationVerifyResponse, KeyConfigRequest, KeyConfigResponse, ServerAttestationInfo,
         },
         utils::maybe_cached::{Expire, MaybeCached, RefreshStrategy},
@@ -216,110 +217,80 @@ impl OHttpClientInner {
         // Handle metatdata for self
         let (client_key, client_auth, mut expire) = self.create_attested_client_key().await?;
         #[cfg(unix)]
-        let attestation_attempt = self.ra_context.verify_context().map(|ctx| {
-            ctx.attestation_metrics()
+        let attestation_attempt = self.ra_context.verify_set().map(|set| {
+            set.attestation_metrics()
                 .start(AttestationOperation::Verify, AttestationProtocol::Ohttp)
         });
 
-        let (server_key_config, token) = {
-            let verify_context = self.ra_context.verify_context();
+        let (server_key_config, token) = match self.ra_context.verify_set() {
+            Some(verify_set) => {
+                #[cfg(unix)]
+                let proposals = verify_set
+                    .make_proposals(|| {
+                        Some(
+                            verify_set
+                                .attestation_metrics()
+                                .start(AttestationOperation::Challenge, AttestationProtocol::Ohttp),
+                        )
+                    })
+                    .await?;
+                #[cfg(not(unix))]
+                let proposals = verify_set.make_proposals(|| ()).await?;
 
-            match verify_context {
-                Some(VerifyContext::Passport { verifier, .. }) => {
-                    // Request hpke configuration for server
-                    let response = self
-                        .get_hpke_configuration(KeyConfigRequest {
-                            attestation_request: Some(AttestationRequest::Passport),
-                        })
-                        .await?;
-
-                    let token = match &response.attestation_info {
-                        Some(ServerAttestationInfo::Passport {
-                            attestation_result,
-                            as_provider,
-                        }) => {
-                            let token = TngToken::from_wire(
-                                ProviderType::from_optional_wire(*as_provider),
-                                attestation_result.clone(),
-                            )?;
-
-                            let userdata = ServerUserData {
-                                // The challenge_token is not required to be check here, since it is already checked by attestation service. So that we skip the comparesion of challenge_token here.
-                                challenge_token: None,
-                                hpke_key_config: response.hpke_key_config.clone(),
-                            }
-                            .to_claims()?;
-
-                            verifier
-                                .verify_evidence(&token, &ReportData::Claims(userdata))
-                                .await?;
-                            token
-                        }
-                        Some(ServerAttestationInfo::BackgroundCheck { .. }) => {
-                            bail!("Passport model is expected but got background check attestation from server")
-                        }
-                        None => bail!("Missing attestation info from server"),
-                    };
-
-                    (response.hpke_key_config, Some(token))
+                let response = self
+                    .get_hpke_configuration(KeyConfigRequest {
+                        proposals: proposals.clone(),
+                    })
+                    .await?;
+                let info = response
+                    .attestation_info
+                    .context("peer did not attest (version mismatch?)")?;
+                let (model, provider) = info.key();
+                let userdata = ServerUserData {
+                    challenge_token: find_proposal(&proposals, model, provider)?
+                        .challenge_token()
+                        .map(str::to_owned),
+                    hpke_key_config: response.hpke_key_config.clone(),
                 }
-                Some(VerifyContext::BackgroundCheck {
-                    converter,
-                    verifier,
-                    ..
-                }) => {
-                    // fetch a challenge token from attestation service
-                    let challenge_token = converter.get_nonce().await?;
+                .to_claims()?;
 
-                    // Request hpke configuration for server
-                    let response = self
-                        .get_hpke_configuration(KeyConfigRequest {
-                            attestation_request: Some(AttestationRequest::BackgroundCheck {
-                                challenge_token: challenge_token.clone(),
-                            }),
-                        })
-                        .await?;
+                let token = match (info, verify_set.entry(model, provider)?) {
+                    (
+                        ServerAttestationInfo::Passport {
+                            attestation_result, ..
+                        },
+                        VerifyContext::Passport { verifier },
+                    ) => {
+                        let token = TngToken::from_wire(provider, attestation_result)?;
+                        verifier
+                            .verify_evidence(&token, &ReportData::Claims(userdata))
+                            .await?;
+                        token
+                    }
+                    (
+                        ServerAttestationInfo::BackgroundCheck { evidence, .. },
+                        VerifyContext::BackgroundCheck {
+                            converter,
+                            verifier,
+                        },
+                    ) => {
+                        let evidence = TngEvidence::deserialize_from_json(provider, evidence)?;
+                        let token = converter.convert(&evidence).await?;
+                        verifier
+                            .verify_evidence(&token, &ReportData::Claims(userdata))
+                            .await?;
+                        token
+                    }
+                    _ => bail!("verifier entry does not match the server's attestation model"),
+                };
 
-                    let token = match response.attestation_info {
-                        Some(ServerAttestationInfo::BackgroundCheck {
-                            evidence,
-                            aa_provider,
-                        }) => {
-                            let evidence = TngEvidence::deserialize_from_json(
-                                ProviderType::from_optional_wire(aa_provider),
-                                evidence,
-                            )?;
-                            let token = converter.convert(&evidence).await?;
-
-                            let userdata = ServerUserData {
-                                challenge_token: Some(challenge_token),
-                                hpke_key_config: response.hpke_key_config.clone(),
-                            }
-                            .to_claims()?;
-
-                            verifier
-                                .verify_evidence(&token, &ReportData::Claims(userdata))
-                                .await?;
-                            token
-                        }
-                        Some(ServerAttestationInfo::Passport { .. }) => {
-                            bail!("Background check model is expected but got passport attestation from server")
-                        }
-                        None => bail!("Missing attestation info from server"),
-                    };
-
-                    (response.hpke_key_config, Some(token))
-                }
-                // No verification required
-                None => {
-                    // Request hpke configuration for server
-                    let response = self
-                        .get_hpke_configuration(KeyConfigRequest {
-                            attestation_request: None,
-                        })
-                        .await?;
-                    (response.hpke_key_config, None)
-                }
+                (response.hpke_key_config, Some((model, token)))
+            }
+            None => {
+                let response = self
+                    .get_hpke_configuration(KeyConfigRequest::default())
+                    .await?;
+                (response.hpke_key_config, None)
             }
         };
 
@@ -334,9 +305,9 @@ impl OHttpClientInner {
         );
 
         let server_attestation_result = match token {
-            Some(token) => {
+            Some((model, token)) => {
                 expire = std::cmp::min(expire, Expire::from_timestamp(token.exp()?)?);
-                Some(AttestationResult::from_token(token))
+                Some(AttestationResult::from_token(model, token))
             }
             None => None,
         };
@@ -410,8 +381,9 @@ impl OHttpClientInner {
                             .await?
                     }
                     AttestContext::BackgroundCheck { attester, .. } => {
-                        let AttestationChallengeResponse { challenge_token } =
-                            self.background_check_attestation_challenge().await?;
+                        let AttestationChallengeResponse { challenge_token } = self
+                            .background_check_attestation_challenge(attester.provider_type())
+                            .await?;
 
                         let userdata = ClientUserData {
                             challenge_token: Some(challenge_token),
@@ -423,12 +395,9 @@ impl OHttpClientInner {
 
                         let AttestationVerifyResponse {
                             attestation_result,
-                            as_provider,
+                            provider,
                         } = self.background_check_verify_attestation(evidence).await?;
-                        TngToken::from_wire(
-                            ProviderType::from_optional_wire(as_provider),
-                            attestation_result,
-                        )?
+                        TngToken::from_wire(provider, attestation_result)?
                     }
                 };
 
@@ -439,7 +408,8 @@ impl OHttpClientInner {
                     ClientAuth::AttestedPublicKey(AttestedPublicKey {
                         attestation_result: token.serialize_to_wire_str()?,
                         pk_s,
-                        as_provider: token.provider_type().as_str().to_string(),
+                        provider: token.provider_type().as_str().to_string(),
+                        model: attest_ctx.proposal_key().0.as_str().to_string(),
                     }),
                     token_expire,
                 )
@@ -709,12 +679,14 @@ impl OHttpClientInner {
     /// It is used specifically in the "Server verification Client + background check model" scenario.
     pub async fn background_check_attestation_challenge(
         &self,
+        provider: ProviderType,
     ) -> Result<AttestationChallengeResponse, TngError> {
         let url = self.base_url.clone();
 
         let result: AttestationChallengeResponse = self
             .http_client
             .get(url)
+            .query(&AttestationChallengeQuery { provider })
             .headers(self.forward_headers.clone())
             .header(OhttpApi::HEADER_NAME, OhttpApi::BACKGROUND_CHECK_CHALLENGE)
             .send()
@@ -745,7 +717,7 @@ impl OHttpClientInner {
             evidence: evidence
                 .serialize_to_json()
                 .map_err(|e| TngError::ClientGetBackgroundCheckResultFaild(e.into()))?,
-            aa_provider: Some(evidence.provider_type()),
+            provider: evidence.provider_type(),
         };
 
         let result: AttestationVerifyResponse = self

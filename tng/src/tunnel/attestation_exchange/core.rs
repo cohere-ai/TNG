@@ -2,100 +2,17 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use again::RetryPolicy;
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use rats_cert::tee::claims::Claims;
-use rats_cert::tee::{GenericAttester, GenericConverter, ReportData};
+use rats_cert::tee::{GenericAttester, ReportData};
 
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
 use crate::tunnel::utils::maybe_cached::Expire;
 
-use super::claims::{
-    background_check_claims, passport_attester_claims, BackgroundCheckExpectation,
-    PassportExpectation,
-};
-use super::pb::{request, response, BackgroundCheck, Evidence, Passport, Request, Response, Token};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VerifyMode {
-    BackgroundCheck,
-    Passport,
-    None,
-}
-
-/// Per-connection state: the nonce issued for this connection, if any, is retained until convert.
-pub struct ExchangeState {
-    verify_mode: VerifyMode,
-    issued_nonce: Option<String>,
-}
-
-impl ExchangeState {
-    pub fn new(verify_mode: VerifyMode) -> Self {
-        Self {
-            verify_mode,
-            issued_nonce: None,
-        }
-    }
-
-    pub async fn prepare_request<C>(&mut self, converter: Option<&C>) -> Result<Request>
-    where
-        C: ChallengeSource + ?Sized,
-    {
-        match self.verify_mode {
-            VerifyMode::BackgroundCheck => {
-                let converter = converter.context("background-check verifier has no converter")?;
-                let nonce = converter.get_nonce().await?;
-                if nonce.is_empty() {
-                    bail!("background-check converter returned empty nonce");
-                }
-                let req = Request {
-                    body: Some(request::Body::BackgroundCheck(BackgroundCheck {
-                        nonce: nonce.as_bytes().to_vec(),
-                    })),
-                };
-                self.issued_nonce = Some(nonce);
-                Ok(req)
-            }
-            VerifyMode::Passport => Ok(Request {
-                body: Some(request::Body::Passport(Passport {})),
-            }),
-            VerifyMode::None => Ok(none_request()),
-        }
-    }
-
-    #[cfg(test)]
-    pub fn issued_nonce(&self) -> Option<&str> {
-        self.issued_nonce.as_deref()
-    }
-
-    pub fn expected_claims(
-        &self,
-        peer_spki_der: &[u8],
-        exporter: &[u8],
-    ) -> Result<rats_cert::tee::claims::Claims> {
-        match self.verify_mode {
-            VerifyMode::BackgroundCheck => {
-                let nonce = self
-                    .issued_nonce
-                    .as_deref()
-                    .context("background-check verifier has no issued nonce")?;
-                BackgroundCheckExpectation {
-                    peer_spki_der,
-                    issued_nonce: nonce,
-                    exporter,
-                }
-                .to_claims()
-            }
-            VerifyMode::Passport => PassportExpectation { peer_spki_der }.to_claims(),
-            VerifyMode::None => bail!("not verifying; no expected claims"),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-pub trait ChallengeSource: Send + Sync {
-    async fn get_nonce(&self) -> Result<String>;
-}
+use super::claims::{background_check_claims, passport_attester_claims};
+use super::pb::{response, Evidence, Response, Token};
+use crate::tunnel::challenge::ChallengeSource;
 
 #[async_trait::async_trait]
 pub trait EvidenceProducer: Send + Sync {
@@ -111,14 +28,14 @@ pub trait TokenProducer: Send + Sync {
 pub trait ExchangeVerifier: Send + Sync {
     async fn verify_evidence(
         &self,
-        provider: &str,
+        provider: ProviderType,
         json: &str,
         expected: Claims,
     ) -> Result<AttestationResult>;
 
     async fn verify_token(
         &self,
-        provider: &str,
+        provider: ProviderType,
         jwt: &str,
         expected: Claims,
     ) -> Result<AttestationResult>;
@@ -126,12 +43,6 @@ pub trait ExchangeVerifier: Send + Sync {
 
 /// Sent in place of the local error chain, which must not reach an unverified peer.
 pub const ATTESTATION_UNAVAILABLE: &str = "attestation unavailable";
-
-pub fn none_request() -> Request {
-    Request {
-        body: Some(request::Body::None(super::pb::None {})),
-    }
-}
 
 pub fn ack_response() -> Response {
     Response {
@@ -168,18 +79,14 @@ pub fn token_response(provider: impl Into<String>, jwt: impl Into<String>) -> Re
 pub async fn produce_background_check_evidence<P: EvidenceProducer + ?Sized>(
     producer: &P,
     own_spki_der: &[u8],
-    nonce: &[u8],
+    challenge_token: &str,
     exporter: &[u8],
     max_retries: usize,
 ) -> Result<Response> {
-    if nonce.is_empty() {
+    if challenge_token.is_empty() {
         return Ok(error_response("missing nonce"));
     }
-    let token = match std::str::from_utf8(nonce) {
-        Ok(t) => t,
-        Err(_) => return Ok(error_response("challenge_token is not valid UTF-8")),
-    };
-    let claims = background_check_claims(own_spki_der, token, exporter)?;
+    let claims = background_check_claims(own_spki_der, challenge_token, exporter)?;
     match produce_evidence_with_retry(producer, claims, max_retries).await {
         Ok(evidence) => Ok(evidence_response(evidence.provider, evidence.json)),
         Err(e) => {
@@ -325,18 +232,6 @@ pub fn produced_error_reason(response: &Response) -> Option<&str> {
 }
 
 #[async_trait::async_trait]
-impl<C> ChallengeSource for C
-where
-    C: GenericConverter<Nonce = String> + Send + Sync,
-{
-    async fn get_nonce(&self) -> Result<String> {
-        GenericConverter::get_nonce(self)
-            .await
-            .map_err(|e| anyhow!("converter errors while fetching the nonce: {e}"))
-    }
-}
-
-#[async_trait::async_trait]
 impl<A> EvidenceProducer for A
 where
     A: GenericAttester<Evidence = TngEvidence> + Send + Sync,
@@ -369,7 +264,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::claims::{expected_subset_of, CLAIM_CHALLENGE_TOKEN, CLAIM_TLS_BINDER};
+    use super::super::claims::{CLAIM_CHALLENGE_TOKEN, CLAIM_TLS_BINDER};
     use super::*;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
@@ -386,29 +281,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn issued_nonce_is_the_value_handed_to_convert() {
-        let conv = RecordingConverter {
-            nonce: "as-nonce-1".into(),
-        };
-        let mut state = ExchangeState::new(VerifyMode::BackgroundCheck);
-        let req = state.prepare_request(Some(&conv)).await.unwrap();
-        match req.body {
-            Some(request::Body::BackgroundCheck(bc)) => {
-                assert_eq!(bc.nonce, b"as-nonce-1");
-            }
-            other => panic!("expected background_check, got {other:?}"),
-        }
-        assert_eq!(state.issued_nonce(), Some("as-nonce-1"));
-        let expected = state
-            .expected_claims(b"spki", b"0123456789abcdef0123456789abcdef")
-            .unwrap();
-        let actual =
-            background_check_claims(b"spki", "as-nonce-1", b"0123456789abcdef0123456789abcdef")
-                .unwrap();
-        assert!(expected_subset_of(&expected, &actual));
-    }
-
     struct CountingEvidenceProducer {
         count: AtomicUsize,
         fail_times: usize,
@@ -420,7 +292,7 @@ mod tests {
         async fn produce(&self, claims: Claims) -> Result<Evidence> {
             let n = self.count.fetch_add(1, Ordering::SeqCst);
             if n < self.fail_times {
-                bail!("attester down");
+                anyhow::bail!("attester down");
             }
             *self.claims.lock().unwrap() = Some(claims.clone());
             Ok(Evidence {
@@ -458,7 +330,7 @@ mod tests {
         async fn produce(&self, claims: Claims) -> Result<TngToken> {
             let n = self.count.fetch_add(1, Ordering::SeqCst);
             if n < self.fail_times {
-                bail!("attester down");
+                anyhow::bail!("attester down");
             }
             *self.claims.lock().unwrap() = Some(claims);
             TngToken::from_wire(ProviderType::Coco, self.jwt.clone())
@@ -553,7 +425,7 @@ mod tests {
         let evidence = produce_background_check_evidence(
             &producer,
             b"spki",
-            b"nonce",
+            "nonce",
             b"0123456789abcdef0123456789abcdef",
             0,
         )
@@ -581,19 +453,5 @@ mod tests {
             produced_error_reason(&passport),
             Some(ATTESTATION_UNAVAILABLE)
         );
-    }
-
-    #[tokio::test]
-    async fn prepare_request_on_passport_sends_no_nonce() {
-        let mut state = ExchangeState::new(VerifyMode::Passport);
-        let req = state
-            .prepare_request(None::<&RecordingConverter>)
-            .await
-            .unwrap();
-        match req.body {
-            Some(request::Body::Passport(_)) => {}
-            other => panic!("expected passport, got {other:?}"),
-        }
-        assert!(state.issued_nonce().is_none());
     }
 }

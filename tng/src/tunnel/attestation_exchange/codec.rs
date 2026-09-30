@@ -74,7 +74,8 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::tunnel::attestation_exchange::pb::{
-        request, response, BackgroundCheck, Evidence, Passport, Request, Response, Token,
+        attest_proposal, response, AttestProposal, BackgroundCheck, Evidence, Passport, Request,
+        Response, Token,
     };
 
     async fn round_trip_request(sent: Request) -> Request {
@@ -91,27 +92,25 @@ mod tests {
 
     #[tokio::test]
     async fn request_and_response_round_trips() {
-        let none = Request {
-            body: Some(request::Body::None(pb::None {})),
-        };
+        let none = Request::default();
         assert_eq!(round_trip_request(none.clone()).await, none);
 
-        let nonce = br#"{"val":"abc+/=","iat":1}"#;
-        let got = round_trip_request(Request {
-            body: Some(request::Body::BackgroundCheck(BackgroundCheck {
-                nonce: nonce.to_vec(),
-            })),
-        })
-        .await;
-        match got.body {
-            Some(request::Body::BackgroundCheck(bc)) => assert_eq!(bc.nonce, nonce),
-            other => panic!("expected background_check, got {other:?}"),
-        }
-
-        let passport = Request {
-            body: Some(request::Body::Passport(Passport {})),
+        let proposals = Request {
+            proposals: vec![
+                AttestProposal {
+                    kind: Some(attest_proposal::Kind::BackgroundCheck(BackgroundCheck {
+                        provider: "ita".into(),
+                        challenge_token: r#"{"val":"abc+/=","iat":1}"#.into(),
+                    })),
+                },
+                AttestProposal {
+                    kind: Some(attest_proposal::Kind::Passport(Passport {
+                        provider: "coco".into(),
+                    })),
+                },
+            ],
         };
-        assert_eq!(round_trip_request(passport.clone()).await, passport);
+        assert_eq!(round_trip_request(proposals.clone()).await, proposals);
 
         match round_trip_response(Response {
             body: Some(response::Body::Evidence(Evidence {

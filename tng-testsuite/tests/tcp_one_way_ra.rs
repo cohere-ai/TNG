@@ -46,12 +46,21 @@ async fn test() -> Result<()> {
                                     "port": 20001
                                 }
                             },
-                            "verify": {
-                                "as_addr": "http://192.168.1.254:8080/",
-                                "policy_ids": [
-                                    "default"
-                                ]
-                            }
+                            "verify": [
+                                {
+                                    "model": "passport",
+                                    "as_addr": "http://192.168.1.254:8080/",
+                                    "policy_ids": [
+                                        "default"
+                                    ]
+                                },
+                                {
+                                    "as_addr": "http://192.168.1.254:8080/",
+                                    "policy_ids": [
+                                        "default"
+                                    ]
+                                }
+                            ]
                         }
                     ]
                 }

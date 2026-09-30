@@ -105,6 +105,9 @@ pub enum TngError {
     #[error("Invalid request payload: {0}")]
     InvalidRequestPayload(#[from] axum::extract::rejection::JsonRejection),
 
+    #[error("Invalid request query: {0}")]
+    InvalidRequestQuery(#[from] axum::extract::rejection::QueryRejection),
+
     #[error("Invalid x-tng-ohttp-api value")]
     InvalidOhttpApiHeaderValue,
 
@@ -151,6 +154,7 @@ impl IntoResponse for TngError {
         let status = match &self {
             // Client errors (4xx)
             TngError::InvalidRequestPayload(..) => StatusCode::BAD_REQUEST,
+            TngError::InvalidRequestQuery(..) => StatusCode::BAD_REQUEST,
             TngError::RejectNonTngRequest => StatusCode::FORBIDDEN,
             TngError::InvalidOhttpApiHeaderValue => StatusCode::BAD_REQUEST,
             TngError::InvalidHttpRequest => StatusCode::BAD_REQUEST,

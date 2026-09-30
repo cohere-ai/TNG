@@ -2,15 +2,16 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
-use super::provider::TngToken;
+use super::proposal::Model;
+use super::provider::{ProviderType, TngToken};
 
 /// The result of remote attestation.
 ///
 /// This struct is cheap to clone.
 #[derive(Clone)]
 pub struct AttestationResult {
+    model: Model,
     /// Use Arc to avoid cloning the claims to save memory.
-    #[allow(unused)]
     token: Arc<TngToken>,
 }
 
@@ -32,9 +33,15 @@ impl std::fmt::Debug for AttestationResult {
 }
 
 impl AttestationResult {
-    pub fn from_token(token: TngToken) -> Self {
+    pub fn from_token(model: Model, token: TngToken) -> Self {
         Self {
+            model,
             token: Arc::new(token),
         }
+    }
+
+    /// The `(model, provider)` of the verifier entry that accepted this result.
+    pub fn key(&self) -> (Model, ProviderType) {
+        (self.model, self.token.provider_type())
     }
 }

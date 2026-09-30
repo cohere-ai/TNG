@@ -108,7 +108,7 @@ pub mod tests {
                     ra_args: RaArgsUnchecked {
                         no_ra: false,
                         attest: None,
-                        verify: Some(VerifyArgs::BackgroundCheck {
+                        verify: Some(vec![VerifyArgs::BackgroundCheck {
                             converter: ConverterArgs::Coco(CocoConverterArgs::Restful {
                                 as_addr: "http://127.0.0.1:8080/".to_owned(),
                                 policy_ids: vec!["default".to_owned()],
@@ -121,7 +121,7 @@ pub mod tests {
                                 as_headers: Default::default(),
                                 trusted_certs_paths: Some(vec!["/tmp/as.pem".to_owned()]),
                             }),
-                        }),
+                        }]),
                     },
                 }
             }],
