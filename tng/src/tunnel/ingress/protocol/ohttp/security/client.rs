@@ -49,7 +49,9 @@ use crate::tunnel::ohttp::protocol::userdata::ClientUserData;
 #[cfg(unix)]
 use crate::tunnel::ra_context::AttestContext;
 #[cfg(unix)]
-use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
+use crate::tunnel::service_metrics::{
+    AttestationModel, AttestationOperation, AttestationProtocol, ClientAttestationPhase,
+};
 use crate::{
     error::CheckErrorResponse as _,
     tunnel::{
@@ -220,6 +222,15 @@ impl OHttpClientInner {
             ctx.attestation_metrics()
                 .start(AttestationOperation::Verify, AttestationProtocol::Ohttp)
         });
+        #[cfg(unix)]
+        let mut client_attestation_attempt = self.ra_context.verify_context().map(|ctx| {
+            let model = match ctx {
+                VerifyContext::Passport { .. } => AttestationModel::Passport,
+                VerifyContext::BackgroundCheck { .. } => AttestationModel::BackgroundCheck,
+            };
+            ctx.attestation_metrics()
+                .start_client_attestation(model, AttestationProtocol::Ohttp)
+        });
 
         let (server_key_config, token) = {
             let verify_context = self.ra_context.verify_context();
@@ -227,21 +238,44 @@ impl OHttpClientInner {
             match verify_context {
                 Some(VerifyContext::Passport { verifier, .. }) => {
                     // Request hpke configuration for server
-                    let response = self
-                        .get_hpke_configuration(KeyConfigRequest {
-                            attestation_request: Some(AttestationRequest::Passport),
-                        })
-                        .await?;
+                    let response = {
+                        #[cfg(unix)]
+                        let phase_attempt = client_attestation_attempt.as_mut().map(|attempt| {
+                            attempt.start_phase(ClientAttestationPhase::KeyConfigFetch)
+                        });
+                        let response = self
+                            .get_hpke_configuration(KeyConfigRequest {
+                                attestation_request: Some(AttestationRequest::Passport),
+                            })
+                            .await?;
+                        #[cfg(unix)]
+                        if let Some(phase_attempt) = phase_attempt {
+                            phase_attempt.mark_succeeded();
+                        }
+                        response
+                    };
 
                     let token = match &response.attestation_info {
                         Some(ServerAttestationInfo::Passport {
                             attestation_result,
                             as_provider,
                         }) => {
-                            let token = TngToken::from_wire(
-                                ProviderType::from_optional_wire(*as_provider),
-                                attestation_result.clone(),
-                            )?;
+                            let token = {
+                                #[cfg(unix)]
+                                let phase_attempt =
+                                    client_attestation_attempt.as_mut().map(|attempt| {
+                                        attempt.start_phase(ClientAttestationPhase::TokenDecode)
+                                    });
+                                let token = TngToken::from_wire(
+                                    ProviderType::from_optional_wire(*as_provider),
+                                    attestation_result.clone(),
+                                )?;
+                                #[cfg(unix)]
+                                if let Some(phase_attempt) = phase_attempt {
+                                    phase_attempt.mark_succeeded();
+                                }
+                                token
+                            };
 
                             let userdata = ServerUserData {
                                 // The challenge_token is not required to be check here, since it is already checked by attestation service. So that we skip the comparesion of challenge_token here.
@@ -250,9 +284,20 @@ impl OHttpClientInner {
                             }
                             .to_claims()?;
 
-                            verifier
-                                .verify_evidence(&token, &ReportData::Claims(userdata))
-                                .await?;
+                            {
+                                #[cfg(unix)]
+                                let phase_attempt =
+                                    client_attestation_attempt.as_mut().map(|attempt| {
+                                        attempt.start_phase(ClientAttestationPhase::TokenVerify)
+                                    });
+                                verifier
+                                    .verify_evidence(&token, &ReportData::Claims(userdata))
+                                    .await?;
+                                #[cfg(unix)]
+                                if let Some(phase_attempt) = phase_attempt {
+                                    phase_attempt.mark_succeeded();
+                                }
+                            }
                             token
                         }
                         Some(ServerAttestationInfo::BackgroundCheck { .. }) => {
@@ -269,27 +314,74 @@ impl OHttpClientInner {
                     ..
                 }) => {
                     // fetch a challenge token from attestation service
-                    let challenge_token = converter.get_nonce().await?;
+                    let challenge_token = {
+                        #[cfg(unix)]
+                        let phase_attempt = client_attestation_attempt
+                            .as_mut()
+                            .map(|attempt| attempt.start_phase(ClientAttestationPhase::Challenge));
+                        let challenge_token = converter.get_nonce().await?;
+                        #[cfg(unix)]
+                        if let Some(phase_attempt) = phase_attempt {
+                            phase_attempt.mark_succeeded();
+                        }
+                        challenge_token
+                    };
 
                     // Request hpke configuration for server
-                    let response = self
-                        .get_hpke_configuration(KeyConfigRequest {
-                            attestation_request: Some(AttestationRequest::BackgroundCheck {
-                                challenge_token: challenge_token.clone(),
-                            }),
-                        })
-                        .await?;
+                    let response = {
+                        #[cfg(unix)]
+                        let phase_attempt = client_attestation_attempt.as_mut().map(|attempt| {
+                            attempt.start_phase(ClientAttestationPhase::KeyConfigFetch)
+                        });
+                        let response = self
+                            .get_hpke_configuration(KeyConfigRequest {
+                                attestation_request: Some(AttestationRequest::BackgroundCheck {
+                                    challenge_token: challenge_token.clone(),
+                                }),
+                            })
+                            .await?;
+                        #[cfg(unix)]
+                        if let Some(phase_attempt) = phase_attempt {
+                            phase_attempt.mark_succeeded();
+                        }
+                        response
+                    };
 
                     let token = match response.attestation_info {
                         Some(ServerAttestationInfo::BackgroundCheck {
                             evidence,
                             aa_provider,
                         }) => {
-                            let evidence = TngEvidence::deserialize_from_json(
-                                ProviderType::from_optional_wire(aa_provider),
-                                evidence,
-                            )?;
-                            let token = converter.convert(&evidence).await?;
+                            let evidence = {
+                                #[cfg(unix)]
+                                let phase_attempt =
+                                    client_attestation_attempt.as_mut().map(|attempt| {
+                                        attempt.start_phase(ClientAttestationPhase::EvidenceDecode)
+                                    });
+                                let evidence = TngEvidence::deserialize_from_json(
+                                    ProviderType::from_optional_wire(aa_provider),
+                                    evidence,
+                                )?;
+                                #[cfg(unix)]
+                                if let Some(phase_attempt) = phase_attempt {
+                                    phase_attempt.mark_succeeded();
+                                }
+                                evidence
+                            };
+
+                            let token = {
+                                #[cfg(unix)]
+                                let phase_attempt =
+                                    client_attestation_attempt.as_mut().map(|attempt| {
+                                        attempt.start_phase(ClientAttestationPhase::EvidenceConvert)
+                                    });
+                                let token = converter.convert(&evidence).await?;
+                                #[cfg(unix)]
+                                if let Some(phase_attempt) = phase_attempt {
+                                    phase_attempt.mark_succeeded();
+                                }
+                                token
+                            };
 
                             let userdata = ServerUserData {
                                 challenge_token: Some(challenge_token),
@@ -297,9 +389,20 @@ impl OHttpClientInner {
                             }
                             .to_claims()?;
 
-                            verifier
-                                .verify_evidence(&token, &ReportData::Claims(userdata))
-                                .await?;
+                            {
+                                #[cfg(unix)]
+                                let phase_attempt =
+                                    client_attestation_attempt.as_mut().map(|attempt| {
+                                        attempt.start_phase(ClientAttestationPhase::TokenVerify)
+                                    });
+                                verifier
+                                    .verify_evidence(&token, &ReportData::Claims(userdata))
+                                    .await?;
+                                #[cfg(unix)]
+                                if let Some(phase_attempt) = phase_attempt {
+                                    phase_attempt.mark_succeeded();
+                                }
+                            }
                             token
                         }
                         Some(ServerAttestationInfo::Passport { .. }) => {
@@ -325,6 +428,10 @@ impl OHttpClientInner {
 
         #[cfg(unix)]
         if let Some(attempt) = attestation_attempt {
+            attempt.mark_succeeded();
+        }
+        #[cfg(unix)]
+        if let Some(attempt) = client_attestation_attempt {
             attempt.mark_succeeded();
         }
 

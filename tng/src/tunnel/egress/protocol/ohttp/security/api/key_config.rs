@@ -8,9 +8,10 @@ use base64::prelude::BASE64_STANDARD;
 use base64::Engine as _;
 use itertools::Itertools;
 use ohttp::KeyConfig;
-use rats_cert::tee::{AttesterPipeline, GenericAttester as _, GenericConverter as _, ReportData};
+use rats_cert::tee::{GenericAttester as _, GenericConverter as _, ReportData};
 
 use crate::error::TngError;
+use crate::tunnel::attestation_metrics::AttestationModel;
 use crate::tunnel::egress::protocol::ohttp::security::api::OhttpServerApi;
 use crate::tunnel::egress::protocol::ohttp::security::context::TngStreamContext;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::KeyManager;
@@ -47,45 +48,55 @@ impl OhttpServerApi {
                 Some(Json(KeyConfigRequest {
                     attestation_request: Some(AttestationRequest::Passport),
                 })),
-            ) => self
-                .passport_cache
-                .read()
-                .await
-                .get_or_try_init(|| async {
-                    let ra_context = self.ra_context.clone();
-                    let key_manager = Arc::clone(&self.key_manager);
-                    let payload = Arc::new(payload);
+            ) => {
+                let passport_cache = self.passport_cache.read().await;
+                let cache_hit = passport_cache.get().is_some();
+                tracing::info!(
+                    target: "tng::attestation",
+                    event = "passport_cache_lookup",
+                    cache_hit,
+                );
 
-                    let refresh_strategy = attest_ctx.refresh_strategy();
+                passport_cache
+                    .get_or_try_init(|| async {
+                        let ra_context = self.ra_context.clone();
+                        let key_manager = Arc::clone(&self.key_manager);
+                        let payload = Arc::new(payload);
 
-                    MaybeCached::new(context.runtime.clone(), refresh_strategy, move || {
-                        Box::pin({
-                            tracing::info!("Regenerating passport response");
+                        let refresh_strategy = attest_ctx.refresh_strategy();
 
-                            let ra_context = ra_context.clone();
-                            let key_manager = key_manager.clone();
-                            let payload = payload.clone();
+                        MaybeCached::new(context.runtime.clone(), refresh_strategy, move || {
+                            Box::pin({
+                                tracing::info!(
+                                    target: "tng::attestation",
+                                    event = "passport_cache_regeneration_started",
+                                );
 
-                            async move {
-                                let response = Self::get_hpke_configuration_internal(
-                                    &ra_context,
-                                    key_manager.as_ref(),
-                                    payload.as_ref().clone(),
-                                )
-                                .await?;
+                                let ra_context = ra_context.clone();
+                                let key_manager = key_manager.clone();
+                                let payload = payload.clone();
 
-                                Ok((response, Expire::NoExpire))
-                            }
-                        }) as Pin<Box<_>>
+                                async move {
+                                    let response = Self::get_hpke_configuration_internal(
+                                        &ra_context,
+                                        key_manager.as_ref(),
+                                        payload.as_ref().clone(),
+                                    )
+                                    .await?;
+
+                                    Ok((response, Expire::NoExpire))
+                                }
+                            }) as Pin<Box<_>>
+                        })
+                        .await
                     })
+                    .await?
+                    .get_latest()
                     .await
-                })
-                .await?
-                .get_latest()
-                .await
-                .map(|response: Arc<KeyConfigResponse>| {
-                    IntoResponse::into_response(Json(response))
-                }),
+                    .map(|response: Arc<KeyConfigResponse>| {
+                        IntoResponse::into_response(Json(response))
+                    })
+            }
             // Otherwise, we generate a new response
             _ => Self::get_hpke_configuration_internal(
                 &self.ra_context,
@@ -140,17 +151,25 @@ impl OhttpServerApi {
                         // fetch a challenge token from attestation service
                         let challenge_token = converter.get_nonce().await?;
 
-                        let attester_pipeline = AttesterPipeline::new(attester, converter);
-
                         let userdata = ServerUserData {
                             challenge_token: Some(challenge_token),
                             hpke_key_config: hpke_key_config.clone(),
                         }
                         .to_claims()?;
 
-                        let token = attester_pipeline
+                        let attempt = ra_context.attestation_metrics().map(|metrics| {
+                            metrics.start_evidence(
+                                AttestationModel::Passport,
+                                AttestationProtocol::Ohttp,
+                            )
+                        });
+                        let evidence = attester
                             .get_evidence(&ReportData::Claims(userdata))
                             .await?;
+                        if let Some(attempt) = attempt {
+                            attempt.mark_succeeded();
+                        }
+                        let token = converter.convert(&evidence).await?;
                         let as_provider = token.provider_type();
                         KeyConfigResponse {
                             hpke_key_config,
@@ -170,9 +189,18 @@ impl OhttpServerApi {
                         }
                         .to_claims()?;
 
+                        let attempt = ra_context.attestation_metrics().map(|metrics| {
+                            metrics.start_evidence(
+                                AttestationModel::BackgroundCheck,
+                                AttestationProtocol::Ohttp,
+                            )
+                        });
                         let tng_evidence = attester
                             .get_evidence(&ReportData::Claims(userdata))
                             .await?;
+                        if let Some(attempt) = attempt {
+                            attempt.mark_succeeded();
+                        }
                         let aa_provider = tng_evidence.provider_type();
                         let evidence = tng_evidence.serialize_to_json()?;
 

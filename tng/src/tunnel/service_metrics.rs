@@ -9,7 +9,8 @@ use crate::observability::metric::{
 };
 
 pub(crate) use super::attestation_metrics::{
-    AttestationMetrics, AttestationOperation, AttestationProtocol,
+    AttestationMetrics, AttestationModel, AttestationOperation, AttestationProtocol,
+    ClientAttestationPhase,
 };
 
 pub struct ServiceMetricsCreator(Arc<dyn MeterProvider + Send + Sync>);
