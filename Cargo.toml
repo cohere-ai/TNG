@@ -125,6 +125,9 @@ serial_test = "3.2.0"
 sha2 = "0.10.8"
 shadow-rs = {version = "=1.0.0", default-features = false}
 signature = "2.2.0"
+sigstore-trust-root = {version = "0.14.0", default-features = false}
+sigstore-types = "0.14.0"
+sigstore-verify = {version = "0.14.0", default-features = false}
 socket2 = {version = "0.5.10", features = ["all"]}# `all` gates set_mark() and original_dst(), used by the netfilter transport
 spin = {version = "0.10.0", default-features = false, features = ["mutex", "spin_mutex"]}
 strum = "0.27.1"
@@ -161,6 +164,7 @@ wasm-bindgen-futures = "0.4.50"
 wasm-streams = "0.4.2"
 web-sys = {version = "0.3.77"}
 web-time = "1.1.0"
+webpki-root-certs = "1.0.9"
 which = "7.0.3"
 ws_stream_tungstenite = "0.13.0"
 ws_stream_wasm = "=0.7.5"

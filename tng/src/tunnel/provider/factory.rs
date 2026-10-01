@@ -1,5 +1,7 @@
 #[cfg(feature = "__coco-builtin-as")]
 use std::path::Path;
+#[cfg(feature = "__coco-builtin-as")]
+use std::sync::Arc;
 
 #[cfg(feature = "__coco-builtin-as")]
 use anyhow::Context as _;
@@ -13,6 +15,8 @@ use rats_cert::tee::coco::converter::restful::CocoRestfulConverter;
 use rats_cert::tee::coco::converter::CocoConverter;
 use rats_cert::tee::coco::verifier::remote::CocoRemoteVerifier;
 
+#[cfg(feature = "__coco-builtin-as")]
+use crate::config::ra::DEFAULT_POLICY_DIR;
 #[cfg(unix)]
 use crate::config::ra::{AttesterArgs, CocoAttesterArgs};
 use crate::config::ra::{CocoConverterArgs, CocoVerifierArgs, ConverterArgs, VerifierArgs};
@@ -20,6 +24,8 @@ use crate::config::ra::{CocoConverterArgs, CocoVerifierArgs, ConverterArgs, Veri
 #[cfg(unix)]
 use super::attester::TngAttester;
 use super::converter::TngConverter;
+#[cfg(feature = "__coco-builtin-as")]
+use super::policy_source::PolicySource;
 use super::verifier::TngVerifier;
 
 /// Instantiate a `TngAttester` from config. Dispatches on provider, then sub-type.
@@ -41,6 +47,7 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
         #[cfg(feature = "__coco-builtin-as")]
         ConverterArgs::CocoBuiltin {
             policy_dir,
+            policy_source,
             policy_ids,
             required_tee_classes,
             verifier_config,
@@ -52,13 +59,24 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
 
             // Read here rather than lazily: an ingress with no usable policy can verify nothing,
             // so failing now surfaces the problem at startup instead of on the first handshake.
-            let policies = rats_cert::tee::coco::converter::builtin::policy::load_from_dir(
-                Path::new(policy_dir),
-                policy_id,
-            )
-            .await?;
+            let (policies, source) = match policy_source {
+                Some(args) => {
+                    let source = PolicySource::new(args, policy_id)?;
+                    let (policies, installed) = source.fetch_initial().await?;
+                    (policies, Some((source, installed)))
+                }
+                None => {
+                    let policy_dir = policy_dir.as_deref().unwrap_or(DEFAULT_POLICY_DIR);
+                    let policies = rats_cert::tee::coco::converter::builtin::policy::load_from_dir(
+                        Path::new(policy_dir),
+                        policy_id,
+                    )
+                    .await?;
+                    (policies, None)
+                }
+            };
 
-            Ok(TngConverter::CocoBuiltin(
+            let converter = Arc::new(
                 CocoBuiltinConverter::new(
                     policy_id,
                     &policies,
@@ -66,7 +84,11 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
                     required_tee_classes,
                 )
                 .await?,
-            ))
+            );
+            if let Some((source, installed)) = source {
+                source.keep_current(installed, &converter);
+            }
+            Ok(TngConverter::CocoBuiltin(converter))
         }
         ConverterArgs::Coco(coco) => match coco {
             CocoConverterArgs::Restful {

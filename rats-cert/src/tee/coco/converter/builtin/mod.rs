@@ -18,6 +18,7 @@ use crate::tee::GenericConverter;
 
 /// Policies for the in-process service, which reads them from disk rather than from a remote one.
 pub mod policy;
+pub mod provenance;
 
 /// Length of the locally generated nonce, in bytes.
 ///
@@ -29,8 +30,9 @@ const NONCE_LEN: usize = 32;
 /// Converts [`CocoEvidence`] into a [`CocoAsToken`] using an upstream CoCo attestation
 /// service running in this process, with no remote AS involved.
 pub struct CocoBuiltinConverter {
-    /// Boxed to keep this large struct off the stack.
-    attestation_service: Box<AttestationService>,
+    /// Boxed to keep this large struct off the stack. Locked because `set_policy` needs `&mut`,
+    /// and policies can be replaced while handshakes evaluate.
+    attestation_service: tokio::sync::RwLock<Box<AttestationService>>,
 
     /// Passed to `evaluate` unsuffixed; the broker appends the TEE class per device.
     ///
@@ -80,26 +82,33 @@ impl CocoBuiltinConverter {
                 .map_err(|e| Error::CocoBuiltinAsCreateFailed(Arc::new(e)))?,
         );
 
-        for (tee_class, policy) in policies {
-            policy::validate(tee_class, policy)?;
-
-            let policy_id = format!("{policy_id}_{tee_class}");
-            // `set_policy` decodes with URL_SAFE_NO_PAD, which rejects both the `+` and `/` of the
-            // standard alphabet and its `=` padding, so encoding with the standard engine fails.
-            attestation_service
-                .set_policy(policy_id.clone(), URL_SAFE_NO_PAD.encode(policy))
-                .await
-                .map_err(|e| Error::CocoBuiltinAsSetPolicyFailed {
-                    policy_id,
-                    source: Arc::new(e),
-                })?;
-        }
+        install(&mut attestation_service, policy_id, policies).await?;
 
         Ok(Self {
-            attestation_service,
+            attestation_service: tokio::sync::RwLock::new(attestation_service),
             policy_id: policy_id.to_owned(),
             required_tee_classes: required_tee_classes.to_owned(),
         })
+    }
+
+    /// Replaces the installed policies under the same id, all classes under one lock so no
+    /// evaluation sees a mix of old and new.
+    ///
+    /// The service cannot delete a policy, so a replacement must keep every installed class.
+    pub async fn replace_policies(&self, policies: &TeeClassPolicies) -> Result<()> {
+        let mut attestation_service = self.attestation_service.write().await;
+        for tee_class in policy::TEE_CLASSES {
+            let installed = attestation_service
+                .get_policy(format!("{}_{tee_class}", self.policy_id))
+                .await
+                .is_ok();
+            if installed && !policies.contains_key(*tee_class) {
+                return Err(Error::CocoBuiltinAsPolicyClassDropped {
+                    tee_class: (*tee_class).to_owned(),
+                });
+            }
+        }
+        install(&mut attestation_service, &self.policy_id, policies).await
     }
 
     /// The id the installed policies were registered under.
@@ -121,6 +130,8 @@ impl CocoBuiltinConverter {
         // signs with.
         let signer_key = self
             .attestation_service
+            .read()
+            .await
             .get_token_signer_jwks()
             .and_then(|jwks| {
                 let [key] = <[_; 1]>::try_from(jwks.keys).map_err(|keys| {
@@ -190,6 +201,8 @@ impl GenericConverter for CocoBuiltinConverter {
 
         let token = self
             .attestation_service
+            .read()
+            .await
             .evaluate(verification_requests, vec![self.policy_id.clone()])
             .await
             .map_err(|e| Error::CocoBuiltinAsEvaluateFailed(Arc::new(e)))?;
@@ -202,6 +215,29 @@ impl GenericConverter for CocoBuiltinConverter {
         rand::thread_rng().fill_bytes(&mut buf);
         Ok(CoCoNonce::Jwt(URL_SAFE_NO_PAD.encode(buf)))
     }
+}
+
+async fn install(
+    attestation_service: &mut AttestationService,
+    policy_id: &str,
+    policies: &TeeClassPolicies,
+) -> Result<()> {
+    for (tee_class, policy) in policies {
+        policy::validate(tee_class, policy)?;
+    }
+    for (tee_class, policy) in policies {
+        let policy_id = format!("{policy_id}_{tee_class}");
+        // `set_policy` decodes with URL_SAFE_NO_PAD, which rejects both the `+` and `/` of the
+        // standard alphabet and its `=` padding, so encoding with the standard engine fails.
+        attestation_service
+            .set_policy(policy_id.clone(), URL_SAFE_NO_PAD.encode(policy))
+            .await
+            .map_err(|e| Error::CocoBuiltinAsSetPolicyFailed {
+                policy_id,
+                source: Arc::new(e),
+            })?;
+    }
+    Ok(())
 }
 
 /// Wraps `rules` in the envelope every policy needs, so only the rules differ below.
@@ -270,6 +306,8 @@ mod tests {
 
         let installed = converter
             .attestation_service
+            .read()
+            .await
             .list_policies()
             .await
             .expect("listing policies should succeed");
@@ -280,11 +318,47 @@ mod tests {
 
         let stored = converter
             .attestation_service
+            .read()
+            .await
             .get_policy(format!("{policy_id}_cpu"))
             .await
             .expect("stored policy should be readable back");
 
         assert_eq!(stored, policy(""));
+    }
+
+    /// A replacement with any invalid class must leave every class as it was.
+    #[tokio::test]
+    async fn replace_policies_swaps_all_classes_or_none() {
+        async fn stored(converter: &CocoBuiltinConverter, tee_class: &str) -> String {
+            converter
+                .attestation_service
+                .read()
+                .await
+                .get_policy(format!("{TEST_POLICY_ID}_{tee_class}"))
+                .await
+                .unwrap()
+        }
+        let converter = converter().await;
+
+        let invalid = TeeClassPolicies::from([
+            ("cpu".to_string(), policy("# new")),
+            ("gpu".to_string(), "package policy\nnot rego".to_string()),
+        ]);
+        converter.replace_policies(&invalid).await.unwrap_err();
+        assert_eq!(stored(&converter, "cpu").await, policy(""));
+
+        let dropping_gpu = TeeClassPolicies::from([("cpu".to_string(), policy("# new"))]);
+        converter.replace_policies(&dropping_gpu).await.unwrap_err();
+        assert_eq!(stored(&converter, "cpu").await, policy(""));
+
+        let valid = TeeClassPolicies::from([
+            ("cpu".to_string(), policy("# new cpu")),
+            ("gpu".to_string(), policy("# new gpu")),
+        ]);
+        converter.replace_policies(&valid).await.unwrap();
+        assert_eq!(stored(&converter, "cpu").await, policy("# new cpu"));
+        assert_eq!(stored(&converter, "gpu").await, policy("# new gpu"));
     }
 
     /// An invalid policy has to stop construction: the service stores policy bytes without parsing
