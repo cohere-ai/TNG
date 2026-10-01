@@ -709,6 +709,7 @@ When `as_provider` is set to `"coco_builtin"`, TNG appraises evidence itself usi
 
 - **`as_provider`** (string): Set to `"coco_builtin"`. The same value covers both the converter and the verifier; pairing it with a different provider on either side is rejected at startup.
 - **`policy_dir`** (string, optional, default is `"/etc/tng/policies"`): Directory the Rego policies are read from. No policy is compiled into the binary, so this directory must exist and contain a CPU policy when TNG starts, otherwise startup fails.
+- **`policy_source`** (object, optional): Fetch the policies from a signed release instead of `policy_dir`; the two are mutually exclusive. See [Policies from a signed release](#policies-from-a-signed-release).
 - **`policy_ids`** (array [string], required): Names the policy set in `policy_dir` to enforce. Exactly one entry is accepted, because the attestation service's EAR token broker honours only the first and ignores the rest. A list rather than a single string to match the field the attestation service itself takes, and the `policy_ids` of the other providers here.
 - **`required_tee_classes`** (array [string], optional, default is `["cpu"]`): TEE classes the peer must attest. A peer that does not present a required class is rejected. This cannot be expressed in a policy, because a policy is only evaluated against the evidence that actually arrived: a peer that never offers its GPU is appraised on its CPU alone and the GPU policy is never consulted, however strict it is. The default requires a CPU because the class of a peer's primary evidence is whatever its agent reports, so without it a peer presenting only device evidence would be appraised on that device alone. Set it to `["cpu", "gpu"]` to require a GPU as well, or to `[]` to accept whatever the peer presents.
 - **`verifier_config`** (object, optional): Passed through to the attestation service's per-TEE verifier configuration. For example, `{"nvidia_verifier": {"type": "remote"}}` appraises GPU evidence with NVIDIA's remote attestation service (NRAS) instead of the default local verifier, which is required for GPU architectures the local verifier does not support.
@@ -746,6 +747,32 @@ Example: requiring a GPU alongside the CPU, and appraising it via NRAS
 The CPU policy is mandatory, since every attestation produces a CPU appraisal. The rest are optional, because a policy is only consulted for a class the evidence actually carries. If a device does arrive with no policy installed for its class, the attestation service fails the whole appraisal with a policy-not-found error, so the omission fails closed rather than admitting the device.
 
 Each policy declares `package policy` and defines a `trust_claims` rule whose result carries all eight [AR4SI](https://datatracker.ietf.org/doc/html/draft-ietf-rats-ar4si) trustworthiness claims — `configuration`, `executables`, `file-system`, `hardware`, `instance-identity`, `runtime-opaque`, `sourced-data` and `storage-opaque`. Values from 2 to 31 are affirming; anything else is not. TNG compiles both policies and checks the claim set at startup, so a malformed or incomplete policy is a startup error rather than a failed handshake later. Which measurements a policy should pin is deployment-specific and is not defined by this repository.
+
+###### Policies from a signed release
+
+With `policy_source`, TNG downloads `attestation-bundle.sigstore.json` and the policy files it signs, named as above, from `url` over https. It verifies them the way `gh attestation verify` does, against Sigstore's trusted root fetched through TUF, and only installs them if they were signed by the configured GitHub Actions workflow. If the first fetch or verification fails, startup fails. Afterwards TNG checks for a new release every `refresh_interval` seconds and only installs one that was signed later than the installed one; on any failure the installed policies stay in force. A release cannot drop a policy class that is installed; restart TNG to apply such a release.
+
+- **`url`** (string, required): https prefix the release files are fetched from.
+- **`refresh_interval`** (integer, optional, default is `300`): Seconds between checks for a new release.
+- **`version`** (string, optional): `version` the signed release must declare. Set it when `url` names one release; that release is then never refreshed.
+- **`provenance`** (object, required): The signer. `repo` (`owner/name`), `signer_workflow` (path in `repo`), `source_ref` (git ref the workflow ran on) and `predicate_type` (in-toto predicate type) are required; `environment` (GitHub deployment environment of the signing job) is optional. Releases from self-hosted runners are rejected.
+
+```json
+"verify": {
+    "as_provider": "coco_builtin",
+    "policy_ids": ["trustee_policy"],
+    "policy_source": {
+        "url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+        "provenance": {
+            "repo": "cohere-ai/integritee",
+            "signer_workflow": ".github/workflows/release-policy.yaml",
+            "source_ref": "refs/heads/main",
+            "predicate_type": "https://cohere.com/attestation-policy/v1",
+            "environment": "release"
+        }
+    }
+}
+```
 
 **Build requirements.** The verifier for each TEE is a build-time choice, and a binary can only appraise evidence from the TEEs it was built for:
 

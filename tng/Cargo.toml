@@ -84,6 +84,7 @@ serde_with = {workspace = true}
 serf = {workspace = true, optional = true}
 sha2 = {workspace = true}
 shadow-rs = {version = "=1.0.0", default-features = false}
+sigstore-trust-root = {workspace = true, optional = true, features = ["tuf", "rustls"]}
 spin = {workspace = true}
 strum = {workspace = true}
 strum_macros = {workspace = true}
@@ -98,6 +99,7 @@ tonic = {workspace = true, optional = true}
 tower = {workspace = true, features = ["util"]}
 tracing = {workspace = true}
 tracing-futures = {workspace = true, features = ["futures-03"]}
+webpki-root-certs = {workspace = true, optional = true}
 tracing-opentelemetry = {workspace = true, optional = true}
 tracing-subscriber = {workspace = true}
 url = {workspace = true}
@@ -165,7 +167,7 @@ ingress-socks5 = ["__ingress-common", "dep:fast-socks5"]
 # In-process attestation service backed by upstream CoCo Trustee. Kept out of `default` because
 # each verifier drags in native dependencies (openssl, tss-esapi, DCAP), so a TEE is opted into
 # rather than assumed.
-__coco-builtin-as = ["rats-cert/__coco-builtin-as"]
+__coco-builtin-as = ["rats-cert/__coco-builtin-as", "dep:sigstore-trust-root", "dep:webpki-root-certs"]
 coco-builtin-as-all = [
   "coco-builtin-as-azsnp",
   "coco-builtin-as-aztdx",
