@@ -41,13 +41,19 @@ impl GenericAttester for CocoAttester {
         let aa_runtime_data_hash_value =
             DefaultCrypto::hash(aa_runtime_data_hash_algo, &aa_runtime_data_bytes);
 
-        let evidence = self.aa.get_evidence(aa_runtime_data_hash_value.clone())?;
+        let evidence = self
+            .aa
+            .get_evidence(aa_runtime_data_hash_value.clone())
+            .await?;
 
-        let tee_type_str = self.aa.get_tee_type()?;
+        let tee_type_str = self.aa.get_tee_type().await?;
         let tee_type = tee_from_str(&tee_type_str)?;
 
         // Attempt to get additional evidence from AA, but don't fail if not supported
-        let additional_evidence = self.aa.get_additional_evidence(aa_runtime_data_hash_value);
+        let additional_evidence = self
+            .aa
+            .get_additional_evidence(aa_runtime_data_hash_value)
+            .await;
 
         Ok(CocoEvidence::new(
             tee_type,
