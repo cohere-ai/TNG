@@ -285,11 +285,12 @@ impl PassportEvidenceCache {
             }
         }
         let token = mint().await?;
+        let expire = token_expire(&token)?;
         *self.inner.lock().unwrap_or_else(|e| e.into_inner()) = Some(CachedPassport {
             spki: spki.to_vec(),
             provider: token.provider_type(),
             jwt: token.as_str().to_string(),
-            expire: token_expire(&token),
+            expire,
         });
         Ok(token)
     }
@@ -312,11 +313,8 @@ fn is_unexpired(expire: Expire) -> bool {
     }
 }
 
-fn token_expire(token: &TngToken) -> Expire {
-    match token.exp() {
-        Ok(exp) => Expire::ExpireAt(SystemTime::UNIX_EPOCH + Duration::from_secs(exp)),
-        Err(_) => Expire::NoExpire,
-    }
+fn token_expire(token: &TngToken) -> Result<Expire> {
+    Expire::from_timestamp(token.exp()?)
 }
 
 pub fn produced_error_reason(response: &Response) -> Option<&str> {
@@ -373,6 +371,8 @@ where
 mod tests {
     use super::super::claims::{expected_subset_of, CLAIM_CHALLENGE_TOKEN, CLAIM_TLS_BINDER};
     use super::*;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct RecordingConverter {
@@ -434,11 +434,23 @@ mod tests {
         count: AtomicUsize,
         fail_times: usize,
         claims: Mutex<Option<Claims>>,
+        jwt: String,
+    }
+
+    fn make_jwt(claims: &serde_json::Value) -> String {
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(claims).unwrap());
+        let sig = URL_SAFE_NO_PAD.encode(b"fake-sig");
+        format!("{header}.{payload}.{sig}")
     }
 
     fn test_jwt() -> String {
-        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
-            .to_string()
+        let exp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        make_jwt(&serde_json::json!({"sub": "1234567890", "exp": exp}))
     }
 
     #[async_trait::async_trait]
@@ -449,7 +461,7 @@ mod tests {
                 bail!("attester down");
             }
             *self.claims.lock().unwrap() = Some(claims);
-            TngToken::from_wire(ProviderType::Coco, test_jwt())
+            TngToken::from_wire(ProviderType::Coco, self.jwt.clone())
         }
     }
 
@@ -466,6 +478,7 @@ mod tests {
             count: AtomicUsize::new(0),
             fail_times,
             claims: Mutex::new(None),
+            jwt: test_jwt(),
         }
     }
 
@@ -506,6 +519,32 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(producer.count.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn passport_cache_does_not_store_token_without_exp() {
+        let producer = CountingTokenProducer {
+            count: AtomicUsize::new(0),
+            fail_times: 0,
+            claims: Mutex::new(None),
+            jwt: make_jwt(&serde_json::json!({"sub": "1234567890"})),
+        };
+        let conv = RecordingConverter {
+            nonce: "passport-as-nonce".into(),
+        };
+        let cache = PassportEvidenceCache::new();
+        let first = produce_passport_token(&producer, &conv, b"spki", &cache, 0)
+            .await
+            .unwrap();
+        let second = produce_passport_token(&producer, &conv, b"spki", &cache, 0)
+            .await
+            .unwrap();
+        assert_eq!(produced_error_reason(&first), Some(ATTESTATION_UNAVAILABLE));
+        assert_eq!(
+            produced_error_reason(&second),
+            Some(ATTESTATION_UNAVAILABLE)
+        );
+        assert_eq!(producer.count.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
