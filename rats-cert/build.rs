@@ -18,7 +18,7 @@ fn main() {
             .include("src/tee/coco/protos")
             .rust_protobuf()
             .customize(Customize {
-                async_all: false, // TODO: enable async when async feature of rats-rs is ready
+                async_client: true,
                 ..Default::default()
             })
             .rust_protobuf_customize(protobuf_customized)

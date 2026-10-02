@@ -85,7 +85,8 @@ impl GenericAttester for ItaAttester {
 
         let aa_additional_evidence = self
             .aa
-            .get_additional_evidence(ae_runtime_data_hash.to_vec());
+            .get_additional_evidence(ae_runtime_data_hash.to_vec())
+            .await;
 
         // Parse AA's blob into structured NVGPU evidence (if present).
         let nvgpu_evidence = match &aa_additional_evidence {
@@ -108,10 +109,10 @@ impl GenericAttester for ItaAttester {
 
         let runtime_data_hash = derive_runtime_data_hash(nonce.as_ref(), &runtime_data_bytes)?;
 
-        let evidence_raw = self
-            .aa
-            .get_evidence(runtime_data_hash)
-            .map_err(|e| Error::ItaError(format!("Failed to get primary evidence from AA: {e}")))?;
+        let evidence_raw =
+            self.aa.get_evidence(runtime_data_hash).await.map_err(|e| {
+                Error::ItaError(format!("Failed to get primary evidence from AA: {e}"))
+            })?;
 
         // AA returns evidence as a JSON object (e.g. {"cc_eventlog":"...", "quote":"..."}).
         let aa_evidence: serde_json::Value =

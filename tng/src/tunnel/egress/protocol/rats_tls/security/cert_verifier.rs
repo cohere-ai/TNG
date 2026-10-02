@@ -11,14 +11,13 @@ use rustls::{
 use tokio_rustls::rustls::RootCertStore;
 
 use crate::tunnel::{
-    attestation_result::AttestationResult, cert_verifier::TngCommonCertVerifier,
-    ra_context::VerifyContext, utils::certs::TNG_DUMMY_CERT,
+    cert_verifier::TngCommonCertVerifier, ra_context::VerifyContext, utils::certs::TNG_DUMMY_CERT,
 };
 
 #[derive(Debug)]
 pub struct TngClientCertVerifier {
     inner: Arc<dyn ClientCertVerifier>,
-    common: TngCommonCertVerifier,
+    pub(crate) common: TngCommonCertVerifier,
 }
 
 impl TngClientCertVerifier {
@@ -34,10 +33,6 @@ impl TngClientCertVerifier {
             inner: verifier,
             common: TngCommonCertVerifier::new(verify_ctx),
         })
-    }
-
-    pub async fn verity_pending_cert(&self) -> Result<AttestationResult> {
-        self.common.verity_pending_cert().await
     }
 }
 

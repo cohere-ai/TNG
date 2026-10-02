@@ -128,10 +128,24 @@ impl<A: GenericAttester> CertBuilder<A> {
             &self.subject,
             self.hash_algo,
             key,
-            &evidence_buffer,
+            Some(&evidence_buffer),
             Some(&[]),
         )?;
 
         Ok((cert, evidence))
     }
+}
+
+/// Self-signed TLS key carrier with no DICE evidence extension and no attester call.
+pub fn generate_key_carrier_cert(
+    subject: &str,
+    hash_algo: HashAlgo,
+    private_key_algo: AsymmetricAlgo,
+) -> Result<(Vec<u8>, zeroize::Zeroizing<String>, std::time::SystemTime)> {
+    let key = DefaultCrypto::gen_private_key(private_key_algo)?;
+    let cert = generate_and_sign_dice_cert(subject, hash_algo, &key, None, None)?;
+    let not_after = cert.tbs_certificate.validity.not_after.to_system_time();
+    let der = cert.to_der().map_err(Error::CertEncodeFailed)?;
+    let pem = key.to_pkcs8_pem()?;
+    Ok((der, pem, not_after))
 }

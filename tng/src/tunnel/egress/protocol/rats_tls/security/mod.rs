@@ -4,6 +4,7 @@ mod rustls_config;
 use std::sync::Arc;
 
 use crate::tunnel::{
+    attestation_exchange::finish_rats_tls_server,
     attestation_result::AttestationResult,
     ra_context::RaContext,
     stream::CommonStreamTrait,
@@ -15,14 +16,16 @@ use tokio_rustls::TlsAcceptor;
 use tracing::Instrument;
 
 pub(super) struct RatsTlsSecurityLayer {
+    ra_context: Arc<RaContext>,
     tls_config_generator: TlsConfigGenerator,
 }
 
 impl RatsTlsSecurityLayer {
     pub async fn new(ra_context: Arc<RaContext>, runtime: TokioRuntime) -> Result<Self> {
-        let tls_config_generator = TlsConfigGenerator::new(ra_context, runtime).await?;
+        let tls_config_generator = TlsConfigGenerator::new(ra_context.clone(), runtime).await?;
 
         Ok(Self {
+            ra_context,
             tls_config_generator,
         })
     }
@@ -36,7 +39,11 @@ impl RatsTlsSecurityLayer {
     )> {
         async {
             // Prepare TLS config
-            let OnetimeTlsServerConfig(tls_server_config, verifier) = self
+            let OnetimeTlsServerConfig {
+                config: tls_server_config,
+                verifier,
+                attested_key,
+            } = self
                 .tls_config_generator
                 .get_one_time_rustls_server_config()
                 .await?;
@@ -47,15 +54,13 @@ impl RatsTlsSecurityLayer {
             async {
                 let security_layer_stream = tls_acceptor.accept(stream).await?;
 
-                let attestation_result = match verifier {
-                    Some(verifier) => Some(
-                        verifier
-                            .verity_pending_cert()
-                            .await
-                            .context("No attestation result found")?,
-                    ),
-                    None => None,
-                };
+                let (security_layer_stream, attestation_result) = finish_rats_tls_server(
+                    security_layer_stream,
+                    self.ra_context.as_ref(),
+                    verifier.as_ref().map(|v| &v.common),
+                    attested_key.as_deref(),
+                )
+                .await?;
 
                 tracing::debug!("New rats-tls connection established");
                 Ok::<_, anyhow::Error>((security_layer_stream, attestation_result))

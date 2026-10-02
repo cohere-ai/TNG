@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Result};
 
@@ -69,6 +70,9 @@ impl TrustedStreamManager {
                             transport_so_mark,
                             ra_context,
                             runtime.clone(),
+                            // Keep the pooled rats-tls session for the life of the process.
+                            // Age-out/reattest is only for serf peer_shared (`rats_tls_pool_ttl`).
+                            Duration::MAX,
                         )
                         .await?,
                     ),
