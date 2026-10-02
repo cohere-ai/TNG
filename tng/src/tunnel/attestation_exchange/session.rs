@@ -18,14 +18,14 @@ use crate::tunnel::service_metrics::{
 use rats_cert::tee::AttesterPipeline;
 
 use super::claims::{BackgroundCheckExpectation, PassportExpectation, EXPORTER_LEN};
-use super::codec::{read_request, read_response, write_request, write_response};
+use super::codec::{self, read_request, read_response, write_request, write_response};
 use super::core::{
     ack_response, error_response, produce_background_check_evidence, produce_passport_token,
     produced_error_reason, EvidenceProducer, ExchangeVerifier, PassportEvidenceCache,
     TokenProducer,
 };
 use super::exporter::{export_from_client, export_from_server, spki_from_certified_key};
-use super::pb::{self, response, Request, Response};
+use super::message::{Request, Response};
 
 pub const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -236,25 +236,35 @@ where
         None => vec![],
     };
     let my_req = Request {
-        proposals: my_proposals.iter().map(proposal_to_pb).collect(),
+        proposals: my_proposals.clone(),
     };
 
-    let (_, peer_req) = tokio::try_join!(write_request(wr, &my_req), read_request(rd))?;
+    let (write_res, read_res) = tokio::join!(write_request(wr, &my_req), read_request(rd));
+    write_res?;
+    let peer_req = match read_res {
+        Ok(req) => req,
+        Err(e) if codec::is_malformed(&e) => {
+            tracing::warn!(error = ?e, "peer sent a malformed attestation request");
+            let outgoing = error_response("malformed attestation proposal");
+            let _ = tokio::join!(write_response(wr, &outgoing), read_response(rd));
+            bail!("failed to attest to peer: malformed attestation proposal");
+        }
+        Err(e) => return Err(e),
+    };
 
     let generate = resources.start_if(
         !peer_req.proposals.is_empty(),
         AttestationOperation::Generate,
     );
     let outgoing = produce_outgoing(&resources, &peer_req).await?;
-    if matches!(
-        outgoing.body,
-        Some(response::Body::Evidence(_) | response::Body::Token(_))
-    ) {
+    if matches!(outgoing, Response::Evidence { .. } | Response::Token { .. }) {
         mark_succeeded(generate);
     }
     let failed_reason = produced_error_reason(&outgoing).map(str::to_string);
 
-    let (_, incoming) = tokio::try_join!(write_response(wr, &outgoing), read_response(rd))?;
+    let (write_res, read_res) = tokio::join!(write_response(wr, &outgoing), read_response(rd));
+    write_res?;
+    let incoming = read_res?;
 
     if let Some(reason) = failed_reason {
         bail!("failed to attest to peer: {reason}");
@@ -266,56 +276,14 @@ where
     Ok(result)
 }
 
-fn proposal_to_pb(proposal: &AttestProposal) -> pb::AttestProposal {
-    let kind = match proposal {
-        AttestProposal::BackgroundCheck {
-            provider,
-            challenge_token,
-        } => pb::attest_proposal::Kind::BackgroundCheck(pb::BackgroundCheck {
-            provider: provider.as_str().to_owned(),
-            challenge_token: challenge_token.clone(),
-        }),
-        AttestProposal::Passport { provider } => {
-            pb::attest_proposal::Kind::Passport(pb::Passport {
-                provider: provider.as_str().to_owned(),
-            })
-        }
-    };
-    pb::AttestProposal { kind: Some(kind) }
-}
-
-fn proposal_from_pb(proposal: &pb::AttestProposal) -> Result<AttestProposal> {
-    match proposal.kind.as_ref().context("proposal has no kind")? {
-        pb::attest_proposal::Kind::BackgroundCheck(bc) => Ok(AttestProposal::BackgroundCheck {
-            provider: ProviderType::from_required_wire_str(&bc.provider)?,
-            challenge_token: bc.challenge_token.clone(),
-        }),
-        pb::attest_proposal::Kind::Passport(p) => Ok(AttestProposal::Passport {
-            provider: ProviderType::from_required_wire_str(&p.provider)?,
-        }),
-    }
-}
-
 async fn produce_outgoing(resources: &ExchangeResources<'_>, peer: &Request) -> Result<Response> {
     if peer.proposals.is_empty() {
         return Ok(ack_response());
     }
-    let proposals = match peer
-        .proposals
-        .iter()
-        .map(proposal_from_pb)
-        .collect::<Result<Vec<_>>>()
-    {
-        Ok(proposals) => proposals,
-        Err(e) => {
-            tracing::warn!(error = ?e, "peer sent a malformed attestation proposal");
-            return Ok(error_response("malformed attestation proposal"));
-        }
-    };
     let Some(own_key) = resources.attest_key else {
         return Ok(error_response("not configured to attest"));
     };
-    let proposal = match pick_proposal(own_key, &proposals) {
+    let proposal = match pick_proposal(own_key, &peer.proposals) {
         Ok(proposal) => proposal,
         Err(e) => return Ok(error_response(e.to_string())),
     };
@@ -359,14 +327,11 @@ async fn verify_incoming(
     resources: &ExchangeResources<'_>,
     incoming: Response,
 ) -> Result<Option<AttestationResult>> {
-    let body = incoming.body.context("response message has empty body")?;
     if my_proposals.is_empty() {
-        return match body {
-            response::Body::Ack(_) => Ok(None),
-            response::Body::Evidence(_) | response::Body::Token(_) => {
-                bail!("unsolicited credentials")
-            }
-            response::Body::Error(e) => bail!("peer sent an error: {}", e.reason),
+        return match incoming {
+            Response::Ack => Ok(None),
+            Response::Evidence { .. } | Response::Token { .. } => bail!("unsolicited credentials"),
+            Response::Error { reason } => bail!("peer sent an error: {reason}"),
         };
     }
 
@@ -376,9 +341,8 @@ async fn verify_incoming(
             .peer_spki_der
             .context("verifying side has no peer certificate")
     };
-    let result = match body {
-        response::Body::Evidence(ev) => {
-            let provider = ProviderType::from_required_wire_str(&ev.provider)?;
+    let result = match incoming {
+        Response::Evidence { provider, evidence } => {
             let issued_nonce = find_proposal(my_proposals, Model::BackgroundCheck, provider)?
                 .challenge_token()
                 .context("background-check proposal carries no nonce")?;
@@ -389,20 +353,19 @@ async fn verify_incoming(
             }
             .to_claims()?;
             verifier()?
-                .verify_evidence(provider, &ev.json, expected)
+                .verify_evidence(provider, &evidence, expected)
                 .await
         }
-        response::Body::Token(t) => {
-            let provider = ProviderType::from_required_wire_str(&t.provider)?;
+        Response::Token { provider, token } => {
             find_proposal(my_proposals, Model::Passport, provider)?;
             let expected = PassportExpectation {
                 peer_spki_der: peer_spki()?,
             }
             .to_claims()?;
-            verifier()?.verify_token(provider, &t.jwt, expected).await
+            verifier()?.verify_token(provider, &token, expected).await
         }
-        response::Body::Ack(_) => bail!("peer did not attest"),
-        response::Body::Error(e) => bail!("peer attestation failed: {}", e.reason),
+        Response::Ack => bail!("peer did not attest"),
+        Response::Error { reason } => bail!("peer attestation failed: {reason}"),
     }
     .context("evidence conversion or verification failed")?;
     Ok(Some(result))
@@ -415,7 +378,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::super::claims::expected_subset_of;
-    use super::super::core::{evidence_response, token_response};
+    use super::super::core::{evidence_response, token_response, Evidence};
     use crate::tunnel::provider::TngToken;
     use crate::tunnel::select_proposal::NO_COMPATIBLE_PROPOSAL;
 
@@ -470,10 +433,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl EvidenceProducer for ClaimsEchoProducer {
-        async fn produce(&self, claims: Claims) -> Result<pb::Evidence> {
-            Ok(pb::Evidence {
-                provider: "coco".into(),
-                json: serde_json::to_string(&claims)?,
+        async fn produce(&self, claims: Claims) -> Result<Evidence> {
+            Ok(Evidence {
+                provider: ProviderType::Coco,
+                evidence: serde_json::to_value(&claims)?,
             })
         }
     }
@@ -485,10 +448,10 @@ mod tests {
         async fn verify_evidence(
             &self,
             _provider: ProviderType,
-            json: &str,
+            evidence: &serde_json::Value,
             expected: Claims,
         ) -> Result<AttestationResult> {
-            let actual: Claims = serde_json::from_str(json)
+            let actual: Claims = serde_json::from_value(evidence.clone())
                 .context("stub verifier expected claims JSON in evidence")?;
             if !expected_subset_of(&expected, &actual) {
                 bail!("expected claims not subset of evidence");
@@ -574,13 +537,13 @@ mod tests {
 
     fn proposing(proposals: &[AttestProposal]) -> Request {
         Request {
-            proposals: proposals.iter().map(proposal_to_pb).collect(),
+            proposals: proposals.to_vec(),
         }
     }
 
     fn error_reason(resp: Response) -> String {
-        match resp.body {
-            Some(response::Body::Error(e)) => e.reason,
+        match resp {
+            Response::Error { reason } => reason,
             other => panic!("expected error, got {other:?}"),
         }
     }
@@ -622,7 +585,7 @@ mod tests {
         let (res, got) = against_peer(
             two_proposals(),
             Request::default(),
-            token_response("ita", "fake.jwt.token"),
+            token_response(ProviderType::Ita, "fake.jwt.token"),
         )
         .await;
         assert!(res.unwrap().is_some());
@@ -632,7 +595,7 @@ mod tests {
         let (res, _) = against_peer(
             two_proposals(),
             Request::default(),
-            evidence_response("ita", "{}"),
+            evidence_response(ProviderType::Ita, serde_json::json!({})),
         )
         .await;
         assert_err_contains(res, "not proposed");
@@ -686,7 +649,7 @@ mod tests {
         let (res, _) = against_peer(
             verify_only(&bc_proposals, &verifier),
             Request::default(),
-            token_response("coco", "fake.jwt.token"),
+            token_response(ProviderType::Coco, "fake.jwt.token"),
         )
         .await;
         assert_err_contains(res, "not proposed");
@@ -694,7 +657,7 @@ mod tests {
         let (res, _) = against_peer(
             verify_only(&passport_proposals, &verifier),
             Request::default(),
-            evidence_response("coco", "{}"),
+            evidence_response(ProviderType::Coco, serde_json::json!({})),
         )
         .await;
         assert_err_contains(res, "not proposed");
@@ -705,18 +668,38 @@ mod tests {
         let proposals = coco_bc_proposals();
         let verifier = SubsetVerifier;
         for provider in ["", "notaprovider"] {
-            let (res, _) = against_peer(
+            let body = format!(r#"{{"type":"evidence","provider":{provider:?},"evidence":{{}}}}"#);
+            let res = against_peer_raw(
                 verify_only(&proposals, &verifier),
                 Request::default(),
-                evidence_response(provider, "{}"),
+                body.as_bytes(),
             )
             .await;
-            let err = res.unwrap_err().to_string();
+            let err = format!("{:#}", res.unwrap_err());
             assert!(
-                err.contains("empty provider") || err.contains("unrecognized provider"),
+                err.contains("unrecognized provider"),
                 "provider={provider:?} err={err}"
             );
         }
+    }
+
+    async fn against_peer_raw(
+        resources: ExchangeResources<'_>,
+        peer_req: Request,
+        peer_resp: &[u8],
+    ) -> Result<Option<AttestationResult>> {
+        let (mut peer, local) = tokio::io::duplex(4096);
+        let local_fut = run_on_stream(local, resources);
+        let peer_fut = async {
+            write_request(&mut peer, &peer_req).await.unwrap();
+            let _ = read_request(&mut peer).await.unwrap();
+            peer.write_u32(peer_resp.len() as u32).await.unwrap();
+            peer.write_all(peer_resp).await.unwrap();
+            peer.flush().await.unwrap();
+            let _ = read_response(&mut peer).await;
+        };
+        let (local_res, _) = tokio::join!(local_fut, peer_fut);
+        local_res.map(|(_, result)| result)
     }
 
     #[tokio::test]
@@ -739,16 +722,24 @@ mod tests {
             assert_err_contains(res, needle);
         }
 
-        let unknown_provider = Request {
-            proposals: vec![pb::AttestProposal {
-                kind: Some(pb::attest_proposal::Kind::Passport(pb::Passport {
-                    provider: "bad_provider".into(),
-                })),
-            }],
+        let (mut peer, local) = tokio::io::duplex(4096);
+        let local_fut = run_on_stream(local, attest_only(&producer));
+        let peer_fut = async {
+            let body = br#"{"proposals":[{"model":"passport","provider":"bad_provider"}]}"#;
+            peer.write_u32(body.len() as u32).await.unwrap();
+            peer.write_all(body).await.unwrap();
+            peer.flush().await.unwrap();
+            let _ = read_request(&mut peer).await.unwrap();
+            let resp = read_response(&mut peer).await.unwrap();
+            write_response(&mut peer, &ack_response()).await.unwrap();
+            resp
         };
-        let (res, resp) = attester_answer(attest_only(&producer), unknown_provider).await;
+        let (res, resp) = tokio::join!(local_fut, peer_fut);
         assert_eq!(error_reason(resp), "malformed attestation proposal");
-        assert_err_contains(res, "malformed attestation proposal");
+        assert_err_contains(
+            res.map(|(_, result)| result),
+            "malformed attestation proposal",
+        );
     }
 
     #[tokio::test]
@@ -767,7 +758,7 @@ mod tests {
             write_request(&mut peer, &Request::default()).await.unwrap();
             write_response(&mut peer, &ack_response()).await.unwrap();
             let resp = read_response(&mut peer).await.unwrap();
-            assert!(matches!(resp.body, Some(response::Body::Ack(_))));
+            assert!(matches!(resp, Response::Ack));
         };
         let (local_res, _) = tokio::join!(local_fut, peer_fut);
         assert!(local_res.unwrap().1.is_none());

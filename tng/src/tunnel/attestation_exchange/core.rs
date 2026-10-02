@@ -11,8 +11,13 @@ use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
 use crate::tunnel::utils::maybe_cached::Expire;
 
 use super::claims::{background_check_claims, passport_attester_claims};
-use super::pb::{response, Evidence, Response, Token};
+use super::message::Response;
 use crate::tunnel::challenge::ChallengeSource;
+
+pub struct Evidence {
+    pub provider: ProviderType,
+    pub evidence: serde_json::Value,
+}
 
 #[async_trait::async_trait]
 pub trait EvidenceProducer: Send + Sync {
@@ -29,7 +34,7 @@ pub trait ExchangeVerifier: Send + Sync {
     async fn verify_evidence(
         &self,
         provider: ProviderType,
-        json: &str,
+        evidence: &serde_json::Value,
         expected: Claims,
     ) -> Result<AttestationResult>;
 
@@ -45,34 +50,23 @@ pub trait ExchangeVerifier: Send + Sync {
 pub const ATTESTATION_UNAVAILABLE: &str = "attestation unavailable";
 
 pub fn ack_response() -> Response {
-    Response {
-        body: Some(response::Body::Ack(super::pb::None {})),
-    }
+    Response::Ack
 }
 
 pub fn error_response(reason: impl Into<String>) -> Response {
-    Response {
-        body: Some(response::Body::Error(super::pb::Error {
-            reason: reason.into(),
-        })),
+    Response::Error {
+        reason: reason.into(),
     }
 }
 
-pub fn evidence_response(provider: impl Into<String>, json: impl Into<String>) -> Response {
-    Response {
-        body: Some(response::Body::Evidence(Evidence {
-            provider: provider.into(),
-            json: json.into(),
-        })),
-    }
+pub fn evidence_response(provider: ProviderType, evidence: serde_json::Value) -> Response {
+    Response::Evidence { provider, evidence }
 }
 
-pub fn token_response(provider: impl Into<String>, jwt: impl Into<String>) -> Response {
-    Response {
-        body: Some(response::Body::Token(Token {
-            provider: provider.into(),
-            jwt: jwt.into(),
-        })),
+pub fn token_response(provider: ProviderType, token: impl Into<String>) -> Response {
+    Response::Token {
+        provider,
+        token: token.into(),
     }
 }
 
@@ -88,7 +82,7 @@ pub async fn produce_background_check_evidence<P: EvidenceProducer + ?Sized>(
     }
     let claims = background_check_claims(own_spki_der, challenge_token, exporter)?;
     match produce_evidence_with_retry(producer, claims, max_retries).await {
-        Ok(evidence) => Ok(evidence_response(evidence.provider, evidence.json)),
+        Ok(evidence) => Ok(evidence_response(evidence.provider, evidence.evidence)),
         Err(e) => {
             tracing::error!(error = ?e, "Failed to produce background-check evidence");
             Ok(error_response(ATTESTATION_UNAVAILABLE))
@@ -111,10 +105,7 @@ pub async fn produce_passport_token<P: TokenProducer + ?Sized, C: ChallengeSourc
         })
         .await
     {
-        Ok(token) => Ok(token_response(
-            token.provider_type().as_str(),
-            token.as_str(),
-        )),
+        Ok(token) => Ok(token_response(token.provider_type(), token.as_str())),
         Err(e) => {
             tracing::error!(error = ?e, "Failed to produce passport token");
             Ok(error_response(ATTESTATION_UNAVAILABLE))
@@ -225,8 +216,8 @@ fn token_expire(token: &TngToken) -> Result<Expire> {
 }
 
 pub fn produced_error_reason(response: &Response) -> Option<&str> {
-    match response.body.as_ref() {
-        Some(response::Body::Error(e)) => Some(e.reason.as_str()),
+    match response {
+        Response::Error { reason } => Some(reason),
         _ => None,
     }
 }
@@ -241,11 +232,9 @@ where
             .get_evidence(&ReportData::Claims(claims))
             .await
             .map_err(|e| anyhow!("attester failed: {e}"))?;
-        let json = serde_json::to_string(&evidence.serialize_to_json()?)
-            .context("serialize evidence JSON")?;
         Ok(Evidence {
-            provider: evidence.provider_type().as_str().to_string(),
-            json,
+            provider: evidence.provider_type(),
+            evidence: evidence.serialize_to_json()?,
         })
     }
 }
@@ -296,8 +285,8 @@ mod tests {
             }
             *self.claims.lock().unwrap() = Some(claims.clone());
             Ok(Evidence {
-                provider: "coco".into(),
-                json: serde_json::to_string(&claims)?,
+                provider: ProviderType::Coco,
+                evidence: serde_json::to_value(&claims)?,
             })
         }
     }

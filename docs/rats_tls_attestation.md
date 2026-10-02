@@ -6,6 +6,8 @@ Evidence and tokens carry the hash of the attester's certificate public key, so 
 
 The exchange adds latency when a new connection is set up: one extra round trip between the peers for the exchange itself, plus the attestation calls for the chosen mode (for background check, a nonce fetch and a verify call to the verifier's attestation service and a quote from the attester's attestation agent).
 
+Each message is a 4-byte big-endian length followed by one JSON object, capped at 256 KiB. A request is `{"proposals":[...]}`, using the same `AttestProposal` objects as the OHTTP key-config request. A response is one of `{"type":"ack"}`, `{"type":"evidence","provider":"...","evidence":{...}}`, `{"type":"token","provider":"...","token":"..."}`, or `{"type":"error","reason":"..."}`. Ack answers an empty request. Error is how this handshake reports a failure.
+
 ```mermaid
 sequenceDiagram
     participant C as Ingress (client)

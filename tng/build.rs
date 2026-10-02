@@ -27,10 +27,4 @@ fn main() {
         &["src/tunnel/egress/protocol/ohttp/security/key_manager/peer_shared/"],
     )
     .unwrap();
-
-    prost_build::compile_protos(
-        &["src/tunnel/attestation_exchange/exchange.proto"],
-        &["src/tunnel/attestation_exchange/"],
-    )
-    .unwrap();
 }

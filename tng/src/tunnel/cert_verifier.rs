@@ -49,14 +49,12 @@ impl crate::tunnel::attestation_exchange::ExchangeVerifier for TngCommonCertVeri
     async fn verify_evidence(
         &self,
         provider: ProviderType,
-        json: &str,
+        evidence: &serde_json::Value,
         expected: rats_cert::tee::claims::Claims,
     ) -> Result<AttestationResult> {
         tracing::debug!("Verifying rats-tls evidence");
 
-        let value: serde_json::Value =
-            serde_json::from_str(json).context("evidence JSON is not valid JSON")?;
-        let evidence = TngEvidence::deserialize_from_json(provider, value)
+        let evidence = TngEvidence::deserialize_from_json(provider, evidence.clone())
             .context("failed to parse evidence JSON")?;
 
         let VerifyContext::BackgroundCheck {
