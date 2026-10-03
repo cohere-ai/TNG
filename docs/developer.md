@@ -122,7 +122,7 @@ This will run an attestation-agent instance and create a ttrpc listener at `/run
 Some tests (e.g. the `coco_asr` and `ita_asr` e2e tests in `rats-cert`) require a running [API Server Rest](https://github.com/confidential-containers/guest-components/tree/main/api-server-rest) (ASR) instance that proxies HTTP requests to the attestation-agent. The ASR must be reachable at `http://127.0.0.1:8006`.
 
 > [!NOTE]
-> At the time of writing, the upstream ASR is missing two interface features needed by TNG: an `encoding` parameter on `/aa/evidence` for hex-encoded runtime data, and an `/aa/additional_evidence` endpoint for fetching additional evidence (for devices such as GPU). These are implemented in the [Cohere fork](https://github.com/cohere-ai/guest-components/tree/cohere) ([PR](https://github.com/cohere-ai/guest-components/pull/2)).
+> TNG uses the ASR interface from upstream guest-components v0.21.0 and later: `/aa/evidence` and `/aa/additional-evidence` (for devices such as GPU), with `runtime_data` sent as URL-safe base64 without padding (`encoding=base64`).
 
 1. Clone and run the ASR from the Cohere fork with the `attestation` feature enabled:
 

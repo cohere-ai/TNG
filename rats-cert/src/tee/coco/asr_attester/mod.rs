@@ -64,7 +64,7 @@ impl GenericAttester for CocoAsrAttester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
     use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -77,10 +77,10 @@ mod tests {
         let runtime_data = wrap_runtime_data_as_structed(&report_data).unwrap();
         let runtime_data_bytes = serialize_canon_json(&runtime_data).unwrap();
         let runtime_data_hash = DefaultCrypto::hash(HashAlgo::Sha384, &runtime_data_bytes);
-        let runtime_data_hash_b64 = STANDARD.encode(runtime_data_hash);
+        let runtime_data_hash_b64 = URL_SAFE_NO_PAD.encode(runtime_data_hash);
         let additional_evidence = br#"{"nvidia":{"device_evidence_list":[]}}"#;
 
-        for endpoint in ["/aa/evidence", "/aa/additional_evidence"] {
+        for endpoint in ["/aa/evidence", "/aa/additional-evidence"] {
             Mock::given(method("GET"))
                 .and(path(endpoint))
                 .and(query_param("runtime_data", runtime_data_hash_b64.clone()))
