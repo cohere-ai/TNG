@@ -17,7 +17,6 @@ pub(crate) mod ohttp;
 pub(crate) mod proposal;
 pub(crate) mod provider;
 pub(crate) mod ra_context;
-pub(crate) mod select_proposal;
 #[cfg(unix)]
 pub(crate) mod service_metrics;
 pub(crate) mod stream;

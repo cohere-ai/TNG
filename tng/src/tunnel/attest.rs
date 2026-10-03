@@ -1,10 +1,12 @@
 //! Attestation request and response shared by RA-TLS and OHTTP.
 //!
 //! A request is the verifier's proposal list. A response is [`AttestResponse`]: `Ok(None)`
-//! acks an empty request, `Ok(Some)` is the evidence or token, and `Err` is a reason string.
-//! [`produce_attest_response`] fills that response for a proposal [`pick_proposal`] already matched.
-//! It chooses background check or passport. The caller supplies the claims and a passport-token cache.
+//! acks an empty request, `Ok(Some)` is the evidence or token, and `Err` is an [`AttestError`].
+//! [`produce_attest_response`] selects the proposal and fills that response. It chooses
+//! background check or passport. The caller supplies the claims and a passport-token cache.
+//! A failure is [`crate::error::AttestError`].
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -15,10 +17,10 @@ use rats_cert::tee::claims::Claims;
 use rats_cert::tee::{GenericAttester, ReportData};
 use serde::{Deserialize, Serialize};
 
+use crate::error::AttestError;
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::proposal::{AttestProposal, Model};
 use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
-use crate::tunnel::select_proposal::{find_proposal, match_proposal};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -51,15 +53,15 @@ impl AttestOutput {
     }
 }
 
-/// `Ok(None)` acks an empty proposal list. `Err` is a public reason; serde writes it as a JSON string.
-pub type AttestResponse = Result<Option<AttestOutput>, String>;
+/// `Ok(None)` acks an empty proposal list. `Err` is the [`AttestError`] the peer matches.
+pub type AttestResponse = Result<Option<AttestOutput>, AttestError>;
 
 pub fn ack_response() -> AttestResponse {
     Ok(None)
 }
 
-pub fn error_response(reason: impl Into<String>) -> AttestResponse {
-    Err(reason.into())
+pub fn error_response(error: AttestError) -> AttestResponse {
+    Err(error)
 }
 
 pub fn evidence_response(provider: ProviderType, evidence: serde_json::Value) -> AttestResponse {
@@ -73,34 +75,54 @@ pub fn token_response(provider: ProviderType, token: impl Into<String>) -> Attes
     }))
 }
 
-pub fn produced_error_reason(response: &AttestResponse) -> Option<&str> {
-    response.as_ref().err().map(String::as_str)
-}
-
-/// What the attester should do with a received request.
-pub enum Answer<'a> {
-    /// The peer sent no proposals.
-    Ack,
-    /// The one proposal this attester answers.
-    Matched(&'a AttestProposal),
-    /// The peer asked and this side will not answer. The string is safe to send back.
-    Reject(String),
-}
-
-/// `Ack` only when `proposals` is empty. A non-empty list that this side cannot answer is `Reject`.
-pub fn pick_proposal<'a>(
+/// The proposal this attester answers.
+///
+/// An empty list is `Ok(None)`. A non-empty list needs an exact `(model, provider)` match.
+/// A duplicate key is an error, and so is a list this side cannot answer.
+fn pick_proposal<'a>(
     proposals: &'a [AttestProposal],
     own_key: Option<(Model, ProviderType)>,
-) -> Answer<'a> {
+) -> Result<Option<&'a AttestProposal>, AttestError> {
     if proposals.is_empty() {
-        return Answer::Ack;
+        return Ok(None);
     }
     let Some(own_key) = own_key else {
-        return Answer::Reject("not configured to attest".into());
+        return Err(AttestError::NotConfigured);
     };
-    match_proposal(own_key, proposals)
-        .map(Answer::Matched)
-        .unwrap_or_else(|error| Answer::Reject(error.to_string()))
+    let mut seen = HashSet::new();
+    if let Some((model, provider)) = proposals
+        .iter()
+        .map(AttestProposal::key)
+        .find(|key| !seen.insert(*key))
+    {
+        return Err(AttestError::DuplicateProposal { model, provider });
+    }
+    proposals
+        .iter()
+        .find(|proposal| proposal.key() == own_key)
+        .map(Some)
+        .ok_or_else(|| {
+            let proposed: Vec<_> = proposals.iter().map(AttestProposal::key).collect();
+            tracing::warn!(
+                ?proposed,
+                ?own_key,
+                "no proposal matches the local attester"
+            );
+            AttestError::NoCompatibleProposal
+        })
+}
+
+/// The proposal the peer's answer belongs to, so evidence is checked against the nonce issued
+/// for its own provider and never against another one.
+fn find_proposal(
+    proposals: &[AttestProposal],
+    model: Model,
+    provider: ProviderType,
+) -> Result<&AttestProposal> {
+    proposals
+        .iter()
+        .find(|p| p.key() == (model, provider))
+        .ok_or_else(|| anyhow!("peer answered with ({model}, {provider}), which was not proposed"))
 }
 
 #[async_trait::async_trait]
@@ -135,12 +157,12 @@ pub async fn check_response(
         return match got {
             Ok(None) => Ok(None),
             Ok(Some(_)) => bail!("unsolicited credentials"),
-            Err(reason) => bail!("peer sent an error: {reason}"),
+            Err(error) => bail!("peer sent an error: {error}"),
         };
     }
 
     let output = match got {
-        Err(reason) => bail!("peer attestation failed: {reason}"),
+        Err(error) => bail!("peer attestation failed: {error}"),
         Ok(None) => bail!("peer did not attest"),
         Ok(Some(output)) => output,
     };
@@ -177,13 +199,7 @@ pub trait TokenProducer: Send + Sync {
     async fn produce(&self, claims: Claims) -> Result<TngToken>;
 }
 
-/// Sent in place of the local error chain, which must not reach an unverified peer.
-pub const ATTESTATION_UNAVAILABLE: &str = "attestation unavailable";
-
-/// A background-check proposal arrived with an empty nonce.
-pub const MISSING_NONCE: &str = "missing nonce";
-
-/// Builds the transport's runtime data for the proposal [`pick_proposal`] matched.
+/// Builds the transport's runtime data for the proposal this side answers.
 pub trait AttestClaims: Sync {
     fn claims<'a>(
         &'a self,
@@ -201,55 +217,59 @@ pub trait PassportTokenCache: Sync {
     ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>>;
 }
 
-/// Produce the output for a proposal that [`pick_proposal`] already matched.
+/// Select a proposal from `request` and produce its output.
 ///
-/// `claims` builds this transport's runtime data for that proposal. Background check runs the
-/// evidence producer. Passport reads `passport_cache` and mints on a miss. An empty background-check
-/// nonce and a missing producer are public reasons. An attester or claims failure is
-/// [`ATTESTATION_UNAVAILABLE`].
+/// An empty list is an ack. `claims` builds this transport's runtime data for the matched
+/// proposal. Background check runs the evidence producer. Passport reads `passport_cache` and
+/// mints on a miss. [`AttestError::Unavailable`] is an attester or claims failure. Every
+/// other error is a request this side will not answer.
 pub async fn produce_attest_response<C, R>(
-    proposal: &AttestProposal,
+    request: &AttestRequest,
+    own_key: Option<(Model, ProviderType)>,
     claims: &R,
     evidence_producer: Option<&dyn EvidenceProducer>,
     token_producer: Option<&dyn TokenProducer>,
     passport_cache: Option<&C>,
     max_retries: usize,
-) -> AttestResponse
+) -> Result<AttestResponse, AttestError>
 where
     C: PassportTokenCache,
     R: AttestClaims,
 {
+    let Some(proposal) = pick_proposal(&request.proposals, own_key)? else {
+        return Ok(ack_response());
+    };
     match proposal {
         AttestProposal::BackgroundCheck {
             challenge_token, ..
         } => {
             if challenge_token.is_empty() {
-                return error_response(MISSING_NONCE);
+                return Err(AttestError::MissingNonce);
             }
             let Some(producer) = evidence_producer else {
-                return error_response("not configured to attest");
+                return Err(AttestError::NotConfigured);
             };
             let claims = match claims.claims(proposal).await {
                 Ok(claims) => claims,
                 Err(error) => {
                     tracing::error!(?error, "failed to build background-check claims");
-                    return error_response(ATTESTATION_UNAVAILABLE);
+                    return Err(AttestError::Unavailable);
                 }
             };
             match produce_evidence_with_retry(producer, claims, max_retries).await {
-                Ok(evidence) => evidence_response(evidence.provider, evidence.evidence),
+                Ok(evidence) => Ok(evidence_response(evidence.provider, evidence.evidence)),
                 Err(error) => {
                     tracing::error!(?error, "Failed to produce background-check evidence");
-                    error_response(ATTESTATION_UNAVAILABLE)
+                    Err(AttestError::Unavailable)
                 }
             }
         }
         AttestProposal::Passport { .. } => {
             let Some(producer) = token_producer else {
-                return error_response("not configured to attest");
+                return Err(AttestError::NotConfigured);
             };
             let Some(cache) = passport_cache else {
-                return error_response("not configured to attest");
+                return Err(AttestError::NotConfigured);
             };
             match cache
                 .get_or_mint(Box::new(move || {
@@ -261,10 +281,10 @@ where
                 }))
                 .await
             {
-                Ok(token) => token_response(token.provider_type(), token.as_str()),
+                Ok(token) => Ok(token_response(token.provider_type(), token.as_str())),
                 Err(error) => {
                     tracing::error!(?error, "Failed to produce passport token");
-                    error_response(ATTESTATION_UNAVAILABLE)
+                    Err(AttestError::Unavailable)
                 }
             }
         }
@@ -346,8 +366,16 @@ mod tests {
     #[test]
     fn response_json_shape() {
         assert_eq!(
-            serde_json::to_value(error_response("not configured to attest")).unwrap(),
-            json!({"Err": "not configured to attest"})
+            serde_json::to_value(error_response(AttestError::NotConfigured)).unwrap(),
+            json!({"Err": "not_configured"})
+        );
+        assert_eq!(
+            serde_json::to_value(error_response(AttestError::DuplicateProposal {
+                model: Model::BackgroundCheck,
+                provider: ProviderType::Coco,
+            }))
+            .unwrap(),
+            json!({"Err": {"duplicate_proposal": {"model": "background_check", "provider": "coco"}}})
         );
         assert_eq!(
             serde_json::to_value(ack_response()).unwrap(),
@@ -364,25 +392,134 @@ mod tests {
         assert!(serde_json::from_str::<AttestResponse>(r#"{"type":"ack"}"#).is_err());
     }
 
+    struct UnusedClaims;
+
+    impl AttestClaims for UnusedClaims {
+        fn claims<'a>(
+            &'a self,
+            _proposal: &'a AttestProposal,
+        ) -> Pin<Box<dyn Future<Output = Result<Claims>> + Send + 'a>> {
+            Box::pin(async { bail!("claims should not be built") })
+        }
+    }
+
+    struct NoCache;
+
+    impl PassportTokenCache for NoCache {
+        fn get_or_mint<'a>(
+            &'a self,
+            _mint: Box<
+                dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>>
+                    + Send
+                    + 'a,
+            >,
+        ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> {
+            Box::pin(async { bail!("cache should not be consulted") })
+        }
+    }
+
+    fn request(proposals: Vec<AttestProposal>) -> AttestRequest {
+        AttestRequest { proposals }
+    }
+
+    #[tokio::test]
+    async fn produce_acks_an_empty_list_and_rejects_one_it_cannot_answer() {
+        let ack = produce_attest_response(
+            &request(vec![]),
+            None,
+            &UnusedClaims,
+            None,
+            None,
+            None::<&NoCache>,
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(ack, ack_response());
+
+        let err = produce_attest_response(
+            &request(vec![AttestProposal::Passport {
+                provider: ProviderType::Coco,
+            }]),
+            None,
+            &UnusedClaims,
+            None,
+            None,
+            None::<&NoCache>,
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AttestError::NotConfigured));
+
+        let err = produce_attest_response(
+            &request(vec![AttestProposal::BackgroundCheck {
+                provider: ProviderType::Coco,
+                challenge_token: String::new(),
+            }]),
+            Some((Model::BackgroundCheck, ProviderType::Coco)),
+            &UnusedClaims,
+            None,
+            None,
+            None::<&NoCache>,
+            0,
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AttestError::MissingNonce));
+    }
+
+    const COCO: ProviderType = ProviderType::Coco;
+    const ITA: ProviderType = ProviderType::Ita;
+
+    fn bc(provider: ProviderType, nonce: &str) -> AttestProposal {
+        AttestProposal::BackgroundCheck {
+            provider,
+            challenge_token: nonce.into(),
+        }
+    }
+
     #[test]
-    fn pick_proposal_acks_only_an_empty_list() {
-        assert!(matches!(pick_proposal(&[], None), Answer::Ack));
+    fn pick_proposal_matches_exactly() {
+        let proposals = [bc(COCO, "n"), AttestProposal::Passport { provider: ITA }];
+        assert_eq!(
+            pick_proposal(&proposals, Some((Model::Passport, ITA)))
+                .unwrap()
+                .unwrap(),
+            &proposals[1]
+        );
+        assert_eq!(
+            pick_proposal(&proposals, Some((Model::BackgroundCheck, COCO)))
+                .unwrap()
+                .unwrap(),
+            &proposals[0]
+        );
         assert!(matches!(
-            pick_proposal(
-                &[AttestProposal::Passport {
-                    provider: ProviderType::Coco
-                }],
-                None
-            ),
-            Answer::Reject(_)
+            pick_proposal(&proposals, Some((Model::Passport, COCO))).unwrap_err(),
+            AttestError::NoCompatibleProposal
         ));
-        let proposals = [AttestProposal::Passport {
-            provider: ProviderType::Coco,
-        }];
-        assert!(matches!(
-            pick_proposal(&proposals, Some((Model::Passport, ProviderType::Coco))),
-            Answer::Matched(_)
-        ));
+        assert!(pick_proposal(&[], Some((Model::Passport, COCO)))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn pick_proposal_rejects_duplicates() {
+        let proposals = [bc(COCO, "a"), bc(COCO, "b")];
+        let err = pick_proposal(&proposals, Some((Model::BackgroundCheck, COCO))).unwrap_err();
+        assert!(
+            matches!(err, AttestError::DuplicateProposal { .. }),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn find_proposal_binds_nonce_to_provider() {
+        let proposals = [bc(COCO, "coco-nonce"), bc(ITA, "ita-nonce")];
+        let proposal = find_proposal(&proposals, Model::BackgroundCheck, ITA).unwrap();
+        assert_eq!(proposal.challenge_token(), Some("ita-nonce"));
+        assert!(find_proposal(&proposals, Model::Passport, ITA).is_err());
+        assert!(find_proposal(&[], Model::Passport, ITA).is_err());
     }
 
     #[tokio::test]
@@ -403,9 +540,14 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains("unsolicited"));
-        let err = check_response(&sent, &error_response("nope"), None, |_| bail!("unused"))
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("nope"));
+        let err = check_response(
+            &sent,
+            &error_response(AttestError::Unavailable),
+            None,
+            |_| bail!("unused"),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("attestation unavailable"));
     }
 }

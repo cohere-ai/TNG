@@ -6,10 +6,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use rustls::sign::CertifiedKey;
 use tokio::io::{AsyncRead, AsyncWrite};
 
+use crate::error::AttestError;
 use crate::tunnel::attest::{
-    ack_response, check_response, error_response, pick_proposal, produce_attest_response,
-    produced_error_reason, Answer, AttestClaims, AttestRequest, AttestResponse, AttestVerifier,
-    EvidenceProducer, TokenProducer,
+    check_response, error_response, produce_attest_response, AttestClaims, AttestRequest,
+    AttestResponse, AttestVerifier, EvidenceProducer, TokenProducer,
 };
 use crate::tunnel::attestation_metrics::AttestationAttempt;
 use crate::tunnel::attestation_result::AttestationResult;
@@ -248,7 +248,7 @@ where
         Ok(req) => req,
         Err(e) if codec::is_malformed(&e) => {
             tracing::warn!(error = ?e, "peer sent a malformed attestation request");
-            let outgoing = error_response("malformed attestation proposal");
+            let outgoing = error_response(AttestError::Malformed);
             let _ = tokio::join!(write_response(wr, &outgoing), read_response(rd));
             bail!("failed to attest to peer: malformed attestation proposal");
         }
@@ -263,14 +263,14 @@ where
     if matches!(outgoing, Ok(Some(_))) {
         mark_succeeded(generate);
     }
-    let failed_reason = produced_error_reason(&outgoing).map(str::to_string);
+    let failed = outgoing.as_ref().err().cloned();
 
     let (write_res, read_res) = tokio::join!(write_response(wr, &outgoing), read_response(rd));
     write_res?;
     let incoming = read_res?;
 
-    if let Some(reason) = failed_reason {
-        bail!("failed to attest to peer: {reason}");
+    if let Some(error) = failed {
+        bail!("failed to attest to peer: {error}");
     }
 
     let verify = resources.start_if(!my_req.proposals.is_empty(), AttestationOperation::Verify);
@@ -283,25 +283,19 @@ async fn produce_outgoing(
     resources: &ExchangeResources<'_>,
     peer: &AttestRequest,
 ) -> AttestResponse {
-    let proposal = match pick_proposal(&peer.proposals, resources.attest_key) {
-        Answer::Ack => return ack_response(),
-        Answer::Reject(reason) => return error_response(reason),
-        Answer::Matched(proposal) => proposal,
-    };
-    let Some(own_spki) = resources.own_spki_der else {
-        return error_response("attesting side has no snapshotted certificate");
-    };
+    let own_spki = resources.own_spki_der;
     let bound = resources.passport_cache.map(|cache| BoundPassportCache {
         cache,
-        spki: own_spki,
+        spki: own_spki.unwrap_or(b""),
     });
     let claims = TlsClaims {
         own_spki,
         exporter: &resources.exporter,
         converter: resources.attest_converter,
     };
-    produce_attest_response(
-        proposal,
+    match produce_attest_response(
+        peer,
+        resources.attest_key,
         &claims,
         resources.evidence_producer,
         resources.token_producer,
@@ -309,10 +303,14 @@ async fn produce_outgoing(
         resources.max_retries,
     )
     .await
+    {
+        Ok(response) => response,
+        Err(error) => error_response(error),
+    }
 }
 
 struct TlsClaims<'a> {
-    own_spki: &'a [u8],
+    own_spki: Option<&'a [u8]>,
     exporter: &'a [u8],
     converter: Option<&'a dyn ChallengeSource>,
 }
@@ -333,10 +331,13 @@ impl AttestClaims for TlsClaims<'_> {
 
 async fn tls_claims(
     proposal: &AttestProposal,
-    own_spki: &[u8],
+    own_spki: Option<&[u8]>,
     exporter: &[u8],
     converter: Option<&dyn ChallengeSource>,
 ) -> Result<rats_cert::tee::claims::Claims> {
+    let Some(own_spki) = own_spki else {
+        bail!("attesting side has no snapshotted certificate");
+    };
     match proposal {
         AttestProposal::BackgroundCheck {
             challenge_token, ..
@@ -383,10 +384,10 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::super::claims::expected_subset_of;
+    use crate::tunnel::attest::ack_response;
     use crate::tunnel::attest::Evidence;
     use crate::tunnel::attest::{evidence_response, token_response};
     use crate::tunnel::provider::TngToken;
-    use crate::tunnel::select_proposal::NO_COMPATIBLE_PROPOSAL;
 
     const SPKI: &[u8] = b"spki-a";
     const EXP: [u8; EXPORTER_LEN] = [7u8; EXPORTER_LEN];
@@ -547,9 +548,9 @@ mod tests {
         }
     }
 
-    fn error_reason(resp: AttestResponse) -> String {
+    fn error_of(resp: AttestResponse) -> AttestError {
         match resp {
-            Err(reason) => reason,
+            Err(error) => error,
             other => panic!("expected error, got {other:?}"),
         }
     }
@@ -629,11 +630,11 @@ mod tests {
         let (res, _) = against_peer(
             verify_only(&proposals, &verifier),
             AttestRequest::default(),
-            error_response("changed my mind"),
+            error_response(AttestError::NotConfigured),
         )
         .await;
         let err = res.unwrap_err().to_string();
-        assert!(err.contains("changed my mind"), "{err}");
+        assert!(err.contains("not configured to attest"), "{err}");
         assert!(!err.contains("timed out"), "{err}");
 
         let (res, _) = against_peer(
@@ -714,20 +715,26 @@ mod tests {
     async fn attester_fail_closes_on_unanswerable_proposals() {
         let producer = ClaimsEchoProducer;
         let cases = [
-            (proposing(&[coco_bc("")]), "missing nonce"),
+            (proposing(&[coco_bc("")]), AttestError::MissingNonce),
             (
                 proposing(&[AttestProposal::Passport {
                     provider: ProviderType::Ita,
                 }]),
-                NO_COMPATIBLE_PROPOSAL,
+                AttestError::NoCompatibleProposal,
             ),
-            (proposing(&[coco_bc("a"), coco_bc("b")]), "duplicate"),
+            (
+                proposing(&[coco_bc("a"), coco_bc("b")]),
+                AttestError::DuplicateProposal {
+                    model: Model::BackgroundCheck,
+                    provider: ProviderType::Coco,
+                },
+            ),
         ];
-        for (req, needle) in cases {
+        for (req, expected) in cases {
             let (res, resp) = attester_answer(attest_only(&producer), req).await;
-            let reason = error_reason(resp);
-            assert!(reason.contains(needle), "{reason}");
-            assert_err_contains(res, needle);
+            let error = error_of(resp);
+            assert_eq!(error, expected);
+            assert_err_contains(res, &error.to_string());
         }
 
         let (mut peer, local) = tokio::io::duplex(4096);
@@ -743,7 +750,7 @@ mod tests {
             resp
         };
         let (res, resp) = tokio::join!(local_fut, peer_fut);
-        assert_eq!(error_reason(resp), "malformed attestation proposal");
+        assert_eq!(error_of(resp), AttestError::Malformed);
         assert_err_contains(
             res.map(|(_, result)| result),
             "malformed attestation proposal",

@@ -15,8 +15,8 @@ use rats_cert::tee::{AttesterPipeline, GenericConverter as _};
 
 use crate::error::TngError;
 use crate::tunnel::attest::{
-    ack_response, pick_proposal, produce_attest_response, Answer, AttestClaims, AttestResponse,
-    EvidenceProducer, PassportTokenCache, TokenProducer, MISSING_NONCE,
+    produce_attest_response, AttestClaims, AttestRequest, AttestResponse, EvidenceProducer,
+    PassportTokenCache, TokenProducer,
 };
 use crate::tunnel::egress::protocol::ohttp::security::api::OhttpServerApi;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::KeyManager;
@@ -87,12 +87,17 @@ impl OhttpServerApi {
             encoded_key_config_list,
         };
 
-        let proposals = payload
-            .map(|Json(payload)| payload.attest_request.proposals)
+        let attest_request = payload
+            .map(|Json(payload)| payload.attest_request)
             .unwrap_or_default();
-        let attestation_requested = !proposals.is_empty();
-        let attest_resp =
-            make_attest_response(ra_context, passport_cache, &proposals, &hpke_key_config).await;
+        let attestation_requested = !attest_request.proposals.is_empty();
+        let attest_resp = make_attest_response(
+            ra_context,
+            passport_cache,
+            &attest_request,
+            &hpke_key_config,
+        )
+        .await;
 
         if attestation_requested {
             if let Some(metrics) = ra_context.attestation_metrics() {
@@ -115,37 +120,29 @@ impl OhttpServerApi {
 async fn make_attest_response(
     ra_context: &RaContext,
     passport_cache: &OhttpPassportCache,
-    proposals: &[AttestProposal],
+    request: &AttestRequest,
     hpke_key_config: &HpkeKeyConfig,
 ) -> Result<AttestResponse, TngError> {
-    let own_key = ra_context.attest_context().map(AttestContext::proposal_key);
-    let proposal = match pick_proposal(proposals, own_key) {
-        Answer::Ack => return Ok(ack_response()),
-        Answer::Reject(reason) => return Err(TngError::UnacceptableAttestRequest(reason)),
-        Answer::Matched(proposal) => proposal,
-    };
-    let Some(attest_ctx) = ra_context.attest_context() else {
-        return Err(TngError::AttestationUnavailable(
-            "not configured to attest".into(),
-        ));
-    };
+    let attest_ctx = ra_context.attest_context();
+    let own_key = attest_ctx.map(AttestContext::proposal_key);
     let mut pipeline = None;
     let (evidence_producer, max_retries, refresh) = match attest_ctx {
-        AttestContext::BackgroundCheck {
+        Some(AttestContext::BackgroundCheck {
             attester,
             max_retries,
             ..
-        } => (Some(attester as &dyn EvidenceProducer), *max_retries, None),
-        AttestContext::Passport {
+        }) => (Some(attester as &dyn EvidenceProducer), *max_retries, None),
+        Some(AttestContext::Passport {
             attester,
             converter,
             max_retries,
             refresh_strategy,
             ..
-        } => {
+        }) => {
             pipeline = Some(AttesterPipeline::new(attester, converter));
             (None, *max_retries, Some(*refresh_strategy))
         }
+        None => (None, 0, None),
     };
     let token_producer = pipeline
         .as_ref()
@@ -159,25 +156,22 @@ async fn make_attest_response(
         hpke_key_config,
         attest_ctx,
     };
-    let produced = produce_attest_response(
-        proposal,
+    produce_attest_response(
+        request,
+        own_key,
         &claims,
         evidence_producer,
         token_producer,
         bound_cache.as_ref(),
         max_retries,
     )
-    .await;
-    match produced {
-        Ok(output) => Ok(Ok(output)),
-        Err(reason) if reason == MISSING_NONCE => Err(TngError::UnacceptableAttestRequest(reason)),
-        Err(reason) => Err(TngError::AttestationUnavailable(reason)),
-    }
+    .await
+    .map_err(TngError::from)
 }
 
 struct OhttpClaims<'a> {
     hpke_key_config: &'a HpkeKeyConfig,
-    attest_ctx: &'a AttestContext,
+    attest_ctx: Option<&'a AttestContext>,
 }
 
 impl AttestClaims for OhttpClaims<'_> {
@@ -192,8 +186,11 @@ impl AttestClaims for OhttpClaims<'_> {
 async fn claims_for(
     proposal: &AttestProposal,
     hpke_key_config: &HpkeKeyConfig,
-    attest_ctx: &AttestContext,
+    attest_ctx: Option<&AttestContext>,
 ) -> Result<Claims> {
+    let Some(attest_ctx) = attest_ctx else {
+        bail!("not configured to attest");
+    };
     let challenge_token = match (proposal, attest_ctx) {
         (
             AttestProposal::BackgroundCheck {

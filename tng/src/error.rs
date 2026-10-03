@@ -11,6 +11,45 @@ use strum_macros::AsRefStr;
 use thiserror::Error;
 
 use crate::tunnel::ohttp::key_config::PublicKeyData;
+use crate::tunnel::proposal::Model;
+use crate::tunnel::provider::ProviderType;
+
+/// Failure while answering an attestation request.
+///
+/// This is the `Err` arm of an [`crate::tunnel::attest::AttestResponse`], so a peer can match
+/// the variant. [`Self::Unavailable`] is an attester or claims failure. Every other variant is
+/// a request this side will not answer. Display text is for logs and HTTP bodies. It does not
+/// include the local configuration or the local error chain. OHTTP maps [`Self::Unavailable`]
+/// to HTTP 500 and the rest to HTTP 400.
+#[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttestError {
+    #[error("not configured to attest")]
+    NotConfigured,
+    #[error("no compatible attestation proposal")]
+    NoCompatibleProposal,
+    #[error("duplicate proposal for ({model}, {provider})")]
+    DuplicateProposal {
+        model: Model,
+        provider: ProviderType,
+    },
+    #[error("missing nonce")]
+    MissingNonce,
+    #[error("attestation unavailable")]
+    Unavailable,
+    #[error("malformed attestation proposal")]
+    Malformed,
+}
+
+impl From<AttestError> for TngError {
+    fn from(error: AttestError) -> Self {
+        let message = error.to_string();
+        match error {
+            AttestError::Unavailable => TngError::AttestationUnavailable(message),
+            _ => TngError::UnacceptableAttestRequest(message),
+        }
+    }
+}
 
 /// Custom error type
 #[derive(Error, Debug, AsRefStr)]
@@ -159,6 +198,7 @@ impl IntoResponse for TngError {
             TngError::Base64DecodeError(..) => StatusCode::BAD_REQUEST,
             TngError::MetadataDecodeError(..) => StatusCode::BAD_REQUEST,
             TngError::MetadataEncodeError(..) => StatusCode::INTERNAL_SERVER_ERROR,
+            TngError::MetadataValidateError(..) => StatusCode::BAD_REQUEST,
             TngError::ConstructHttpResponseFailed(..) => StatusCode::INTERNAL_SERVER_ERROR,
 
             // Not Found / Upstream issues
@@ -196,7 +236,6 @@ impl IntoResponse for TngError {
             TngError::SystemTimeError(..)
             | TngError::OhttpError(..)
             | TngError::BhttpError(..)
-            | TngError::MetadataValidateError(..)
             | TngError::RequestKeyConfigFailed(..)
             | TngError::AttestationUnavailable(..)
             | TngError::ClientSelectHpkeConfigurationFailed(..)

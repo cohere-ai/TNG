@@ -95,8 +95,9 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::AttestError;
     use crate::tunnel::attest::{evidence_response, token_response, AttestResponse};
-    use crate::tunnel::proposal::AttestProposal;
+    use crate::tunnel::proposal::{AttestProposal, Model};
     use crate::tunnel::provider::ProviderType;
     use serde_json::json;
 
@@ -144,8 +145,13 @@ mod tests {
         let token = token_response(ProviderType::Ita, jwt);
         assert_eq!(round_trip_response(token.clone()).await, token);
 
-        let err = Err("not configured to attest".to_string());
+        let err = Err(AttestError::NotConfigured);
         assert_eq!(round_trip_response(err.clone()).await, err);
+        let duplicate = Err(AttestError::DuplicateProposal {
+            model: Model::BackgroundCheck,
+            provider: ProviderType::Coco,
+        });
+        assert_eq!(round_trip_response(duplicate.clone()).await, duplicate);
 
         assert_eq!(round_trip_response(Ok(None)).await, Ok(None));
     }

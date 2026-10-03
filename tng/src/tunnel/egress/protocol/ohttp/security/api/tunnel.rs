@@ -1,17 +1,9 @@
-use anyhow::{anyhow, bail, Result};
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine as _;
+use anyhow::{anyhow, Result};
 use bhttp::http_compat::decode::{BhttpDecoder, HttpMessage};
 use bhttp::http_compat::encode::BhttpEncoder;
 use bytes::BytesMut;
 use futures::{AsyncWriteExt, StreamExt as _, TryStreamExt as _};
 use prost::Message as _;
-use rats_cert::tee::{GenericVerifier as _, ReportData};
-
-use std::str::FromStr as _;
-
-use crate::tunnel::proposal::Model;
-use crate::tunnel::provider::{ProviderType, TngToken};
 use tokio::io::AsyncReadExt;
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;
 use tokio_util::compat::FuturesAsyncWriteCompatExt as _;
@@ -25,12 +17,7 @@ use crate::tunnel::ohttp::key_config::PublicKeyData;
 use crate::tunnel::ohttp::protocol::header::{
     OHTTP_CHUNKED_REQUEST_CONTENT_TYPE, OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE,
 };
-use crate::tunnel::ohttp::protocol::metadata::metadata::ClientAuth;
-use crate::tunnel::ohttp::protocol::metadata::{
-    AttestedPublicKey, Metadata, NoAuth, METADATA_MAX_LEN,
-};
-use crate::tunnel::ohttp::protocol::userdata::ClientUserData;
-use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
+use crate::tunnel::ohttp::protocol::metadata::{Metadata, METADATA_MAX_LEN};
 
 impl OhttpServerApi {
     /// Interface 2: Process Encrypted Request
@@ -100,22 +87,6 @@ impl OhttpServerApi {
             key_id = header_decoded.key_id(),
             "Received OHTTP request"
         );
-
-        // Check metadata
-        let attestation_required = self.ra_context.verify_set().is_some();
-        let attestation_result = self
-            .validate_client_attestation_consistency(metadata.client_auth)
-            .await;
-        if attestation_required {
-            if let Some(metrics) = self.ra_context.attestation_metrics() {
-                metrics.record(
-                    AttestationOperation::Verify,
-                    AttestationProtocol::Ohttp,
-                    attestation_result.is_ok(),
-                );
-            }
-        }
-        attestation_result.map_err(TngError::MetadataValidateError)?;
 
         let key_info = if let Some(hint) = metadata.key_config_hint {
             // Get key by hint
@@ -199,57 +170,5 @@ impl OhttpServerApi {
             .map_err(TngError::ConstructHttpResponseFailed)?;
 
         Ok(response)
-    }
-
-    /// Validates that the provided client metadata type is consistent with the server's
-    /// remote attestation (RA) configuration.
-    async fn validate_client_attestation_consistency(
-        &self,
-        client_auth: Option<ClientAuth>,
-    ) -> Result<()> {
-        match (client_auth, self.ra_context.verify_set()) {
-            (
-                Some(ClientAuth::AttestedPublicKey(AttestedPublicKey {
-                    attestation_result,
-                    pk_s,
-                    provider,
-                    model,
-                })),
-                Some(verify_set),
-            ) => {
-                let provider = ProviderType::from_required_wire_str(&provider)?;
-                let model = Model::from_str(&model)?;
-                let token = TngToken::deserialize_from_wire_str(provider, &attestation_result)?;
-
-                let userdata = ClientUserData {
-                    // The challenge_token is not required to be check here, since it is already checked by attestation service. So that we skip the comparesion of challenge_token here.
-                    challenge_token: None,
-                    pk_s: BASE64_STANDARD.encode(&pk_s),
-                }
-                .to_claims()?;
-
-                verify_set
-                    .entry(model, provider)?
-                    .verifier()
-                    .verify_evidence(&token, &ReportData::Claims(userdata))
-                    .await?;
-            }
-            (Some(ClientAuth::NoAuth(NoAuth {})), None) => {
-                // Peace and love - no attestation required and client didn't provide any
-            }
-            (Some(ClientAuth::NoAuth(NoAuth {})), Some(_)) => {
-                bail!(
-                    "client attestation is required but no attestation info was provided by client"
-                )
-            }
-            (Some(ClientAuth::AttestedPublicKey(..)), None) => {
-                bail!("client attestation is not required but some attestation info ware provided by client")
-            }
-            (None, _) => {
-                bail!("client_auth is empty")
-            }
-        }
-
-        Ok(())
     }
 }

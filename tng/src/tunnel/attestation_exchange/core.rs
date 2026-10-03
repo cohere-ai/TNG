@@ -110,12 +110,13 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
 
+    use crate::error::AttestError;
     use crate::tunnel::attest::{
-        produce_attest_response, produced_error_reason, AttestClaims, Evidence, EvidenceProducer,
-        TokenProducer, ATTESTATION_UNAVAILABLE,
+        error_response, produce_attest_response, AttestClaims, AttestRequest, Evidence,
+        EvidenceProducer, TokenProducer,
     };
     use crate::tunnel::challenge::ChallengeSource;
-    use crate::tunnel::proposal::AttestProposal;
+    use crate::tunnel::proposal::{AttestProposal, Model};
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
     use rats_cert::tee::claims::Claims;
@@ -196,6 +197,12 @@ mod tests {
         }
     }
 
+    fn as_response(
+        produced: Result<crate::tunnel::attest::AttestResponse, crate::error::AttestError>,
+    ) -> crate::tunnel::attest::AttestResponse {
+        produced.unwrap_or_else(error_response)
+    }
+
     async fn cached_passport(
         producer: &CountingTokenProducer,
         conv: &RecordingConverter,
@@ -207,7 +214,20 @@ mod tests {
         };
         let bound = BoundPassportCache { cache, spki };
         let claims = PassportTestClaims { conv, spki };
-        produce_attest_response(&proposal, &claims, None, Some(producer), Some(&bound), 0).await
+        as_response(
+            produce_attest_response(
+                &AttestRequest {
+                    proposals: vec![proposal],
+                },
+                Some((Model::Passport, ProviderType::Coco)),
+                &claims,
+                None,
+                Some(producer),
+                Some(&bound),
+                0,
+            )
+            .await,
+        )
     }
 
     struct PassportTestClaims<'a> {
@@ -296,11 +316,8 @@ mod tests {
         let cache = PassportEvidenceCache::new();
         let first = cached_passport(&producer, &conv, b"spki", &cache).await;
         let second = cached_passport(&producer, &conv, b"spki", &cache).await;
-        assert_eq!(produced_error_reason(&first), Some(ATTESTATION_UNAVAILABLE));
-        assert_eq!(
-            produced_error_reason(&second),
-            Some(ATTESTATION_UNAVAILABLE)
-        );
+        assert_eq!(first, Err(AttestError::Unavailable));
+        assert_eq!(second, Err(AttestError::Unavailable));
         assert_eq!(producer.count.load(Ordering::SeqCst), 2);
     }
 
@@ -311,19 +328,21 @@ mod tests {
             provider: ProviderType::Coco,
             challenge_token: "nonce".into(),
         };
-        let evidence = produce_attest_response(
-            &proposal,
-            &EmptyClaims,
-            Some(&producer),
-            None,
-            None::<&BoundPassportCache>,
-            0,
-        )
-        .await;
-        assert_eq!(
-            produced_error_reason(&evidence),
-            Some(ATTESTATION_UNAVAILABLE)
+        let evidence = as_response(
+            produce_attest_response(
+                &AttestRequest {
+                    proposals: vec![proposal],
+                },
+                Some((Model::BackgroundCheck, ProviderType::Coco)),
+                &EmptyClaims,
+                Some(&producer),
+                None,
+                None::<&BoundPassportCache>,
+                0,
+            )
+            .await,
         );
+        assert_eq!(evidence, Err(AttestError::Unavailable));
 
         let conv = RecordingConverter {
             nonce: "passport-as-nonce".into(),
@@ -336,9 +355,6 @@ mod tests {
             &PassportEvidenceCache::new(),
         )
         .await;
-        assert_eq!(
-            produced_error_reason(&passport),
-            Some(ATTESTATION_UNAVAILABLE)
-        );
+        assert_eq!(passport, Err(AttestError::Unavailable));
     }
 }

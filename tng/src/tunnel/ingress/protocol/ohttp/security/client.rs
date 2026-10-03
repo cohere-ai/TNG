@@ -6,7 +6,6 @@ use bhttp::http_compat::{
 };
 use bytes::{BufMut, BytesMut};
 use futures::{AsyncWriteExt as _, StreamExt, TryStreamExt as _};
-use hpke::{kem::X25519HkdfSha256, Kem};
 use http::StatusCode;
 use ohttp::KeyConfig;
 use prost::Message;
@@ -35,7 +34,7 @@ use crate::{
     tunnel::{
         attest::{check_response, AttestRequest},
         ohttp::protocol::{
-            metadata::{metadata::ClientAuth, Metadata, NoAuth, METADATA_MAX_LEN},
+            metadata::{Metadata, ServerKeyConfigHint, METADATA_MAX_LEN},
             userdata::ServerUserData,
             KeyConfigRequest, KeyConfigResponse,
         },
@@ -47,12 +46,8 @@ use crate::{
     tunnel::{
         ohttp::{
             key_config::KeyConfigExtend,
-            protocol::{
-                header::{
-                    OhttpApi, OHTTP_CHUNKED_REQUEST_CONTENT_TYPE,
-                    OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE,
-                },
-                metadata::ServerKeyConfigHint,
+            protocol::header::{
+                OhttpApi, OHTTP_CHUNKED_REQUEST_CONTENT_TYPE, OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE,
             },
         },
         ra_context::RaContext,
@@ -81,14 +76,6 @@ pub struct OHttpClientInner {
 }
 
 struct KeyStoreValue {
-    client_auth: ClientAuth,
-
-    #[allow(unused)]
-    client_key: Option<(
-        <X25519HkdfSha256 as Kem>::PrivateKey,
-        <X25519HkdfSha256 as Kem>::PublicKey,
-    )>,
-
     /// A base64 encoded list of key configurations, each entry is a Individual key configuration entry. Defined in Section 3.1 of RFC 9458.
     server_key_config_list: Vec<KeyConfig>,
 
@@ -165,11 +152,7 @@ impl OHttpClient {
 
         match self
             .inner
-            .send_encrypted_request(
-                &key_store_value.server_key_config_list,
-                &key_store_value.client_auth,
-                request,
-            )
+            .send_encrypted_request(&key_store_value.server_key_config_list, request)
             .await
         {
             Ok(response) => Ok((response, key_store_value.server_attestation_result.clone())),
@@ -189,8 +172,11 @@ impl OHttpClient {
 
 impl OHttpClientInner {
     async fn create_key_store_value(&self) -> Result<(KeyStoreValue, Expire)> {
-        // Handle metatdata for self
-        let (client_key, client_auth, mut expire) = self.create_attested_client_key().await?;
+        #[cfg(unix)]
+        if self.ra_context.attest_context().is_some() {
+            bail!("client attestation over OHTTP is disabled");
+        }
+        let mut expire = Expire::NoExpire;
         #[cfg(unix)]
         let attestation_attempt = self.ra_context.verify_set().map(|set| {
             set.attestation_metrics()
@@ -271,33 +257,13 @@ impl OHttpClientInner {
                 .as_ref(),
         )?;
 
-        let result = (
+        Ok((
             KeyStoreValue {
-                client_auth,
-                client_key, // TODO: ohttp hpke setup with the client key
                 server_key_config_list,
                 server_attestation_result,
             },
             expire,
-        );
-        Ok(result)
-    }
-
-    async fn create_attested_client_key(
-        &self,
-    ) -> Result<(
-        Option<(
-            <X25519HkdfSha256 as Kem>::PrivateKey,
-            <X25519HkdfSha256 as Kem>::PublicKey,
-        )>,
-        ClientAuth,
-        Expire,
-    )> {
-        #[cfg(unix)]
-        if self.ra_context.attest_context().is_some() {
-            bail!("client attestation over OHTTP is disabled");
-        }
-        Ok((None, ClientAuth::NoAuth(NoAuth {}), Expire::NoExpire))
+        ))
     }
 
     /// Interface 1: Get HPKE Configuration
@@ -345,7 +311,6 @@ impl OHttpClientInner {
     async fn send_encrypted_request(
         &self,
         server_key_config_list: &[KeyConfig],
-        client_auth: &ClientAuth,
         request: axum::extract::Request,
     ) -> Result<axum::response::Response, TngError> {
         // Encode the request to bhttp message
@@ -414,7 +379,6 @@ impl OHttpClientInner {
         let ohttp_request_body = {
             let metadata_buf = {
                 let metadata = Metadata {
-                    client_auth: Some(client_auth.clone()), // TODO: optimize this clone
                     key_config_hint: Some(ServerKeyConfigHint {
                         public_key: key_config.public_key_data()?.into_vec(),
                     }),

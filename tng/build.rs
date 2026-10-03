@@ -12,10 +12,7 @@ fn main() {
 
     // For protoc
     prost_build::Config::new()
-        .skip_debug([
-            "tng.ohttp.metadata.ServerKeyConfigHint",
-            "tng.ohttp.metadata.AttestedPublicKey",
-        ])
+        .skip_debug(["tng.ohttp.metadata.ServerKeyConfigHint"])
         .compile_protos(
             &["src/tunnel/ohttp/protocol/metadata.proto"],
             &["src/tunnel/ohttp/protocol/"],
