@@ -889,11 +889,7 @@ By default, TNG uses the rats-tls protocol to provide TCP stream-level encryptio
 > If the OHTTP feature is enabled, the inner protected business must be HTTP traffic, not ordinary TCP traffic.
 
 > [!NOTE]
-> **Client attestation over OHTTP is disabled.** With `ohttp`, an ingress may `verify` the egress but may not `attest`, and an egress may `attest` but may not `verify`. TNG refuses to start otherwise. Over OHTTP the client attests once, gets a token, and attaches it to later requests, where it is checked separately and possibly by another egress. That separation leaves gaps:
-> - The egress cannot tell how a token was obtained, so the background-check and passport models cannot be enforced.
-> - `coco_builtin` tokens are only accepted by the egress process that minted them, which breaks with restarts or multiple egresses when using `peer_shared` keys.
->
-> Use `rats_tls` when the server must verify its clients. The `attest` and `verify` fields of `peer_shared` key distribution are unaffected.
+> **OHTTP attestation is one way.** With `ohttp`, the ingress can `verify` the egress, and the egress can `attest`. An ingress `attest` or an egress `verify` is refused at startup. There is no client-attestation exchange on this protocol. Use `rats_tls` when the server must verify its clients. The `attest` and `verify` fields of `peer_shared` key distribution are unaffected.
 
 ### OHttp: Ingress Configuration
 

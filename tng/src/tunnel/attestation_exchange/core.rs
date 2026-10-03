@@ -1,155 +1,26 @@
+//! RA-TLS passport token cache.
+//!
+//! The exchange itself lives in [`super::session`] (who speaks when) and [`super::codec`]
+//! (length-prefixed JSON on the TLS stream). This module only stores the token that
+//! [`crate::tunnel::attest::produce_attest_response`] mints in passport mode.
+//!
+//! [`PassportEvidenceCache`] holds one token. [`BoundPassportCache`] pins that cache to the
+//! attested certificate's SPKI for a single exchange and implements
+//! [`crate::tunnel::attest::PassportTokenCache`]. A hit requires the same SPKI and an unexpired
+//! `exp`. A miss runs the mint closure `produce_attest_response` supplies. OHTTP has its own
+//! cache, bound to the HPKE key config, and does not use this type.
+
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
-use again::RetryPolicy;
-use anyhow::{anyhow, Context, Result};
-use rats_cert::tee::claims::Claims;
-use rats_cert::tee::{GenericAttester, ReportData};
+use std::future::Future;
+use std::pin::Pin;
 
-use crate::tunnel::attestation_result::AttestationResult;
-use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
+use anyhow::Result;
+
+use crate::tunnel::attest::PassportTokenCache;
+use crate::tunnel::provider::{ProviderType, TngToken};
 use crate::tunnel::utils::maybe_cached::Expire;
-
-use super::claims::{background_check_claims, passport_attester_claims};
-use super::message::Response;
-use crate::tunnel::challenge::ChallengeSource;
-
-pub struct Evidence {
-    pub provider: ProviderType,
-    pub evidence: serde_json::Value,
-}
-
-#[async_trait::async_trait]
-pub trait EvidenceProducer: Send + Sync {
-    async fn produce(&self, claims: Claims) -> Result<Evidence>;
-}
-
-#[async_trait::async_trait]
-pub trait TokenProducer: Send + Sync {
-    async fn produce(&self, claims: Claims) -> Result<TngToken>;
-}
-
-#[async_trait::async_trait]
-pub trait ExchangeVerifier: Send + Sync {
-    async fn verify_evidence(
-        &self,
-        provider: ProviderType,
-        evidence: &serde_json::Value,
-        expected: Claims,
-    ) -> Result<AttestationResult>;
-
-    async fn verify_token(
-        &self,
-        provider: ProviderType,
-        jwt: &str,
-        expected: Claims,
-    ) -> Result<AttestationResult>;
-}
-
-/// Sent in place of the local error chain, which must not reach an unverified peer.
-pub const ATTESTATION_UNAVAILABLE: &str = "attestation unavailable";
-
-pub fn ack_response() -> Response {
-    Response::Ack
-}
-
-pub fn error_response(reason: impl Into<String>) -> Response {
-    Response::Error {
-        reason: reason.into(),
-    }
-}
-
-pub fn evidence_response(provider: ProviderType, evidence: serde_json::Value) -> Response {
-    Response::Evidence { provider, evidence }
-}
-
-pub fn token_response(provider: ProviderType, token: impl Into<String>) -> Response {
-    Response::Token {
-        provider,
-        token: token.into(),
-    }
-}
-
-pub async fn produce_background_check_evidence<P: EvidenceProducer + ?Sized>(
-    producer: &P,
-    own_spki_der: &[u8],
-    challenge_token: &str,
-    exporter: &[u8],
-    max_retries: usize,
-) -> Result<Response> {
-    if challenge_token.is_empty() {
-        return Ok(error_response("missing nonce"));
-    }
-    let claims = background_check_claims(own_spki_der, challenge_token, exporter)?;
-    match produce_evidence_with_retry(producer, claims, max_retries).await {
-        Ok(evidence) => Ok(evidence_response(evidence.provider, evidence.evidence)),
-        Err(e) => {
-            tracing::error!(error = ?e, "Failed to produce background-check evidence");
-            Ok(error_response(ATTESTATION_UNAVAILABLE))
-        }
-    }
-}
-
-pub async fn produce_passport_token<P: TokenProducer + ?Sized, C: ChallengeSource + ?Sized>(
-    producer: &P,
-    converter: &C,
-    own_spki_der: &[u8],
-    cache: &PassportEvidenceCache,
-    max_retries: usize,
-) -> Result<Response> {
-    match cache
-        .get_or_mint(own_spki_der, || async {
-            let nonce = converter.get_nonce().await?;
-            let claims = passport_attester_claims(own_spki_der, &nonce)?;
-            produce_token_with_retry(producer, claims, max_retries).await
-        })
-        .await
-    {
-        Ok(token) => Ok(token_response(token.provider_type(), token.as_str())),
-        Err(e) => {
-            tracing::error!(error = ?e, "Failed to produce passport token");
-            Ok(error_response(ATTESTATION_UNAVAILABLE))
-        }
-    }
-}
-
-async fn produce_evidence_with_retry<P: EvidenceProducer + ?Sized>(
-    producer: &P,
-    claims: Claims,
-    max_retries: usize,
-) -> Result<Evidence> {
-    let policy = RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(max_retries);
-    policy
-        .retry(|| {
-            let claims = claims.clone();
-            async move {
-                producer
-                    .produce(claims)
-                    .await
-                    .context("Failed to generate attestation evidence")
-            }
-        })
-        .await
-}
-
-async fn produce_token_with_retry<P: TokenProducer + ?Sized>(
-    producer: &P,
-    claims: Claims,
-    max_retries: usize,
-) -> Result<TngToken> {
-    let policy = RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(max_retries);
-    policy
-        .retry(|| {
-            let claims = claims.clone();
-            async move {
-                producer
-                    .produce(claims)
-                    .await
-                    .context("Failed to generate attestation evidence")
-            }
-        })
-        .await
-}
 
 /// Cache a passport token until its `exp` (or until the attested SPKI rotates).
 #[derive(Default)]
@@ -204,6 +75,23 @@ impl PassportEvidenceCache {
     }
 }
 
+/// [`PassportEvidenceCache`] bound to the certificate public key for this exchange.
+pub struct BoundPassportCache<'a> {
+    pub cache: &'a PassportEvidenceCache,
+    pub spki: &'a [u8],
+}
+
+impl PassportTokenCache for BoundPassportCache<'_> {
+    fn get_or_mint<'a>(
+        &'a self,
+        mint: Box<
+            dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> + Send + 'a,
+        >,
+    ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> {
+        Box::pin(self.cache.get_or_mint(self.spki, move || mint()))
+    }
+}
+
 fn is_unexpired(expire: Expire) -> bool {
     match expire {
         Expire::NoExpire => true,
@@ -215,48 +103,22 @@ fn token_expire(token: &TngToken) -> Result<Expire> {
     Expire::from_timestamp(token.exp()?)
 }
 
-pub fn produced_error_reason(response: &Response) -> Option<&str> {
-    match response {
-        Response::Error { reason } => Some(reason),
-        _ => None,
-    }
-}
-
-#[async_trait::async_trait]
-impl<A> EvidenceProducer for A
-where
-    A: GenericAttester<Evidence = TngEvidence> + Send + Sync,
-{
-    async fn produce(&self, claims: Claims) -> Result<Evidence> {
-        let evidence = self
-            .get_evidence(&ReportData::Claims(claims))
-            .await
-            .map_err(|e| anyhow!("attester failed: {e}"))?;
-        Ok(Evidence {
-            provider: evidence.provider_type(),
-            evidence: evidence.serialize_to_json()?,
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl<A> TokenProducer for A
-where
-    A: GenericAttester<Evidence = TngToken> + Send + Sync,
-{
-    async fn produce(&self, claims: Claims) -> Result<TngToken> {
-        self.get_evidence(&ReportData::Claims(claims))
-            .await
-            .map_err(|e| anyhow!("attester failed: {e}"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::claims::{CLAIM_CHALLENGE_TOKEN, CLAIM_TLS_BINDER};
+    use super::super::claims::{passport_attester_claims, CLAIM_CHALLENGE_TOKEN, CLAIM_TLS_BINDER};
     use super::*;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    use crate::tunnel::attest::{
+        produce_attest_response, produced_error_reason, AttestClaims, Evidence, EvidenceProducer,
+        TokenProducer, ATTESTATION_UNAVAILABLE,
+    };
+    use crate::tunnel::challenge::ChallengeSource;
+    use crate::tunnel::proposal::AttestProposal;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine as _;
+    use rats_cert::tee::claims::Claims;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct RecordingConverter {
@@ -334,6 +196,48 @@ mod tests {
         }
     }
 
+    async fn cached_passport(
+        producer: &CountingTokenProducer,
+        conv: &RecordingConverter,
+        spki: &[u8],
+        cache: &PassportEvidenceCache,
+    ) -> crate::tunnel::attest::AttestResponse {
+        let proposal = AttestProposal::Passport {
+            provider: ProviderType::Coco,
+        };
+        let bound = BoundPassportCache { cache, spki };
+        let claims = PassportTestClaims { conv, spki };
+        produce_attest_response(&proposal, &claims, None, Some(producer), Some(&bound), 0).await
+    }
+
+    struct PassportTestClaims<'a> {
+        conv: &'a RecordingConverter,
+        spki: &'a [u8],
+    }
+
+    impl AttestClaims for PassportTestClaims<'_> {
+        fn claims<'a>(
+            &'a self,
+            _proposal: &'a AttestProposal,
+        ) -> Pin<Box<dyn Future<Output = Result<Claims>> + Send + 'a>> {
+            Box::pin(async move {
+                let nonce = self.conv.get_nonce().await?;
+                passport_attester_claims(self.spki, &nonce)
+            })
+        }
+    }
+
+    struct EmptyClaims;
+
+    impl AttestClaims for EmptyClaims {
+        fn claims<'a>(
+            &'a self,
+            _proposal: &'a AttestProposal,
+        ) -> Pin<Box<dyn Future<Output = Result<Claims>> + Send + 'a>> {
+            Box::pin(async { Ok(Claims::new()) })
+        }
+    }
+
     fn counting_token(fail_times: usize) -> CountingTokenProducer {
         CountingTokenProducer {
             count: AtomicUsize::new(0),
@@ -350,12 +254,8 @@ mod tests {
             nonce: "passport-as-nonce".into(),
         };
         let cache = PassportEvidenceCache::new();
-        let first = produce_passport_token(&producer, &conv, b"spki", &cache, 0)
-            .await
-            .unwrap();
-        let second = produce_passport_token(&producer, &conv, b"spki", &cache, 0)
-            .await
-            .unwrap();
+        let first = cached_passport(&producer, &conv, b"spki", &cache).await;
+        let second = cached_passport(&producer, &conv, b"spki", &cache).await;
         assert_eq!(first, second);
         assert_eq!(producer.count.load(Ordering::SeqCst), 1);
         let stored = producer.claims.lock().unwrap().clone().unwrap();
@@ -365,9 +265,9 @@ mod tests {
             Some("passport-as-nonce")
         );
 
-        produce_passport_token(&producer, &conv, b"other-spki", &cache, 0)
+        assert!(cached_passport(&producer, &conv, b"other-spki", &cache)
             .await
-            .unwrap();
+            .is_ok());
         assert_eq!(producer.count.load(Ordering::SeqCst), 2);
 
         cache.insert_for_test(
@@ -376,9 +276,9 @@ mod tests {
             test_jwt(),
             Expire::ExpireAt(SystemTime::UNIX_EPOCH),
         );
-        produce_passport_token(&producer, &conv, b"spki", &cache, 0)
+        assert!(cached_passport(&producer, &conv, b"spki", &cache)
             .await
-            .unwrap();
+            .is_ok());
         assert_eq!(producer.count.load(Ordering::SeqCst), 3);
     }
 
@@ -394,12 +294,8 @@ mod tests {
             nonce: "passport-as-nonce".into(),
         };
         let cache = PassportEvidenceCache::new();
-        let first = produce_passport_token(&producer, &conv, b"spki", &cache, 0)
-            .await
-            .unwrap();
-        let second = produce_passport_token(&producer, &conv, b"spki", &cache, 0)
-            .await
-            .unwrap();
+        let first = cached_passport(&producer, &conv, b"spki", &cache).await;
+        let second = cached_passport(&producer, &conv, b"spki", &cache).await;
         assert_eq!(produced_error_reason(&first), Some(ATTESTATION_UNAVAILABLE));
         assert_eq!(
             produced_error_reason(&second),
@@ -411,15 +307,19 @@ mod tests {
     #[tokio::test]
     async fn attester_exhaustion_returns_error_not_credentials() {
         let producer = counting_evidence(usize::MAX);
-        let evidence = produce_background_check_evidence(
-            &producer,
-            b"spki",
-            "nonce",
-            b"0123456789abcdef0123456789abcdef",
+        let proposal = AttestProposal::BackgroundCheck {
+            provider: ProviderType::Coco,
+            challenge_token: "nonce".into(),
+        };
+        let evidence = produce_attest_response(
+            &proposal,
+            &EmptyClaims,
+            Some(&producer),
+            None,
+            None::<&BoundPassportCache>,
             0,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(
             produced_error_reason(&evidence),
             Some(ATTESTATION_UNAVAILABLE)
@@ -429,15 +329,13 @@ mod tests {
             nonce: "passport-as-nonce".into(),
         };
         let token_producer = counting_token(usize::MAX);
-        let passport = produce_passport_token(
+        let passport = cached_passport(
             &token_producer,
             &conv,
             b"spki",
             &PassportEvidenceCache::new(),
-            0,
         )
-        .await
-        .unwrap();
+        .await;
         assert_eq!(
             produced_error_reason(&passport),
             Some(ATTESTATION_UNAVAILABLE)

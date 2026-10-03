@@ -17,9 +17,14 @@ use crate::config::ra::{RaArgs, VerifyArgs};
 use crate::tunnel::attestation_exchange::PassportEvidenceCache;
 #[cfg(unix)]
 use crate::tunnel::attestation_metrics::AttestationMetrics;
+use rats_cert::tee::claims::Claims;
+use rats_cert::tee::{GenericConverter, GenericVerifier, ReportData};
+
+use crate::tunnel::attest::AttestVerifier;
+use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::challenge::{ChallengeAttempt, ChallengeSource};
 use crate::tunnel::proposal::{AttestProposal, Model};
-use crate::tunnel::provider::ProviderType;
+use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
 #[cfg(unix)]
 use crate::tunnel::utils::maybe_cached::RefreshStrategy;
 
@@ -235,6 +240,60 @@ impl VerifyContextSet {
             bail!("failed to fetch a nonce for any background-check verifier");
         }
         Ok(proposals)
+    }
+}
+
+#[async_trait::async_trait]
+impl AttestVerifier for VerifyContextSet {
+    async fn verify_evidence(
+        &self,
+        provider: ProviderType,
+        evidence: &serde_json::Value,
+        expected: Claims,
+    ) -> Result<AttestationResult> {
+        tracing::debug!("Verifying attestation evidence");
+
+        let evidence = TngEvidence::deserialize_from_json(provider, evidence.clone())
+            .context("failed to parse evidence JSON")?;
+
+        let VerifyContext::BackgroundCheck {
+            converter,
+            verifier,
+        } = self.entry(Model::BackgroundCheck, provider)?
+        else {
+            anyhow::bail!("background-check entry holds no converter");
+        };
+        let token = converter
+            .convert(&evidence)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to convert evidence to token: {:?}", e))?;
+        verifier
+            .verify_evidence(&token, &ReportData::Claims(expected))
+            .await
+            .map_err(|e| anyhow::anyhow!("Token verification failed: {:?}", e))?;
+
+        tracing::debug!("attestation evidence verify finished successfully");
+        Ok(AttestationResult::from_token(Model::BackgroundCheck, token))
+    }
+
+    async fn verify_token(
+        &self,
+        provider: ProviderType,
+        jwt: &str,
+        expected: Claims,
+    ) -> Result<AttestationResult> {
+        tracing::debug!("Verifying attestation token");
+
+        let token = TngToken::from_wire(provider, jwt.to_owned())
+            .context("failed to parse attestation token")?;
+        self.entry(Model::Passport, provider)?
+            .verifier()
+            .verify_evidence(&token, &ReportData::Claims(expected))
+            .await
+            .map_err(|e| anyhow::anyhow!("Token verification failed: {:?}", e))?;
+
+        tracing::debug!("attestation token verify finished successfully");
+        Ok(AttestationResult::from_token(Model::Passport, token))
     }
 }
 

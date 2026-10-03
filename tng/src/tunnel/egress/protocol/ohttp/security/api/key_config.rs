@@ -1,5 +1,7 @@
+use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{bail, Result};
 use axum::response::{IntoResponse, Response};
@@ -8,21 +10,23 @@ use base64::prelude::BASE64_STANDARD;
 use base64::Engine as _;
 use itertools::Itertools;
 use ohttp::KeyConfig;
-use rats_cert::tee::{AttesterPipeline, GenericAttester as _, GenericConverter as _, ReportData};
+use rats_cert::tee::claims::Claims;
+use rats_cert::tee::{AttesterPipeline, GenericConverter as _};
 
 use crate::error::TngError;
+use crate::tunnel::attest::{
+    ack_response, pick_proposal, produce_attest_response, Answer, AttestClaims, AttestResponse,
+    EvidenceProducer, PassportTokenCache, TokenProducer, MISSING_NONCE,
+};
 use crate::tunnel::egress::protocol::ohttp::security::api::OhttpServerApi;
-use crate::tunnel::egress::protocol::ohttp::security::context::TngStreamContext;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::KeyManager;
 use crate::tunnel::ohttp::protocol::userdata::ServerUserData;
-use crate::tunnel::ohttp::protocol::{
-    HpkeKeyConfig, KeyConfigRequest, KeyConfigResponse, ServerAttestationInfo,
-};
+use crate::tunnel::ohttp::protocol::{HpkeKeyConfig, KeyConfigRequest, KeyConfigResponse};
 use crate::tunnel::proposal::AttestProposal;
+use crate::tunnel::provider::{ProviderType, TngToken};
 use crate::tunnel::ra_context::{AttestContext, RaContext};
-use crate::tunnel::select_proposal::pick_proposal;
 use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
-use crate::tunnel::utils::maybe_cached::{Expire, MaybeCached};
+use crate::tunnel::utils::maybe_cached::{Expire, RefreshStrategy};
 
 impl OhttpServerApi {
     /// Interface 1: Get HPKE Configuration
@@ -39,71 +43,21 @@ impl OhttpServerApi {
     pub async fn get_hpke_configuration(
         &self,
         payload: Option<Json<KeyConfigRequest>>,
-        context: TngStreamContext,
     ) -> Result<Response, TngError> {
-        // Check if hit the cache
-        let proposal_matches = |attest_ctx: &AttestContext| {
-            payload.as_ref().is_some_and(|Json(req)| {
-                pick_proposal(attest_ctx.proposal_key(), &req.proposals).is_ok()
-            })
-        };
-        match self.ra_context.attest_context() {
-            // A passport response never depends on which proposal matched, so every client
-            // proposing this attester's passport shares one cached response
-            Some(attest_ctx @ AttestContext::Passport { .. }) if proposal_matches(attest_ctx) => {
-                self.passport_cache
-                    .read()
-                    .await
-                    .get_or_try_init(|| async {
-                        let ra_context = self.ra_context.clone();
-                        let key_manager = Arc::clone(&self.key_manager);
-                        let payload = Arc::new(payload);
-
-                        let refresh_strategy = attest_ctx.refresh_strategy();
-
-                        MaybeCached::new(context.runtime.clone(), refresh_strategy, move || {
-                            Box::pin({
-                                tracing::info!("Regenerating passport response");
-
-                                let ra_context = ra_context.clone();
-                                let key_manager = key_manager.clone();
-                                let payload = payload.clone();
-
-                                async move {
-                                    let response = Self::get_hpke_configuration_internal(
-                                        &ra_context,
-                                        key_manager.as_ref(),
-                                        payload.as_ref().clone(),
-                                    )
-                                    .await?;
-
-                                    Ok((response, Expire::NoExpire))
-                                }
-                            }) as Pin<Box<_>>
-                        })
-                        .await
-                    })
-                    .await?
-                    .get_latest()
-                    .await
-                    .map(|response: Arc<KeyConfigResponse>| {
-                        IntoResponse::into_response(Json(response))
-                    })
-            }
-            // Otherwise, we generate a new response
-            _ => Self::get_hpke_configuration_internal(
-                &self.ra_context,
-                self.key_manager.as_ref(),
-                payload,
-            )
-            .await
-            .map(|response: KeyConfigResponse| IntoResponse::into_response(Json(response))),
-        }
+        Self::get_hpke_configuration_internal(
+            &self.ra_context,
+            self.key_manager.as_ref(),
+            &self.passport_cache,
+            payload,
+        )
+        .await
+        .map(|response: KeyConfigResponse| IntoResponse::into_response(Json(response)))
     }
 
     async fn get_hpke_configuration_internal(
         ra_context: &RaContext,
         key_manager: &dyn KeyManager,
+        passport_cache: &OhttpPassportCache,
         payload: Option<Json<KeyConfigRequest>>,
     ) -> Result<KeyConfigResponse, TngError> {
         // Collect all client visible keys, and create encoded_key_config_list
@@ -128,111 +82,223 @@ impl OhttpServerApi {
             .map_err(TngError::from)?
             .as_secs();
 
-        // Generate final HpkeKeyConfig
         let hpke_key_config = HpkeKeyConfig {
             expire_timestamp: keys_expire_timestamp,
             encoded_key_config_list,
         };
 
         let proposals = payload
-            .map(|Json(payload)| payload.proposals)
+            .map(|Json(payload)| payload.attest_request.proposals)
             .unwrap_or_default();
         let attestation_requested = !proposals.is_empty();
-
-        let response = async {
-            Ok(match ra_context.attest_context() {
-                // Just return the key config when the client sends no proposals. This can happen when the server is 'attest' while client is 'no_ra'
-                Some(_) if proposals.is_empty() => KeyConfigResponse {
-                    hpke_key_config,
-                    attestation_info: None,
-                },
-                Some(attest_ctx) => match (
-                    pick_proposal(attest_ctx.proposal_key(), &proposals)?,
-                    attest_ctx,
-                ) {
-                    (
-                        AttestProposal::Passport { .. },
-                        AttestContext::Passport {
-                            attester,
-                            converter,
-                            ..
-                        },
-                    ) => {
-                        // fetch a challenge token from attestation service
-                        let challenge_token = converter.get_nonce().await?;
-
-                        let attester_pipeline = AttesterPipeline::new(attester, converter);
-
-                        let userdata = ServerUserData {
-                            challenge_token: Some(challenge_token),
-                            hpke_key_config: hpke_key_config.clone(),
-                        }
-                        .to_claims()?;
-
-                        let token = attester_pipeline
-                            .get_evidence(&ReportData::Claims(userdata))
-                            .await?;
-                        let provider = token.provider_type();
-                        KeyConfigResponse {
-                            hpke_key_config,
-                            attestation_info: Some(ServerAttestationInfo::Passport {
-                                attestation_result: token.into_str(),
-                                provider,
-                            }),
-                        }
-                    }
-                    (
-                        AttestProposal::BackgroundCheck {
-                            challenge_token, ..
-                        },
-                        AttestContext::BackgroundCheck { attester, .. },
-                    ) => {
-                        let userdata = ServerUserData {
-                            challenge_token: Some(challenge_token.clone()),
-                            hpke_key_config: hpke_key_config.clone(),
-                        }
-                        .to_claims()?;
-
-                        let tng_evidence =
-                            attester.get_evidence(&ReportData::Claims(userdata)).await?;
-                        let provider = tng_evidence.provider_type();
-                        let evidence = tng_evidence.serialize_to_json()?;
-
-                        KeyConfigResponse {
-                            hpke_key_config,
-                            attestation_info: Some(ServerAttestationInfo::BackgroundCheck {
-                                evidence,
-                                provider,
-                            }),
-                        }
-                    }
-                    _ => bail!("picked proposal does not match the attester's model"),
-                },
-                None => {
-                    // No attestation required (VerifyOnly or NoRa)
-                    KeyConfigResponse {
-                        hpke_key_config,
-                        attestation_info: None,
-                    }
-                }
-            })
-        }
-        .await;
+        let attest_resp =
+            make_attest_response(ra_context, passport_cache, &proposals, &hpke_key_config).await;
 
         if attestation_requested {
             if let Some(metrics) = ra_context.attestation_metrics() {
                 metrics.record(
                     AttestationOperation::Generate,
                     AttestationProtocol::Ohttp,
-                    response
-                        .as_ref()
-                        .is_ok_and(|response| response.attestation_info.is_some()),
+                    matches!(attest_resp, Ok(Ok(Some(_)))),
                 );
             }
         }
 
-        let response = response.map_err(TngError::GenServerHpkeConfigurationResponseFailed)?;
+        Ok(KeyConfigResponse {
+            hpke_key_config,
+            attest_response: attest_resp?,
+        })
+    }
+}
 
-        Ok(response)
+/// `Ok` is an attestation body for HTTP 200. `Err` is the HTTP status for that failure.
+async fn make_attest_response(
+    ra_context: &RaContext,
+    passport_cache: &OhttpPassportCache,
+    proposals: &[AttestProposal],
+    hpke_key_config: &HpkeKeyConfig,
+) -> Result<AttestResponse, TngError> {
+    let own_key = ra_context.attest_context().map(AttestContext::proposal_key);
+    let proposal = match pick_proposal(proposals, own_key) {
+        Answer::Ack => return Ok(ack_response()),
+        Answer::Reject(reason) => return Err(TngError::UnacceptableAttestRequest(reason)),
+        Answer::Matched(proposal) => proposal,
+    };
+    let Some(attest_ctx) = ra_context.attest_context() else {
+        return Err(TngError::AttestationUnavailable(
+            "not configured to attest".into(),
+        ));
+    };
+    let mut pipeline = None;
+    let (evidence_producer, max_retries, refresh) = match attest_ctx {
+        AttestContext::BackgroundCheck {
+            attester,
+            max_retries,
+            ..
+        } => (Some(attester as &dyn EvidenceProducer), *max_retries, None),
+        AttestContext::Passport {
+            attester,
+            converter,
+            max_retries,
+            refresh_strategy,
+            ..
+        } => {
+            pipeline = Some(AttesterPipeline::new(attester, converter));
+            (None, *max_retries, Some(*refresh_strategy))
+        }
+    };
+    let token_producer = pipeline
+        .as_ref()
+        .map(|pipeline| pipeline as &dyn TokenProducer);
+    let bound_cache = refresh.map(|refresh| BoundOhttpPassportCache {
+        cache: passport_cache,
+        key_config: hpke_key_config,
+        refresh,
+    });
+    let claims = OhttpClaims {
+        hpke_key_config,
+        attest_ctx,
+    };
+    let produced = produce_attest_response(
+        proposal,
+        &claims,
+        evidence_producer,
+        token_producer,
+        bound_cache.as_ref(),
+        max_retries,
+    )
+    .await;
+    match produced {
+        Ok(output) => Ok(Ok(output)),
+        Err(reason) if reason == MISSING_NONCE => Err(TngError::UnacceptableAttestRequest(reason)),
+        Err(reason) => Err(TngError::AttestationUnavailable(reason)),
+    }
+}
+
+struct OhttpClaims<'a> {
+    hpke_key_config: &'a HpkeKeyConfig,
+    attest_ctx: &'a AttestContext,
+}
+
+impl AttestClaims for OhttpClaims<'_> {
+    fn claims<'a>(
+        &'a self,
+        proposal: &'a AttestProposal,
+    ) -> Pin<Box<dyn Future<Output = Result<Claims>> + Send + 'a>> {
+        Box::pin(claims_for(proposal, self.hpke_key_config, self.attest_ctx))
+    }
+}
+
+async fn claims_for(
+    proposal: &AttestProposal,
+    hpke_key_config: &HpkeKeyConfig,
+    attest_ctx: &AttestContext,
+) -> Result<Claims> {
+    let challenge_token = match (proposal, attest_ctx) {
+        (
+            AttestProposal::BackgroundCheck {
+                challenge_token, ..
+            },
+            AttestContext::BackgroundCheck { .. },
+        ) => Some(challenge_token.clone()),
+        (AttestProposal::Passport { .. }, AttestContext::Passport { converter, .. }) => {
+            Some(converter.get_nonce().await?)
+        }
+        _ => bail!("picked proposal does not match the attester's model"),
+    };
+    ServerUserData {
+        challenge_token,
+        hpke_key_config: hpke_key_config.clone(),
+    }
+    .to_claims()
+}
+
+/// Passport tokens for the current HPKE key config. A hit requires the same key config, an
+/// unexpired token, and a refresh interval that has not elapsed.
+pub(super) struct OhttpPassportCache {
+    inner: Mutex<Option<CachedOhttpPassport>>,
+}
+
+struct CachedOhttpPassport {
+    key_config: HpkeKeyConfig,
+    provider: ProviderType,
+    jwt: String,
+    expire: Expire,
+    minted_at: SystemTime,
+}
+
+impl OhttpPassportCache {
+    pub(super) fn new() -> Self {
+        Self {
+            inner: Mutex::new(None),
+        }
+    }
+
+    pub(super) fn clear(&self) {
+        *self.inner.lock().unwrap_or_else(|error| error.into_inner()) = None;
+    }
+}
+
+struct BoundOhttpPassportCache<'a> {
+    cache: &'a OhttpPassportCache,
+    key_config: &'a HpkeKeyConfig,
+    refresh: RefreshStrategy,
+}
+
+impl PassportTokenCache for BoundOhttpPassportCache<'_> {
+    fn get_or_mint<'a>(
+        &'a self,
+        mint: Box<
+            dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> + Send + 'a,
+        >,
+    ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> {
+        Box::pin(async move {
+            {
+                let guard = self
+                    .cache
+                    .inner
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner());
+                if let Some(cached) = guard.as_ref() {
+                    if cached.key_config == *self.key_config
+                        && is_unexpired(cached.expire)
+                        && refresh_allows(cached.minted_at, self.refresh)
+                    {
+                        return TngToken::from_wire(cached.provider, cached.jwt.clone());
+                    }
+                }
+            }
+            let token = mint().await?;
+            let expire = Expire::from_timestamp(token.exp()?)?;
+            *self
+                .cache
+                .inner
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(CachedOhttpPassport {
+                key_config: self.key_config.clone(),
+                provider: token.provider_type(),
+                jwt: token.as_str().to_string(),
+                expire,
+                minted_at: SystemTime::now(),
+            });
+            Ok(token)
+        })
+    }
+}
+
+fn is_unexpired(expire: Expire) -> bool {
+    match expire {
+        Expire::NoExpire => true,
+        Expire::ExpireAt(time) => time > SystemTime::now(),
+    }
+}
+
+fn refresh_allows(minted_at: SystemTime, refresh: RefreshStrategy) -> bool {
+    match refresh {
+        RefreshStrategy::Always => false,
+        RefreshStrategy::Periodically { interval } => minted_at
+            .elapsed()
+            .map(|elapsed| elapsed < Duration::from_secs(interval))
+            .unwrap_or(false),
     }
 }

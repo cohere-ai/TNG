@@ -57,20 +57,16 @@ pub enum TngError {
     #[error("Got bad response during forwarding HTTP cipher text to upstream")]
     HttpCipherTextBadResponse(#[source] anyhow::Error),
 
-    #[error("Failed to get attestation challenge from server")]
-    ClientGetAttestationChallengeFaild(#[source] anyhow::Error),
-
-    #[error("Failed to get client background check result from server")]
-    ClientGetBackgroundCheckResultFaild(#[source] anyhow::Error),
-
-    #[error("Failed to get challenge token for client")]
-    ServerVerifyClientGetChallengeTokenFailed(#[source] anyhow::Error),
-
-    #[error("Failed to verify client evidence")]
-    ServerVerifyClientEvidenceFailed(#[source] anyhow::Error),
-
     #[error("Failed to request key config from ohttp server")]
     RequestKeyConfigFailed(#[source] anyhow::Error),
+
+    /// The key-config `attest_request` cannot be answered.
+    #[error("{0}")]
+    UnacceptableAttestRequest(String),
+
+    /// The key-config request was acceptable and producing attestation failed.
+    #[error("{0}")]
+    AttestationUnavailable(String),
 
     #[error("Failed to connect to upstream")]
     ConnectUpstreamFailed,
@@ -104,9 +100,6 @@ pub enum TngError {
 
     #[error("Invalid request payload: {0}")]
     InvalidRequestPayload(#[from] axum::extract::rejection::JsonRejection),
-
-    #[error("Invalid request query: {0}")]
-    InvalidRequestQuery(#[from] axum::extract::rejection::QueryRejection),
 
     #[error("Invalid x-tng-ohttp-api value")]
     InvalidOhttpApiHeaderValue,
@@ -154,13 +147,13 @@ impl IntoResponse for TngError {
         let status = match &self {
             // Client errors (4xx)
             TngError::InvalidRequestPayload(..) => StatusCode::BAD_REQUEST,
-            TngError::InvalidRequestQuery(..) => StatusCode::BAD_REQUEST,
             TngError::RejectNonTngRequest => StatusCode::FORBIDDEN,
             TngError::InvalidOhttpApiHeaderValue => StatusCode::BAD_REQUEST,
             TngError::InvalidHttpRequest => StatusCode::BAD_REQUEST,
             TngError::InvalidHttpResponse => StatusCode::BAD_REQUEST,
             TngError::InvalidOHttpRequest(..) => StatusCode::BAD_REQUEST,
             TngError::InvalidOHttpResponse(..) => StatusCode::BAD_REQUEST,
+            TngError::UnacceptableAttestRequest(..) => StatusCode::BAD_REQUEST,
 
             // Validation / Decode errors → 400 Bad Request
             TngError::Base64DecodeError(..) => StatusCode::BAD_REQUEST,
@@ -204,11 +197,8 @@ impl IntoResponse for TngError {
             | TngError::OhttpError(..)
             | TngError::BhttpError(..)
             | TngError::MetadataValidateError(..)
-            | TngError::ClientGetAttestationChallengeFaild(..)
-            | TngError::ClientGetBackgroundCheckResultFaild(..)
-            | TngError::ServerVerifyClientGetChallengeTokenFailed(..)
-            | TngError::ServerVerifyClientEvidenceFailed(..)
             | TngError::RequestKeyConfigFailed(..)
+            | TngError::AttestationUnavailable(..)
             | TngError::ClientSelectHpkeConfigurationFailed(..)
             | TngError::GenServerHpkeConfigurationResponseFailed(..)
             | TngError::CreateOHttpClientFailed(..)
@@ -279,5 +269,24 @@ async fn check_error_response(
         }
     } else {
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    use super::*;
+
+    #[test]
+    fn key_config_attest_failures_use_http_status() {
+        let unacceptable =
+            TngError::UnacceptableAttestRequest("missing nonce".into()).into_response();
+        assert_eq!(unacceptable.status(), StatusCode::BAD_REQUEST);
+
+        let unavailable =
+            TngError::AttestationUnavailable("attestation unavailable".into()).into_response();
+        assert_eq!(unavailable.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

@@ -44,4 +44,8 @@ impl AttestationResult {
     pub fn key(&self) -> (Model, ProviderType) {
         (self.model, self.token.provider_type())
     }
+
+    pub fn exp(&self) -> anyhow::Result<u64> {
+        self.token.exp()
+    }
 }

@@ -1,7 +1,8 @@
 //! Matching one [`AttestProposal`] out of a list.
 //!
-//! The attester uses [`pick_proposal`] on the list it received. The verifier uses
-//! [`find_proposal`] on the list it sent.
+//! The attester uses [`match_proposal`] for an exact `(model, provider)` match. The verifier
+//! uses [`find_proposal`] on the list it sent. [`crate::tunnel::attest::pick_proposal`] decides
+//! whether that match is an ack, a proposal to answer, or a reject.
 
 use std::collections::HashSet;
 
@@ -18,7 +19,7 @@ pub const NO_COMPATIBLE_PROPOSAL: &str = "no compatible attestation proposal";
 /// The proposal this attester answers. The attester never switches models, so anything but an
 /// exact match is an error. A duplicate key in the received list is also an error.
 #[cfg_attr(not(unix), allow(dead_code))]
-pub fn pick_proposal(
+pub fn match_proposal(
     own: (Model, ProviderType),
     proposals: &[AttestProposal],
 ) -> Result<&AttestProposal> {
@@ -65,25 +66,25 @@ mod tests {
     }
 
     #[test]
-    fn pick_proposal_matches_exactly() {
+    fn match_proposal_matches_exactly() {
         let proposals = [bc(COCO, "n"), AttestProposal::Passport { provider: ITA }];
         assert_eq!(
-            pick_proposal((Model::Passport, ITA), &proposals).unwrap(),
+            match_proposal((Model::Passport, ITA), &proposals).unwrap(),
             &proposals[1]
         );
         assert_eq!(
-            pick_proposal((Model::BackgroundCheck, COCO), &proposals).unwrap(),
+            match_proposal((Model::BackgroundCheck, COCO), &proposals).unwrap(),
             &proposals[0]
         );
-        let err = pick_proposal((Model::Passport, COCO), &proposals).unwrap_err();
+        let err = match_proposal((Model::Passport, COCO), &proposals).unwrap_err();
         assert_eq!(err.to_string(), NO_COMPATIBLE_PROPOSAL);
-        assert!(pick_proposal((Model::Passport, COCO), &[]).is_err());
+        assert!(match_proposal((Model::Passport, COCO), &[]).is_err());
     }
 
     #[test]
-    fn pick_proposal_rejects_duplicates() {
+    fn match_proposal_rejects_duplicates() {
         let proposals = [bc(COCO, "a"), bc(COCO, "b")];
-        let err = pick_proposal((Model::BackgroundCheck, COCO), &proposals).unwrap_err();
+        let err = match_proposal((Model::BackgroundCheck, COCO), &proposals).unwrap_err();
         assert!(err.to_string().contains("duplicate"), "{err}");
     }
 

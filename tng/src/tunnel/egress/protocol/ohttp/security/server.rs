@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use axum::{
-    extract::{FromRequest, Query, Request, State},
+    extract::{FromRequest, Request, State},
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
     Json, Router,
 };
 use http::{HeaderMap, HeaderName, HeaderValue, Method};
@@ -20,7 +20,7 @@ use crate::{
     error::TngError,
     tunnel::ohttp::protocol::{
         header::{OhttpApi, OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE},
-        AttestationChallengeQuery, AttestationVerifyRequest, KeyConfigRequest,
+        KeyConfigRequest,
     },
     TokioRuntime,
 };
@@ -170,26 +170,10 @@ async fn handler(
                 <Option<Json<KeyConfigRequest>> as FromRequest<()>>::from_request(request, &())
                     .await
                     .map_err(TngError::InvalidRequestPayload)?,
-                context,
             )
             .await
         }
         OhttpApi::Tunnel => api.process_encrypted_request(request, context).await,
-        OhttpApi::BackgroundCheckChallenge => api
-            .get_attestation_challenge(
-                Query::<AttestationChallengeQuery>::try_from_uri(request.uri())
-                    .map_err(TngError::InvalidRequestQuery)?,
-            )
-            .await
-            .map(IntoResponse::into_response),
-        OhttpApi::BackgroundCheckVerify => api
-            .verify_attestation(
-                <Json<AttestationVerifyRequest> as FromRequest<()>>::from_request(request, &())
-                    .await
-                    .map_err(TngError::InvalidRequestPayload)?,
-            )
-            .await
-            .map(IntoResponse::into_response),
     }
 }
 
@@ -205,8 +189,6 @@ fn parse_ohttp_api_from_request(req: &Request) -> Result<OhttpApi, TngError> {
     let api = match api_value {
         OhttpApi::KEY_CONFIG => OhttpApi::KeyConfig,
         OhttpApi::TUNNEL => OhttpApi::Tunnel,
-        OhttpApi::BACKGROUND_CHECK_CHALLENGE => OhttpApi::BackgroundCheckChallenge,
-        OhttpApi::BACKGROUND_CHECK_VERIFY => OhttpApi::BackgroundCheckVerify,
         _ => return Err(TngError::InvalidOhttpApiHeaderValue),
     };
 

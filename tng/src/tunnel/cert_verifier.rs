@@ -1,14 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use rats_cert::tee::GenericConverter;
-use rats_cert::tee::GenericVerifier;
-use rats_cert::tee::ReportData;
+use rats_cert::tee::claims::Claims;
 
+use crate::tunnel::attest::AttestVerifier;
 use crate::tunnel::attestation_result::AttestationResult;
-use crate::tunnel::proposal::Model;
-use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
-use crate::tunnel::ra_context::{VerifyContext, VerifyContextSet};
+use crate::tunnel::provider::ProviderType;
+use crate::tunnel::ra_context::VerifyContextSet;
 
 #[derive(Debug)]
 pub struct TngCommonCertVerifier {
@@ -45,56 +43,24 @@ impl TngCommonCertVerifier {
 }
 
 #[async_trait::async_trait]
-impl crate::tunnel::attestation_exchange::ExchangeVerifier for TngCommonCertVerifier {
+impl AttestVerifier for TngCommonCertVerifier {
     async fn verify_evidence(
         &self,
         provider: ProviderType,
         evidence: &serde_json::Value,
-        expected: rats_cert::tee::claims::Claims,
+        expected: Claims,
     ) -> Result<AttestationResult> {
-        tracing::debug!("Verifying rats-tls evidence");
-
-        let evidence = TngEvidence::deserialize_from_json(provider, evidence.clone())
-            .context("failed to parse evidence JSON")?;
-
-        let VerifyContext::BackgroundCheck {
-            converter,
-            verifier,
-        } = self.verify_set.entry(Model::BackgroundCheck, provider)?
-        else {
-            anyhow::bail!("background-check entry holds no converter");
-        };
-        let token = converter
-            .convert(&evidence)
+        self.verify_set
+            .verify_evidence(provider, evidence, expected)
             .await
-            .map_err(|e| anyhow!("Failed to convert evidence to token: {:?}", e))?;
-        verifier
-            .verify_evidence(&token, &ReportData::Claims(expected))
-            .await
-            .map_err(|e| anyhow!("Token verification failed: {:?}", e))?;
-
-        tracing::debug!("rats-tls evidence verify finished successfully");
-        Ok(AttestationResult::from_token(Model::BackgroundCheck, token))
     }
 
     async fn verify_token(
         &self,
         provider: ProviderType,
         jwt: &str,
-        expected: rats_cert::tee::claims::Claims,
+        expected: Claims,
     ) -> Result<AttestationResult> {
-        tracing::debug!("Verifying rats-tls token");
-
-        let token = TngToken::from_wire(provider, jwt.to_owned())
-            .context("failed to parse attestation token")?;
-        self.verify_set
-            .entry(Model::Passport, provider)?
-            .verifier()
-            .verify_evidence(&token, &ReportData::Claims(expected))
-            .await
-            .map_err(|e| anyhow!("Token verification failed: {:?}", e))?;
-
-        tracing::debug!("rats-tls token verify finished successfully");
-        Ok(AttestationResult::from_token(Model::Passport, token))
+        self.verify_set.verify_token(provider, jwt, expected).await
     }
 }

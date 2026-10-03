@@ -800,7 +800,7 @@ async fn test_server_attest_passport_cache() -> Result<()> {
                         -H "Content-Type: application/json" \
                         -H "Accept: */*" \
                         -H "User-Agent: tng/2.2.6" \
-                        -d '{"proposals":[{"model":"passport","provider":"coco"}]}'
+                        -d '{"attest_request":{"proposals":[{"model":"passport","provider":"coco"}]}}'
                 }
 
                 echo "Request 1..."
@@ -876,7 +876,7 @@ async fn test_server_attest_passport_rotation_interval() -> Result<()> {
                         -H "Content-Type: application/json" \
                         -H "Accept: */*" \
                         -H "User-Agent: tng/2.2.6" \
-                        -d '{"proposals":[{"model":"passport","provider":"coco"}]}'
+                        -d '{"attest_request":{"proposals":[{"model":"passport","provider":"coco"}]}}'
                 }
 
                 echo "Request 1..."
@@ -948,7 +948,7 @@ async fn test_server_attest_background_check_rotation_interval() -> Result<()> {
                         -H "Content-Type: application/json" \
                         -H "Accept: */*" \
                         -H "User-Agent: tng/2.2.6" \
-                        -d '{"proposals":[{"model":"background_check","provider":"coco","challenge_token":"dummy token"}]}' | jq '.hpke_key_config.encoded_key_config_list'
+                        -d '{"attest_request":{"proposals":[{"model":"background_check","provider":"coco","challenge_token":"dummy token"}]}}' | jq '.hpke_key_config.encoded_key_config_list'
                 }
 
                 echo "Request 1..."
@@ -1042,7 +1042,7 @@ MC4CAQAwBQYDK2VuBCIEIOixlJE0Ykdc4ePwmaf2LLAea8Lfkfb+SARsKYmCBRpR
                             -H "Content-Type: application/json" \
                             -H "Accept: */*" \
                             -H "User-Agent: tng/2.2.6" \
-                            -d '{{"proposals":[{{"model":"background_check","provider":"coco","challenge_token":"dummy token"}}]}}' | jq -c '.hpke_key_config.encoded_key_config_list'
+                            -d '{{"attest_request":{{"proposals":[{{"model":"background_check","provider":"coco","challenge_token":"dummy token"}}]}}}}' | jq -c '.hpke_key_config.encoded_key_config_list'
                     }}
 
                     # Wait a moment for server to fully start

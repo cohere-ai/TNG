@@ -5,12 +5,12 @@ use anyhow::{bail, Context, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use super::message::{Request, Response};
+use crate::tunnel::attest::{AttestRequest, AttestResponse};
 
 /// Cap sized for a TEE quote or passport token, not an OHTTP keyset.
 pub const MAX_FRAME_SIZE: u32 = 256 * 1024;
 
-/// Marks a frame whose JSON is not a [`Request`] or [`Response`].
+/// Marks a frame whose JSON is not an [`AttestRequest`] or [`AttestResponse`].
 #[derive(Debug)]
 struct MalformedMessage;
 
@@ -51,19 +51,25 @@ where
     serde_json::from_slice(&buf).context(MalformedMessage)
 }
 
-pub async fn write_request<W: AsyncWrite + Unpin>(writer: &mut W, msg: &Request) -> Result<()> {
+pub async fn write_request<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    msg: &AttestRequest,
+) -> Result<()> {
     write_msg(writer, msg).await
 }
 
-pub async fn read_request<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Request> {
+pub async fn read_request<R: AsyncRead + Unpin>(reader: &mut R) -> Result<AttestRequest> {
     read_msg(reader).await
 }
 
-pub async fn write_response<W: AsyncWrite + Unpin>(writer: &mut W, msg: &Response) -> Result<()> {
+pub async fn write_response<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    msg: &AttestResponse,
+) -> Result<()> {
     write_msg(writer, msg).await
 }
 
-pub async fn read_response<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Response> {
+pub async fn read_response<R: AsyncRead + Unpin>(reader: &mut R) -> Result<AttestResponse> {
     read_msg(reader).await
 }
 
@@ -89,17 +95,18 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tunnel::attest::{evidence_response, token_response, AttestResponse};
     use crate::tunnel::proposal::AttestProposal;
     use crate::tunnel::provider::ProviderType;
     use serde_json::json;
 
-    async fn round_trip_request(sent: Request) -> Request {
+    async fn round_trip_request(sent: AttestRequest) -> AttestRequest {
         let (mut a, mut b) = tokio::io::duplex(256);
         write_request(&mut a, &sent).await.unwrap();
         read_request(&mut b).await.unwrap()
     }
 
-    async fn round_trip_response(sent: Response) -> Response {
+    async fn round_trip_response(sent: AttestResponse) -> AttestResponse {
         let (mut a, mut b) = tokio::io::duplex(256);
         write_response(&mut a, &sent).await.unwrap();
         read_response(&mut b).await.unwrap()
@@ -107,14 +114,14 @@ mod tests {
 
     #[tokio::test]
     async fn request_and_response_round_trips() {
-        let none = Request::default();
+        let none = AttestRequest::default();
         assert_eq!(round_trip_request(none.clone()).await, none);
         assert_eq!(
             serde_json::to_value(&none).unwrap(),
             json!({"proposals": []})
         );
 
-        let proposals = Request {
+        let proposals = AttestRequest {
             proposals: vec![
                 AttestProposal::BackgroundCheck {
                     provider: ProviderType::Ita,
@@ -127,25 +134,20 @@ mod tests {
         };
         assert_eq!(round_trip_request(proposals.clone()).await, proposals);
 
-        let evidence = Response::Evidence {
-            provider: ProviderType::Coco,
-            evidence: json!({"aa_tee_type": "tdx", "aa_evidence": "aGVsbG8="}),
-        };
+        let evidence = evidence_response(
+            ProviderType::Coco,
+            json!({"aa_tee_type": "tdx", "aa_evidence": "aGVsbG8="}),
+        );
         assert_eq!(round_trip_response(evidence.clone()).await, evidence);
 
         let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
-        let token = Response::Token {
-            provider: ProviderType::Ita,
-            token: jwt.into(),
-        };
+        let token = token_response(ProviderType::Ita, jwt);
         assert_eq!(round_trip_response(token.clone()).await, token);
 
-        let err = Response::Error {
-            reason: "not configured to attest".into(),
-        };
+        let err = Err("not configured to attest".to_string());
         assert_eq!(round_trip_response(err.clone()).await, err);
 
-        assert_eq!(round_trip_response(Response::Ack).await, Response::Ack);
+        assert_eq!(round_trip_response(Ok(None)).await, Ok(None));
     }
 
     #[tokio::test]

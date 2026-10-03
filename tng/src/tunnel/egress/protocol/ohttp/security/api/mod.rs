@@ -1,11 +1,9 @@
-pub mod background_check;
 pub mod key_config;
 pub mod tunnel;
 
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::sync::{OnceCell, RwLock};
 
 use crate::config::egress::KeyArgs;
 use crate::error::TngError;
@@ -14,9 +12,9 @@ use crate::tunnel::egress::protocol::ohttp::security::key_manager::peer_shared::
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::{
     self_generated::SelfGeneratedKeyManager, KeyManager,
 };
-use crate::tunnel::ohttp::protocol::KeyConfigResponse;
+
+use self::key_config::OhttpPassportCache;
 use crate::tunnel::ra_context::RaContext;
-use crate::tunnel::utils::maybe_cached::MaybeCached;
 use crate::TokioRuntime;
 
 /// OHTTP API handler for processing TNG server interfaces
@@ -37,7 +35,7 @@ pub struct OhttpServerApi {
     /// In passport mode, the server generates an attestation (passport) that is cached
     /// and reused for subsequent client requests to avoid expensive re-attestation.
     /// The cache automatically refreshes based on configured refresh strategy.
-    passport_cache: Arc<RwLock<OnceCell<MaybeCached<KeyConfigResponse, TngError>>>>,
+    passport_cache: Arc<OhttpPassportCache>,
 }
 
 impl OhttpServerApi {
@@ -66,18 +64,16 @@ impl OhttpServerApi {
             }
         };
 
-        let passport_cache: Arc<RwLock<OnceCell<MaybeCached<KeyConfigResponse, TngError>>>> =
-            Default::default();
+        let passport_cache = Arc::new(OhttpPassportCache::new());
 
         // Register a callback to reset the passport cache when key changes
         {
-            let passport_cache_cloned = passport_cache.clone();
+            let passport_cache_cloned = Arc::clone(&passport_cache);
             key_manager
                 .register_callback(Arc::new(move |_event| {
-                    let passport_cache_cloned = passport_cache_cloned.clone();
+                    let passport_cache_cloned = Arc::clone(&passport_cache_cloned);
                     Box::pin(async move {
-                        // Reset the passport cache
-                        let _ = passport_cache_cloned.write().await.take();
+                        passport_cache_cloned.clear();
                     })
                 }))
                 .await;

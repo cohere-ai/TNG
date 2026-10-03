@@ -6,25 +6,10 @@ use bhttp::http_compat::{
 };
 use bytes::{BufMut, BytesMut};
 use futures::{AsyncWriteExt as _, StreamExt, TryStreamExt as _};
-#[cfg(unix)]
-use hpke::Serializable;
 use hpke::{kem::X25519HkdfSha256, Kem};
 use http::StatusCode;
 use ohttp::KeyConfig;
 use prost::Message;
-#[cfg(unix)]
-use rand::SeedableRng as _;
-#[cfg(unix)]
-use rand_chacha::ChaCha12Rng;
-#[cfg(unix)]
-use rats_cert::tee::AttesterPipeline;
-#[cfg(unix)]
-use rats_cert::tee::GenericAttester as _;
-use rats_cert::tee::ReportData;
-use rats_cert::tee::{GenericConverter, GenericVerifier as _};
-
-use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
-use crate::tunnel::select_proposal::find_proposal;
 #[cfg(unix)]
 use tokio::io::AsyncReadExt;
 use tokio_util::{
@@ -44,21 +29,15 @@ use std::time::SystemTime;
 use web_time::SystemTime;
 
 #[cfg(unix)]
-use crate::tunnel::ohttp::protocol::metadata::AttestedPublicKey;
-#[cfg(unix)]
-use crate::tunnel::ohttp::protocol::userdata::ClientUserData;
-#[cfg(unix)]
-use crate::tunnel::ra_context::AttestContext;
-#[cfg(unix)]
 use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 use crate::{
     error::CheckErrorResponse as _,
     tunnel::{
+        attest::{check_response, AttestRequest},
         ohttp::protocol::{
             metadata::{metadata::ClientAuth, Metadata, NoAuth, METADATA_MAX_LEN},
             userdata::ServerUserData,
-            AttestationChallengeQuery, AttestationChallengeResponse, AttestationVerifyRequest,
-            AttestationVerifyResponse, KeyConfigRequest, KeyConfigResponse, ServerAttestationInfo,
+            KeyConfigRequest, KeyConfigResponse,
         },
         utils::maybe_cached::{Expire, MaybeCached, RefreshStrategy},
     },
@@ -76,7 +55,7 @@ use crate::{
                 metadata::ServerKeyConfigHint,
             },
         },
-        ra_context::{RaContext, VerifyContext},
+        ra_context::RaContext,
     },
     AttestationResult, TokioRuntime,
 };
@@ -93,8 +72,6 @@ pub struct OHttpClientInner {
     ra_context: Arc<RaContext>,
     http_client: Arc<reqwest::Client>,
     forward_headers: reqwest::header::HeaderMap,
-    #[cfg(unix)]
-    rng: tokio::sync::Mutex<ChaCha12Rng>,
     base_url: Url,
     #[allow(unused)]
     runtime: TokioRuntime,
@@ -151,8 +128,6 @@ impl OHttpClient {
 
         let inner = Arc::new(OHttpClientInner {
             ra_context,
-            #[cfg(unix)]
-            rng: tokio::sync::Mutex::new(ChaCha12Rng::from_os_rng()),
             http_client,
             forward_headers,
             base_url,
@@ -222,7 +197,7 @@ impl OHttpClientInner {
                 .start(AttestationOperation::Verify, AttestationProtocol::Ohttp)
         });
 
-        let (server_key_config, token) = match self.ra_context.verify_set() {
+        let (server_key_config, verified) = match self.ra_context.verify_set() {
             Some(verify_set) => {
                 #[cfg(unix)]
                 let proposals = verify_set
@@ -237,59 +212,35 @@ impl OHttpClientInner {
                 #[cfg(not(unix))]
                 let proposals = verify_set.make_proposals(|| ()).await?;
 
-                let response = self
-                    .get_hpke_configuration(KeyConfigRequest {
-                        proposals: proposals.clone(),
-                    })
-                    .await?;
-                let info = response
-                    .attestation_info
-                    .context("peer did not attest (version mismatch?)")?;
-                let (model, provider) = info.key();
-                let userdata = ServerUserData {
-                    challenge_token: find_proposal(&proposals, model, provider)?
-                        .challenge_token()
-                        .map(str::to_owned),
-                    hpke_key_config: response.hpke_key_config.clone(),
-                }
-                .to_claims()?;
-
-                let token = match (info, verify_set.entry(model, provider)?) {
-                    (
-                        ServerAttestationInfo::Passport {
-                            attestation_result, ..
-                        },
-                        VerifyContext::Passport { verifier },
-                    ) => {
-                        let token = TngToken::from_wire(provider, attestation_result)?;
-                        verifier
-                            .verify_evidence(&token, &ReportData::Claims(userdata))
-                            .await?;
-                        token
-                    }
-                    (
-                        ServerAttestationInfo::BackgroundCheck { evidence, .. },
-                        VerifyContext::BackgroundCheck {
-                            converter,
-                            verifier,
-                        },
-                    ) => {
-                        let evidence = TngEvidence::deserialize_from_json(provider, evidence)?;
-                        let token = converter.convert(&evidence).await?;
-                        verifier
-                            .verify_evidence(&token, &ReportData::Claims(userdata))
-                            .await?;
-                        token
-                    }
-                    _ => bail!("verifier entry does not match the server's attestation model"),
+                let request = KeyConfigRequest {
+                    attest_request: AttestRequest { proposals },
                 };
-
-                (response.hpke_key_config, Some((model, token)))
+                let response = self.get_hpke_configuration(request.clone()).await?;
+                let verified = check_response(
+                    &request.attest_request,
+                    &response.attest_response,
+                    Some(verify_set),
+                    |proposal| {
+                        ServerUserData {
+                            challenge_token: proposal.challenge_token().map(str::to_owned),
+                            hpke_key_config: response.hpke_key_config.clone(),
+                        }
+                        .to_claims()
+                    },
+                )
+                .await?;
+                (response.hpke_key_config, verified)
             }
             None => {
-                let response = self
-                    .get_hpke_configuration(KeyConfigRequest::default())
-                    .await?;
+                let request = KeyConfigRequest::default();
+                let response = self.get_hpke_configuration(request.clone()).await?;
+                check_response(
+                    &request.attest_request,
+                    &response.attest_response,
+                    None,
+                    |_| bail!("unexpected attestation output"),
+                )
+                .await?;
                 (response.hpke_key_config, None)
             }
         };
@@ -304,10 +255,10 @@ impl OHttpClientInner {
             Expire::from_timestamp(server_key_config.expire_timestamp)?,
         );
 
-        let server_attestation_result = match token {
-            Some((model, token)) => {
-                expire = std::cmp::min(expire, Expire::from_timestamp(token.exp()?)?);
-                Some(AttestationResult::from_token(model, token))
+        let server_attestation_result = match verified {
+            Some(result) => {
+                expire = std::cmp::min(expire, Expire::from_timestamp(result.exp()?)?);
+                Some(result)
             }
             None => None,
         };
@@ -343,88 +294,10 @@ impl OHttpClientInner {
         Expire,
     )> {
         #[cfg(unix)]
-        let attestation_attempt = self.ra_context.attest_context().map(|ctx| {
-            ctx.attestation_metrics()
-                .start(AttestationOperation::Generate, AttestationProtocol::Ohttp)
-        });
-
-        #[cfg(not(unix))]
-        {
-            return Ok((None, ClientAuth::NoAuth(NoAuth {}), Expire::NoExpire));
+        if self.ra_context.attest_context().is_some() {
+            bail!("client attestation over OHTTP is disabled");
         }
-
-        #[cfg(unix)]
-        let result = match self.ra_context.attest_context() {
-            Some(attest_ctx) => {
-                let client_key = X25519HkdfSha256::gen_keypair(&mut self.rng.lock().await);
-                let pk_s = client_key.1.to_bytes().to_vec();
-
-                let token = match attest_ctx {
-                    AttestContext::Passport {
-                        attester,
-                        converter,
-                        ..
-                    } => {
-                        // fetch a challenge token from attestation service
-                        let challenge_token = converter.get_nonce().await?;
-
-                        let attester_pipeline = AttesterPipeline::new(attester, converter);
-
-                        let userdata = ClientUserData {
-                            challenge_token: Some(challenge_token),
-                            pk_s: BASE64_STANDARD.encode(pk_s.as_slice()),
-                        }
-                        .to_claims()?;
-
-                        attester_pipeline
-                            .get_evidence(&ReportData::Claims(userdata))
-                            .await?
-                    }
-                    AttestContext::BackgroundCheck { attester, .. } => {
-                        let AttestationChallengeResponse { challenge_token } = self
-                            .background_check_attestation_challenge(attester.provider_type())
-                            .await?;
-
-                        let userdata = ClientUserData {
-                            challenge_token: Some(challenge_token),
-                            pk_s: BASE64_STANDARD.encode(pk_s.as_slice()),
-                        }
-                        .to_claims()?;
-
-                        let evidence = attester.get_evidence(&ReportData::Claims(userdata)).await?;
-
-                        let AttestationVerifyResponse {
-                            attestation_result,
-                            provider,
-                        } = self.background_check_verify_attestation(evidence).await?;
-                        TngToken::from_wire(provider, attestation_result)?
-                    }
-                };
-
-                let token_expire = Expire::from_timestamp(token.exp()?)?;
-
-                (
-                    Some(client_key),
-                    ClientAuth::AttestedPublicKey(AttestedPublicKey {
-                        attestation_result: token.serialize_to_wire_str()?,
-                        pk_s,
-                        provider: token.provider_type().as_str().to_string(),
-                        model: attest_ctx.proposal_key().0.as_str().to_string(),
-                    }),
-                    token_expire,
-                )
-            }
-            None => {
-                // Not required
-                (None, ClientAuth::NoAuth(NoAuth {}), Expire::NoExpire)
-            }
-        };
-        #[cfg(unix)]
-        if let Some(attempt) = attestation_attempt {
-            attempt.mark_succeeded();
-        }
-        #[cfg(unix)]
-        return Ok(result);
+        Ok((None, ClientAuth::NoAuth(NoAuth {}), Expire::NoExpire))
     }
 
     /// Interface 1: Get HPKE Configuration
@@ -670,73 +543,6 @@ impl OHttpClientInner {
         };
 
         Ok(axum::response::IntoResponse::into_response(response))
-    }
-
-    /// Interface 3: Attestation Forward - Get Challenge
-    /// x-tng-ohttp-api: /tng/background-check/challenge
-    ///
-    /// This method is a forwarder for the AS (Attestation Service) challenge endpoint.
-    /// It is used specifically in the "Server verification Client + background check model" scenario.
-    pub async fn background_check_attestation_challenge(
-        &self,
-        provider: ProviderType,
-    ) -> Result<AttestationChallengeResponse, TngError> {
-        let url = self.base_url.clone();
-
-        let result: AttestationChallengeResponse = self
-            .http_client
-            .get(url)
-            .query(&AttestationChallengeQuery { provider })
-            .headers(self.forward_headers.clone())
-            .header(OhttpApi::HEADER_NAME, OhttpApi::BACKGROUND_CHECK_CHALLENGE)
-            .send()
-            .await
-            .map_err(|e| TngError::ClientGetAttestationChallengeFaild(e.into()))?
-            .check_error_response()
-            .await
-            .map_err(TngError::ClientGetAttestationChallengeFaild)?
-            .json()
-            .await
-            .map_err(|e| TngError::ClientGetAttestationChallengeFaild(e.into()))?;
-
-        Ok(result)
-    }
-
-    /// Interface 3: Attestation Forward - Verify Evidence
-    /// x-tng-ohttp-api: /tng/background-check/verify
-    ///
-    /// This method is a forwarder for the AS (Attestation Service) verification endpoint.
-    /// It is used specifically in the "Server verification Client + background check model" scenario.
-    pub async fn background_check_verify_attestation(
-        &self,
-        evidence: TngEvidence,
-    ) -> Result<AttestationVerifyResponse, TngError> {
-        let url = self.base_url.clone();
-
-        let payload = AttestationVerifyRequest {
-            evidence: evidence
-                .serialize_to_json()
-                .map_err(|e| TngError::ClientGetBackgroundCheckResultFaild(e.into()))?,
-            provider: evidence.provider_type(),
-        };
-
-        let result: AttestationVerifyResponse = self
-            .http_client
-            .post(url)
-            .headers(self.forward_headers.clone())
-            .header(OhttpApi::HEADER_NAME, OhttpApi::BACKGROUND_CHECK_VERIFY)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| TngError::ClientGetBackgroundCheckResultFaild(e.into()))?
-            .check_error_response()
-            .await
-            .map_err(TngError::ClientGetBackgroundCheckResultFaild)?
-            .json()
-            .await
-            .map_err(|e| TngError::ClientGetBackgroundCheckResultFaild(e.into()))?;
-
-        Ok(result)
     }
 }
 
