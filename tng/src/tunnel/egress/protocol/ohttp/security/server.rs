@@ -170,6 +170,7 @@ async fn handler(
                 <Option<Json<KeyConfigRequest>> as FromRequest<()>>::from_request(request, &())
                     .await
                     .map_err(TngError::InvalidRequestPayload)?,
+                context,
             )
             .await
         }

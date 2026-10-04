@@ -24,7 +24,8 @@
                         "field_name": "model",
                         "header_name": "x-gateway-model-name"
                     }
-                ]
+                ],
+                "key_refresh_before_expiry_seconds": 5
             },
             "verify": {
                 "as_provider": "ita",

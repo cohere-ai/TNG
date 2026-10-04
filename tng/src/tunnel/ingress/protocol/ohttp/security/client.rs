@@ -32,7 +32,7 @@ use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 use crate::{
     error::CheckErrorResponse as _,
     tunnel::{
-        attest::{check_response, AttestRequest, AttestVerifier},
+        attest::{check_response, make_proposals, AttestRequest, AttestVerifier},
         ohttp::protocol::{
             metadata::{Metadata, ServerKeyConfigHint, METADATA_MAX_LEN},
             userdata::ServerUserData,
@@ -169,7 +169,7 @@ impl OHttpClientInner {
         let proposals = match verify_set {
             #[cfg(unix)]
             Some(set) => {
-                set.make_proposals(|| {
+                make_proposals(set.proposers(), || {
                     Some(
                         set.attestation_metrics()
                             .start(AttestationOperation::Challenge, AttestationProtocol::Ohttp),
@@ -178,7 +178,7 @@ impl OHttpClientInner {
                 .await?
             }
             #[cfg(not(unix))]
-            Some(set) => set.make_proposals(|| ()).await?,
+            Some(set) => make_proposals(set.proposers(), || ()).await?,
             None => vec![],
         };
         let attest_request = AttestRequest { proposals };

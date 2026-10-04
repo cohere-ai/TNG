@@ -14,16 +14,18 @@ use crate::config::ra::AttestArgs;
 use crate::config::ra::VerifierArgs;
 use crate::config::ra::{RaArgs, VerifyArgs};
 #[cfg(unix)]
-use crate::tunnel::attestation_exchange::PassportEvidenceCache;
-#[cfg(unix)]
 use crate::tunnel::attestation_metrics::AttestationMetrics;
 use rats_cert::tee::claims::Claims;
+#[cfg(unix)]
+use rats_cert::tee::AttesterPipeline;
 use rats_cert::tee::{GenericConverter, GenericVerifier, ReportData};
 
 use crate::tunnel::attest::AttestVerifier;
+#[cfg(unix)]
+use crate::tunnel::attest::{mint_passport, Attester, Prepared};
 use crate::tunnel::attestation_result::AttestationResult;
-use crate::tunnel::challenge::{ChallengeAttempt, ChallengeSource};
-use crate::tunnel::proposal::{AttestProposal, Model};
+use crate::tunnel::challenge::ChallengeSource;
+use crate::tunnel::proposal::Model;
 use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
 #[cfg(unix)]
 use crate::tunnel::utils::maybe_cached::RefreshStrategy;
@@ -189,57 +191,18 @@ impl VerifyContextSet {
             .with_context(|| format!("no verifier is configured for ({model}, {provider})"))
     }
 
-    /// One proposal per verifier, fetching a fresh nonce for each background check concurrently. A
-    /// failed fetch only drops its own proposal, so an outage at one attestation service does not block
-    /// peers using another. `start_challenge` is called once per nonce fetch.
-    pub async fn make_proposals<A: ChallengeAttempt>(
-        &self,
-        start_challenge: impl Fn() -> A,
-    ) -> Result<Vec<AttestProposal>> {
-        let start_challenge = &start_challenge;
-        let proposals: Vec<AttestProposal> =
-            futures::future::join_all(self.entries.iter().map(|entry| async move {
-                let converter = match entry {
-                    VerifyContext::Passport { verifier } => {
-                        return Some(AttestProposal::Passport {
-                            provider: verifier.provider_type(),
-                        })
-                    }
-                    VerifyContext::BackgroundCheck { converter, .. } => converter,
-                };
-                let provider = converter.provider_type();
-                let attempt = start_challenge();
-                let nonce = ChallengeSource::get_nonce(converter)
-                    .await
-                    .and_then(|nonce| {
-                        if nonce.is_empty() {
-                            bail!("converter returned an empty nonce");
-                        }
-                        Ok(nonce)
-                    });
-                match nonce {
-                    Ok(challenge_token) => {
-                        attempt.succeeded();
-                        Some(AttestProposal::BackgroundCheck {
-                            provider,
-                            challenge_token,
-                        })
-                    }
-                    Err(error) => {
-                        tracing::warn!(%provider, ?error, "Dropping background-check proposal");
-                        None
-                    }
-                }
-            }))
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
-
-        if !self.entries.is_empty() && proposals.is_empty() {
-            bail!("failed to fetch a nonce for any background-check verifier");
-        }
-        Ok(proposals)
+    /// Each verifier's provider, with the nonce source a background check proposes from.
+    pub fn proposers(&self) -> Vec<(ProviderType, Option<&dyn ChallengeSource>)> {
+        self.entries
+            .iter()
+            .map(|entry| match entry {
+                VerifyContext::Passport { verifier } => (verifier.provider_type(), None),
+                VerifyContext::BackgroundCheck { converter, .. } => (
+                    converter.provider_type(),
+                    Some(converter as &dyn ChallengeSource),
+                ),
+            })
+            .collect()
     }
 }
 
@@ -327,7 +290,6 @@ pub enum AttestContext {
         refresh_strategy: RefreshStrategy,
         max_retries: usize,
         metrics: AttestationMetrics,
-        passport_cache: PassportEvidenceCache,
     },
 
     /// Background check mode - just attest via AA (client verifies)
@@ -364,7 +326,6 @@ impl AttestContext {
                     refresh_strategy: attest_args.refresh_strategy(),
                     max_retries: attest_args.max_retries(),
                     metrics,
-                    passport_cache: PassportEvidenceCache::new(),
                 })
             }
             AttestArgs::BackgroundCheck {
@@ -395,12 +356,40 @@ impl AttestContext {
         }
     }
 
-    /// The `(model, provider)` this attester can answer.
-    pub fn proposal_key(&self) -> (Model, ProviderType) {
+    /// The view [`crate::tunnel::attest::respond`] answers proposals with.
+    pub fn attester(&self) -> Attester<'_> {
         match self {
-            Self::Passport { converter, .. } => (Model::Passport, converter.provider_type()),
-            Self::BackgroundCheck { attester, .. } => {
-                (Model::BackgroundCheck, attester.provider_type())
+            Self::Passport { converter, .. } => Attester::Passport {
+                provider: converter.provider_type(),
+            },
+            Self::BackgroundCheck {
+                attester,
+                max_retries,
+                ..
+            } => Attester::BackgroundCheck {
+                provider: attester.provider_type(),
+                producer: attester,
+                max_retries: *max_retries,
+            },
+        }
+    }
+
+    /// Attest ahead of requests to the key `passport_claims` binds. Called by the transport
+    /// whenever it rebuilds its key snapshot; background check has nothing to prepare.
+    pub async fn prepare(
+        &self,
+        passport_claims: impl Fn(&str) -> Result<Claims>,
+    ) -> Result<Prepared> {
+        match self {
+            Self::BackgroundCheck { .. } => Ok(Prepared::default()),
+            Self::Passport {
+                attester,
+                converter,
+                max_retries,
+                ..
+            } => {
+                let pipeline = AttesterPipeline::new(attester, converter);
+                mint_passport(converter, &pipeline, passport_claims, *max_retries).await
             }
         }
     }
@@ -630,37 +619,6 @@ mod tests {
             ctx.verify_set().is_some(),
             "VerifyOnly should have verify context"
         );
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_make_proposals_drops_only_failed_nonce_fetches() {
-        let unreachable = || VerifyArgs::BackgroundCheck {
-            converter: ConverterArgs::Coco(CocoConverterArgs::Restful {
-                as_addr: "http://127.0.0.1:1".to_string(),
-                policy_ids: vec!["default".to_string()],
-                as_headers: HashMap::new(),
-                as_ca_certs: vec![],
-            }),
-            verifier: make_verifier_args_certs_only(),
-        };
-        let proposals_for = |verify_list| async move {
-            let ctx = RaContext::from_ra_args(&RaArgs::VerifyOnly(verify_list))
-                .await
-                .unwrap();
-            ctx.verify_set().unwrap().make_proposals(|| ()).await
-        };
-
-        let proposals = proposals_for(vec![unreachable(), make_verify_passport_args()])
-            .await
-            .unwrap();
-        assert_eq!(
-            proposals,
-            vec![AttestProposal::Passport {
-                provider: ProviderType::Coco
-            }]
-        );
-        let err = proposals_for(vec![unreachable()]).await.unwrap_err();
-        assert!(err.to_string().contains("any"), "{err}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

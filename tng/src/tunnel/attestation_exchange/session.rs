@@ -1,34 +1,27 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
-use rustls::sign::CertifiedKey;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::error::AttestError;
 use crate::tunnel::attest::{
-    check_response, produce_attest_response, AttestClaims, AttestRequest, AttestResponse,
-    AttestVerifier, EvidenceProducer, TokenProducer,
+    check_response, make_proposals, respond, AttestRequest, AttestResponse, AttestVerifier,
+    Attester, Prepared,
 };
 use crate::tunnel::attestation_metrics::AttestationAttempt;
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::cert_verifier::TngCommonCertVerifier;
-use crate::tunnel::challenge::ChallengeSource;
-use crate::tunnel::proposal::{AttestProposal, Model};
-use crate::tunnel::provider::ProviderType;
+use crate::tunnel::proposal::AttestProposal;
 use crate::tunnel::ra_context::{AttestContext, RaContext, VerifyContextSet};
 use crate::tunnel::service_metrics::{
     AttestationMetrics, AttestationOperation, AttestationProtocol,
 };
-use rats_cert::tee::AttesterPipeline;
+use crate::tunnel::utils::cert_manager::AttestedKey;
 
 use super::claims::{
-    background_check_claims, passport_attester_claims, BackgroundCheckExpectation,
-    PassportExpectation, EXPORTER_LEN,
+    background_check_claims, BackgroundCheckExpectation, PassportExpectation, EXPORTER_LEN,
 };
 use super::codec::{self, read_request, read_response, write_request, write_response};
-use super::core::{BoundPassportCache, PassportEvidenceCache};
 use super::exporter::{export_from_client, export_from_server, spki_from_certified_key};
 
 pub const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -43,7 +36,7 @@ pub trait ProposalMaker: Send + Sync {
 impl ProposalMaker for VerifyContextSet {
     async fn fresh_proposals(&self) -> Result<Vec<AttestProposal>> {
         let metrics = self.attestation_metrics();
-        self.make_proposals(|| {
+        make_proposals(self.proposers(), || {
             Some(metrics.start(
                 AttestationOperation::Challenge,
                 AttestationProtocol::RatsTls,
@@ -56,16 +49,14 @@ impl ProposalMaker for VerifyContextSet {
 pub struct ExchangeResources<'a> {
     /// `None` when this side does not verify its peer.
     pub proposal_maker: Option<&'a dyn ProposalMaker>,
-    pub attest_key: Option<(Model, ProviderType)>,
-    pub attest_converter: Option<&'a dyn ChallengeSource>,
-    pub evidence_producer: Option<&'a dyn EvidenceProducer>,
-    pub token_producer: Option<&'a dyn TokenProducer>,
+    /// `None` when this side does not attest.
+    pub attester: Option<Attester<'a>>,
+    /// Prepared alongside `own_spki_der`'s certificate.
+    pub prepared: Prepared,
     pub verifier: Option<&'a dyn AttestVerifier>,
-    pub passport_cache: Option<&'a PassportEvidenceCache>,
     pub own_spki_der: Option<&'a [u8]>,
     pub peer_spki_der: Option<&'a [u8]>,
     pub exporter: [u8; EXPORTER_LEN],
-    pub max_retries: usize,
     pub attestation_metrics: Option<&'a AttestationMetrics>,
 }
 
@@ -93,46 +84,16 @@ fn resources_from_ra<'a>(
     exporter: [u8; EXPORTER_LEN],
     own_spki_der: Option<&'a [u8]>,
     peer_spki_der: Option<&'a [u8]>,
-    token_producer: Option<&'a dyn TokenProducer>,
+    prepared: Prepared,
 ) -> ExchangeResources<'a> {
-    let (evidence_producer, attest_converter, passport_cache, max_retries) =
-        match ra.attest_context() {
-            Some(AttestContext::Passport {
-                converter,
-                passport_cache,
-                max_retries,
-                ..
-            }) => (
-                None,
-                Some(converter as &dyn ChallengeSource),
-                Some(passport_cache),
-                *max_retries,
-            ),
-            Some(AttestContext::BackgroundCheck {
-                attester,
-                max_retries,
-                ..
-            }) => (
-                Some(attester as &dyn EvidenceProducer),
-                None,
-                None,
-                *max_retries,
-            ),
-            None => (None, None, None, 0),
-        };
-
     ExchangeResources {
         proposal_maker: ra.verify_set().map(|v| v as &dyn ProposalMaker),
-        attest_key: ra.attest_context().map(AttestContext::proposal_key),
-        attest_converter,
-        evidence_producer,
-        token_producer,
+        attester: ra.attest_context().map(AttestContext::attester),
+        prepared,
         verifier,
-        passport_cache,
         own_spki_der,
         peer_spki_der,
         exporter,
-        max_retries,
         attestation_metrics: ra.attestation_metrics(),
     }
 }
@@ -167,7 +128,7 @@ pub async fn finish_rats_tls_server<IO>(
     stream: tokio_rustls::server::TlsStream<IO>,
     ra: &RaContext,
     verifier: Option<&TngCommonCertVerifier>,
-    attested_key: Option<&CertifiedKey>,
+    attested_key: Option<&AttestedKey>,
 ) -> Result<(
     tokio_rustls::server::TlsStream<IO>,
     Option<AttestationResult>,
@@ -183,7 +144,7 @@ pub async fn finish_rats_tls_client<IO>(
     stream: tokio_rustls::client::TlsStream<IO>,
     ra: &RaContext,
     verifier: Option<&TngCommonCertVerifier>,
-    attested_key: Option<&CertifiedKey>,
+    attested_key: Option<&AttestedKey>,
 ) -> Result<(
     tokio_rustls::client::TlsStream<IO>,
     Option<AttestationResult>,
@@ -199,29 +160,25 @@ async fn finish_rats_tls<S>(
     stream: S,
     ra: &RaContext,
     verifier: Option<&TngCommonCertVerifier>,
-    attested_key: Option<&CertifiedKey>,
+    attested_key: Option<&AttestedKey>,
     exporter: [u8; EXPORTER_LEN],
 ) -> Result<(S, Option<AttestationResult>)>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let own_spki = attested_key.map(spki_from_certified_key).transpose()?;
+    let own_spki = attested_key
+        .map(|key| spki_from_certified_key(&key.cert))
+        .transpose()?;
     let peer_spki = verifier.map(|v| v.peer_spki_der()).transpose()?;
-    let passport_pipeline = match ra.attest_context() {
-        Some(AttestContext::Passport {
-            attester,
-            converter,
-            ..
-        }) => Some(AttesterPipeline::new(attester, converter)),
-        _ => None,
-    };
     let resources = resources_from_ra(
         ra,
         verifier.map(|v| v.verify_set() as &dyn AttestVerifier),
         exporter,
         own_spki.as_deref(),
         peer_spki.as_deref(),
-        passport_pipeline.as_ref().map(|p| p as &dyn TokenProducer),
+        attested_key
+            .map(|key| key.prepared.clone())
+            .unwrap_or_default(),
     );
     run_on_stream(stream, resources).await
 }
@@ -283,67 +240,13 @@ async fn produce_outgoing(
     resources: &ExchangeResources<'_>,
     peer: &AttestRequest,
 ) -> AttestResponse {
-    let own_spki = resources.own_spki_der;
-    let bound = resources.passport_cache.map(|cache| BoundPassportCache {
-        cache,
-        spki: own_spki.unwrap_or(b""),
-    });
-    let claims = TlsClaims {
-        own_spki,
-        exporter: &resources.exporter,
-        converter: resources.attest_converter,
-    };
-    produce_attest_response(
-        peer,
-        resources.attest_key,
-        &claims,
-        resources.evidence_producer,
-        resources.token_producer,
-        bound.as_ref(),
-        resources.max_retries,
-    )
+    respond(peer, resources.attester, &resources.prepared, |nonce| {
+        let own_spki = resources
+            .own_spki_der
+            .context("attesting side has no snapshotted certificate")?;
+        background_check_claims(own_spki, nonce, &resources.exporter)
+    })
     .await
-}
-
-struct TlsClaims<'a> {
-    own_spki: Option<&'a [u8]>,
-    exporter: &'a [u8],
-    converter: Option<&'a dyn ChallengeSource>,
-}
-
-impl AttestClaims for TlsClaims<'_> {
-    fn claims<'a>(
-        &'a self,
-        proposal: &'a AttestProposal,
-    ) -> Pin<Box<dyn Future<Output = Result<rats_cert::tee::claims::Claims>> + Send + 'a>> {
-        Box::pin(tls_claims(
-            proposal,
-            self.own_spki,
-            self.exporter,
-            self.converter,
-        ))
-    }
-}
-
-async fn tls_claims(
-    proposal: &AttestProposal,
-    own_spki: Option<&[u8]>,
-    exporter: &[u8],
-    converter: Option<&dyn ChallengeSource>,
-) -> Result<rats_cert::tee::claims::Claims> {
-    let Some(own_spki) = own_spki else {
-        bail!("attesting side has no snapshotted certificate");
-    };
-    match proposal {
-        AttestProposal::BackgroundCheck {
-            challenge_token, ..
-        } => background_check_claims(own_spki, challenge_token, exporter),
-        AttestProposal::Passport { .. } => {
-            let converter = converter.context("not configured to attest")?;
-            let nonce = converter.get_nonce().await?;
-            passport_attester_claims(own_spki, &nonce)
-        }
-    }
 }
 
 async fn verify_incoming(
@@ -380,9 +283,9 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::super::claims::expected_subset_of;
-    use crate::tunnel::attest::Evidence;
-    use crate::tunnel::attest::{evidence_response, token_response};
-    use crate::tunnel::provider::TngToken;
+    use crate::tunnel::attest::{evidence_response, token_response, Evidence, EvidenceProducer};
+    use crate::tunnel::proposal::Model;
+    use crate::tunnel::provider::{ProviderType, TngToken};
 
     const SPKI: &[u8] = b"spki-a";
     const EXP: [u8; EXPORTER_LEN] = [7u8; EXPORTER_LEN];
@@ -397,16 +300,12 @@ mod tests {
     fn resources<'a>() -> ExchangeResources<'a> {
         ExchangeResources {
             proposal_maker: None,
-            attest_key: None,
-            attest_converter: None,
-            evidence_producer: None,
-            token_producer: None,
+            attester: None,
+            prepared: Prepared::default(),
             verifier: None,
-            passport_cache: None,
             own_spki_der: None,
             peer_spki_der: None,
             exporter: EXP,
-            max_retries: 0,
             attestation_metrics: None,
         }
     }
@@ -487,8 +386,11 @@ mod tests {
 
     fn attest_only<'a>(producer: &'a dyn EvidenceProducer) -> ExchangeResources<'a> {
         let mut r = resources();
-        r.attest_key = Some((Model::BackgroundCheck, ProviderType::Coco));
-        r.evidence_producer = Some(producer);
+        r.attester = Some(Attester::BackgroundCheck {
+            provider: ProviderType::Coco,
+            producer,
+            max_retries: 0,
+        });
         r.own_spki_der = Some(SPKI);
         r
     }

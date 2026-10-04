@@ -2,13 +2,13 @@
 //!
 //! A request is the verifier's proposal list. A response is [`AttestResponse`]: `Ok(None)`
 //! acks an empty request, `Ok(Some)` is the evidence or token, and `Err` is an [`AttestError`].
-//! [`produce_attest_response`] selects the proposal and fills that response. It chooses
-//! background check or passport. The caller supplies the claims and a passport-token cache.
-//! A failure is [`crate::error::AttestError`].
+//! [`respond`] selects the proposal and fills that response. Background check produces evidence
+//! per request; passport returns the [`Prepared`] token the transport minted with
+//! [`mint_passport`] when it last rotated its key. A failure is [`crate::error::AttestError`].
 
 use std::collections::HashSet;
 use std::future::Future;
-use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use again::RetryPolicy;
@@ -19,8 +19,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AttestError;
 use crate::tunnel::attestation_result::AttestationResult;
+use crate::tunnel::challenge::{ChallengeAttempt, ChallengeSource};
 use crate::tunnel::proposal::{AttestProposal, Model};
 use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
+use crate::tunnel::utils::maybe_cached::Expire;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -65,6 +67,52 @@ pub fn token_response(provider: ProviderType, token: impl Into<String>) -> Attes
         provider,
         token: token.into(),
     }))
+}
+
+/// One proposal per verifier, fetching a fresh nonce for each background check concurrently. A
+/// failed fetch only drops its own proposal, so an outage at one attestation service does not block
+/// peers using another. `start_challenge` is called once per nonce fetch.
+pub async fn make_proposals<A: ChallengeAttempt>(
+    proposers: Vec<(ProviderType, Option<&dyn ChallengeSource>)>,
+    start_challenge: impl Fn() -> A,
+) -> Result<Vec<AttestProposal>> {
+    let start_challenge = &start_challenge;
+    let proposals: Vec<AttestProposal> = futures::future::join_all(proposers.iter().map(
+        |&(provider, nonce_source)| async move {
+            let Some(nonce_source) = nonce_source else {
+                return Some(AttestProposal::Passport { provider });
+            };
+            let attempt = start_challenge();
+            let nonce = nonce_source.get_nonce().await.and_then(|nonce| {
+                if nonce.is_empty() {
+                    bail!("converter returned an empty nonce");
+                }
+                Ok(nonce)
+            });
+            match nonce {
+                Ok(challenge_token) => {
+                    attempt.succeeded();
+                    Some(AttestProposal::BackgroundCheck {
+                        provider,
+                        challenge_token,
+                    })
+                }
+                Err(error) => {
+                    tracing::warn!(%provider, ?error, "Dropping background-check proposal");
+                    None
+                }
+            }
+        },
+    ))
+    .await
+    .into_iter()
+    .flatten()
+    .collect();
+
+    if !proposers.is_empty() && proposals.is_empty() {
+        bail!("failed to fetch a nonce for any background-check verifier");
+    }
+    Ok(proposals)
 }
 
 /// The proposal this attester answers.
@@ -191,58 +239,101 @@ pub trait TokenProducer: Send + Sync {
     async fn produce(&self, claims: Claims) -> Result<TngToken>;
 }
 
-/// Builds the transport's runtime data for the proposal this side answers.
-pub trait AttestClaims: Sync {
-    fn claims<'a>(
-        &'a self,
-        proposal: &'a AttestProposal,
-    ) -> Pin<Box<dyn Future<Output = Result<Claims>> + Send + 'a>>;
+/// The local attester as [`respond`] sees it.
+#[derive(Clone, Copy)]
+pub enum Attester<'a> {
+    BackgroundCheck {
+        provider: ProviderType,
+        producer: &'a dyn EvidenceProducer,
+        max_retries: usize,
+    },
+    /// Answers only from a [`Prepared`] token.
+    Passport { provider: ProviderType },
 }
 
-pub type MintToken<'a> =
-    Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> + Send + 'a>;
+impl Attester<'_> {
+    pub fn key(&self) -> (Model, ProviderType) {
+        match self {
+            Self::BackgroundCheck { provider, .. } => (Model::BackgroundCheck, *provider),
+            Self::Passport { provider } => (Model::Passport, *provider),
+        }
+    }
+}
 
-/// A passport token cache whose lookup key stays inside the implementation.
-pub trait PassportTokenCache: Sync {
-    fn get_or_mint<'a>(
-        &'a self,
-        mint: MintToken<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>>;
+/// How long before a prepared token's `exp` its snapshot is rebuilt, so the new token is
+/// published before the old one lapses.
+const PREPARED_EARLY_REFRESH: Duration = Duration::from_secs(30);
+
+/// What this side attests with before any request arrives: nothing for background check, the
+/// passport token for passport. Transports keep it beside the key it binds and never look inside.
+#[derive(Clone, Default)]
+pub struct Prepared(Option<Arc<TngToken>>);
+
+impl Prepared {
+    /// When the snapshot holding this value should be rebuilt.
+    pub fn expire(&self) -> Result<Expire> {
+        let Some(token) = &self.0 else {
+            return Ok(Expire::NoExpire);
+        };
+        let exp = token.exp()?;
+        let early = exp.saturating_sub(PREPARED_EARLY_REFRESH.as_secs());
+        // Too close to `exp` to refresh early: refresh at `exp` instead of in a tight loop.
+        Expire::from_timestamp(early).or_else(|_| Expire::from_timestamp(exp))
+    }
+
+    fn unexpired_token(&self) -> Option<&TngToken> {
+        self.0
+            .as_deref()
+            .filter(|token| token.exp().and_then(Expire::from_timestamp).is_ok())
+    }
+}
+
+/// Mint a passport token over `claims(nonce)`, with a fresh nonce from this side's own
+/// attestation service on every attempt.
+pub async fn mint_passport(
+    nonce_source: &dyn ChallengeSource,
+    producer: &dyn TokenProducer,
+    claims: impl Fn(&str) -> Result<Claims>,
+    max_retries: usize,
+) -> Result<Prepared> {
+    let token = with_retry(max_retries, || async {
+        let nonce = nonce_source.get_nonce().await?;
+        producer.produce(claims(&nonce)?).await
+    })
+    .await?;
+    Ok(Prepared(Some(Arc::new(token))))
 }
 
 /// Select a proposal from `request` and produce its output.
 ///
-/// An empty list is an ack. `claims` builds this transport's runtime data for the matched
-/// proposal. Background check runs the evidence producer. Passport reads `passport_cache` and
-/// mints on a miss. [`AttestError::Unavailable`] is an attester or claims failure. Every
-/// other error is a request this side will not answer.
-pub async fn produce_attest_response<C, R>(
+/// An empty list is an ack. Background check runs the evidence producer over
+/// `claims(verifier_nonce)`. Passport returns the `prepared` token and never mints; a missing
+/// or expired token is [`AttestError::Unavailable`], as is an attester or claims failure.
+/// Every other error is a request this side will not answer.
+pub async fn respond(
     request: &AttestRequest,
-    own_key: Option<(Model, ProviderType)>,
-    claims: &R,
-    evidence_producer: Option<&dyn EvidenceProducer>,
-    token_producer: Option<&dyn TokenProducer>,
-    passport_cache: Option<&C>,
-    max_retries: usize,
-) -> AttestResponse
-where
-    C: PassportTokenCache,
-    R: AttestClaims,
-{
-    let Some(proposal) = pick_proposal(&request.proposals, own_key)? else {
+    attester: Option<Attester<'_>>,
+    prepared: &Prepared,
+    claims: impl Fn(&str) -> Result<Claims>,
+) -> AttestResponse {
+    let Some(proposal) = pick_proposal(&request.proposals, attester.map(|a| a.key()))? else {
         return Ok(None);
     };
-    match proposal {
-        AttestProposal::BackgroundCheck {
-            challenge_token, ..
-        } => {
+    match (proposal, attester) {
+        (
+            AttestProposal::BackgroundCheck {
+                challenge_token, ..
+            },
+            Some(Attester::BackgroundCheck {
+                producer,
+                max_retries,
+                ..
+            }),
+        ) => {
             if challenge_token.is_empty() {
                 return Err(AttestError::MissingNonce);
             }
-            let Some(producer) = evidence_producer else {
-                return Err(AttestError::NotConfigured);
-            };
-            let claims = match claims.claims(proposal).await {
+            let claims = match claims(challenge_token) {
                 Ok(claims) => claims,
                 Err(error) => {
                     tracing::error!(?error, "failed to build background-check claims");
@@ -257,30 +348,16 @@ where
                 }
             }
         }
-        AttestProposal::Passport { .. } => {
-            let Some(producer) = token_producer else {
-                return Err(AttestError::NotConfigured);
-            };
-            let Some(cache) = passport_cache else {
-                return Err(AttestError::NotConfigured);
-            };
-            match cache
-                .get_or_mint(Box::new(move || {
-                    let claims = claims.claims(proposal);
-                    Box::pin(async move {
-                        let claims = claims.await?;
-                        with_retry(max_retries, || producer.produce(claims.clone())).await
-                    })
-                }))
-                .await
-            {
-                Ok(token) => token_response(token.provider_type(), token.as_str()),
-                Err(error) => {
-                    tracing::error!(?error, "Failed to produce passport token");
+        (AttestProposal::Passport { .. }, Some(Attester::Passport { .. })) => {
+            match prepared.unexpired_token() {
+                Some(token) => token_response(token.provider_type(), token.as_str()),
+                None => {
+                    tracing::error!("no unexpired prepared passport token");
                     Err(AttestError::Unavailable)
                 }
             }
         }
+        _ => Err(AttestError::NotConfigured),
     }
 }
 
@@ -359,76 +436,115 @@ mod tests {
         assert!(serde_json::from_str::<AttestResponse>(r#"{"type":"ack"}"#).is_err());
     }
 
-    struct UnusedClaims;
-
-    impl AttestClaims for UnusedClaims {
-        fn claims<'a>(
-            &'a self,
-            _proposal: &'a AttestProposal,
-        ) -> Pin<Box<dyn Future<Output = Result<Claims>> + Send + 'a>> {
-            Box::pin(async { bail!("claims should not be built") })
-        }
-    }
-
-    struct NoCache;
-
-    impl PassportTokenCache for NoCache {
-        fn get_or_mint<'a>(
-            &'a self,
-            _mint: MintToken<'a>,
-        ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> {
-            Box::pin(async { bail!("cache should not be consulted") })
-        }
-    }
-
     fn request(proposals: Vec<AttestProposal>) -> AttestRequest {
         AttestRequest { proposals }
     }
 
+    fn unused_claims(_nonce: &str) -> Result<Claims> {
+        bail!("claims should not be built")
+    }
+
+    struct FailingProducer;
+
+    #[async_trait::async_trait]
+    impl EvidenceProducer for FailingProducer {
+        async fn produce(&self, _claims: Claims) -> Result<Evidence> {
+            bail!("attester down")
+        }
+    }
+
+    fn failing_bc_attester() -> Attester<'static> {
+        Attester::BackgroundCheck {
+            provider: COCO,
+            producer: &FailingProducer,
+            max_retries: 0,
+        }
+    }
+
     #[tokio::test]
-    async fn produce_acks_an_empty_list_and_rejects_one_it_cannot_answer() {
-        let ack = produce_attest_response(
-            &request(vec![]),
-            None,
-            &UnusedClaims,
-            None,
-            None,
-            None::<&NoCache>,
-            0,
-        )
-        .await;
+    async fn respond_acks_an_empty_list_and_rejects_one_it_cannot_answer() {
+        let none = Prepared::default();
+        let ack = respond(&request(vec![]), None, &none, unused_claims).await;
         assert_eq!(ack, Ok(None));
 
-        let err = produce_attest_response(
-            &request(vec![AttestProposal::Passport {
-                provider: ProviderType::Coco,
-            }]),
+        let err = respond(
+            &request(vec![AttestProposal::Passport { provider: COCO }]),
             None,
-            &UnusedClaims,
-            None,
-            None,
-            None::<&NoCache>,
-            0,
+            &none,
+            unused_claims,
         )
         .await
         .unwrap_err();
         assert!(matches!(err, AttestError::NotConfigured));
 
-        let err = produce_attest_response(
-            &request(vec![AttestProposal::BackgroundCheck {
-                provider: ProviderType::Coco,
-                challenge_token: String::new(),
-            }]),
-            Some((Model::BackgroundCheck, ProviderType::Coco)),
-            &UnusedClaims,
-            None,
-            None,
-            None::<&NoCache>,
-            0,
+        let err = respond(
+            &request(vec![bc(COCO, "")]),
+            Some(failing_bc_attester()),
+            &none,
+            unused_claims,
         )
         .await
         .unwrap_err();
         assert!(matches!(err, AttestError::MissingNonce));
+    }
+
+    #[tokio::test]
+    async fn respond_fails_closed_when_attesting_is_unavailable() {
+        let resp = respond(
+            &request(vec![bc(COCO, "n")]),
+            Some(failing_bc_attester()),
+            &Prepared::default(),
+            |_| Ok(Claims::new()),
+        )
+        .await;
+        assert_eq!(resp, Err(AttestError::Unavailable));
+
+        let passport = request(vec![AttestProposal::Passport { provider: COCO }]);
+        let attester = Some(Attester::Passport { provider: COCO });
+        for prepared in [Prepared::default(), prepared_with_exp(now_secs() - 1)] {
+            let resp = respond(&passport, attester, &prepared, unused_claims).await;
+            assert_eq!(resp, Err(AttestError::Unavailable));
+        }
+
+        let fresh = prepared_with_exp(now_secs() + 3600);
+        let resp = respond(&passport, attester, &fresh, unused_claims).await;
+        assert!(matches!(resp, Ok(Some(AttestOutput::Passport { .. }))));
+    }
+
+    #[test]
+    fn prepared_expires_early_unless_too_close() {
+        assert_eq!(Prepared::default().expire().unwrap(), Expire::NoExpire);
+
+        let exp = now_secs() + 3600;
+        assert_eq!(
+            prepared_with_exp(exp).expire().unwrap(),
+            Expire::ExpireAt(at(exp) - PREPARED_EARLY_REFRESH)
+        );
+
+        let exp = now_secs() + 10;
+        assert_eq!(
+            prepared_with_exp(exp).expire().unwrap(),
+            Expire::ExpireAt(at(exp))
+        );
+    }
+
+    fn now_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    fn at(secs: u64) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    fn prepared_with_exp(exp: u64) -> Prepared {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine as _;
+        let payload = URL_SAFE_NO_PAD.encode(json!({ "exp": exp }).to_string());
+        let jwt = format!("e30.{payload}.c2ln");
+        Prepared(Some(Arc::new(TngToken::from_wire(COCO, jwt).unwrap())))
     }
 
     const COCO: ProviderType = ProviderType::Coco;
@@ -439,6 +555,37 @@ mod tests {
             provider,
             challenge_token: nonce.into(),
         }
+    }
+
+    struct FixedNonce(Option<&'static str>);
+
+    #[async_trait::async_trait]
+    impl ChallengeSource for FixedNonce {
+        async fn get_nonce(&self) -> Result<String> {
+            self.0
+                .map(str::to_string)
+                .context("attestation service down")
+        }
+    }
+
+    #[tokio::test]
+    async fn make_proposals_drops_only_failed_nonce_fetches() {
+        let (up, down) = (FixedNonce(Some("n")), FixedNonce(None));
+        let proposals = make_proposals(
+            vec![(COCO, Some(&down)), (ITA, Some(&up)), (COCO, None)],
+            || (),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            proposals,
+            vec![bc(ITA, "n"), AttestProposal::Passport { provider: COCO }]
+        );
+
+        let err = make_proposals(vec![(COCO, Some(&down))], || ())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("any"), "{err}");
     }
 
     #[test]
