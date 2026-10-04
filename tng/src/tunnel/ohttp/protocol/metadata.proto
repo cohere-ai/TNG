@@ -4,6 +4,7 @@ package tng.ohttp.metadata;
 
 // Prefix of an encrypted OHTTP request. The ciphertext follows this message.
 message Metadata {
+  reserved 1, 2;
 
   // Optional hint: provides a cryptographic identifier to help the server
   // locate the correct key configuration for decryption.
@@ -16,10 +17,19 @@ message Metadata {
   // Servers SHOULD use this hint to select the appropriate key_config, if a
   // matching one exists. If not present, the server may fall back to other
   // mechanisms (e.g., default key, ID-based lookup).
-  ServerKeyConfigHint key_config_hint = 1;
+  ServerKeyConfigHint key_config_hint = 3;
 }
 
-// The HPKE public key the server uses to select the private key for decryption.
+// Hint for the server to identify the key configuration needed to decrypt the
+// request.
 message ServerKeyConfigHint {
-  bytes public_key = 1;
+  // Raw binary representation of the public key.
+  //
+  // This value MUST be the public key in its original binary format,
+  // such as an uncompressed EC point, depending on the cryptographic algorithm
+  // in use.
+  //
+  // Servers SHOULD use this public key to look up the corresponding private key
+  // required to decrypt the request.
+  bytes public_key = 1; // Variable length; depends on key type and encoding
 }

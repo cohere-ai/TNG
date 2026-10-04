@@ -78,9 +78,6 @@ pub enum TngError {
     #[error("Failed to encode metadata")]
     MetadataEncodeError(#[source] prost::EncodeError),
 
-    #[error("Failed to validate metadata")]
-    MetadataValidateError(#[source] anyhow::Error),
-
     #[error("Not a valid http request")]
     InvalidHttpRequest,
 
@@ -198,7 +195,6 @@ impl IntoResponse for TngError {
             TngError::Base64DecodeError(..) => StatusCode::BAD_REQUEST,
             TngError::MetadataDecodeError(..) => StatusCode::BAD_REQUEST,
             TngError::MetadataEncodeError(..) => StatusCode::INTERNAL_SERVER_ERROR,
-            TngError::MetadataValidateError(..) => StatusCode::BAD_REQUEST,
             TngError::ConstructHttpResponseFailed(..) => StatusCode::INTERNAL_SERVER_ERROR,
 
             // Not Found / Upstream issues

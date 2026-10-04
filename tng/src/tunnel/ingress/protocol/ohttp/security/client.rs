@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bhttp::http_compat::{
     decode::{BhttpDecoder, HttpMessage},
@@ -32,7 +32,7 @@ use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 use crate::{
     error::CheckErrorResponse as _,
     tunnel::{
-        attest::{check_response, AttestRequest},
+        attest::{check_response, AttestRequest, AttestVerifier},
         ohttp::protocol::{
             metadata::{Metadata, ServerKeyConfigHint, METADATA_MAX_LEN},
             userdata::ServerUserData,
@@ -96,21 +96,8 @@ impl OHttpClient {
             key_refresh_before_expiry_seconds.unwrap_or(DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS),
         );
 
-        let refresh_strategy = {
-            #[cfg(unix)]
-            if let Some(attest_ctx) = ra_context.attest_context() {
-                attest_ctx.refresh_strategy()
-            } else {
-                RefreshStrategy::Periodically {
-                    interval: DEFAULT_KEY_CONFIG_REFRESH_SECOND,
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                RefreshStrategy::Periodically {
-                    interval: DEFAULT_KEY_CONFIG_REFRESH_SECOND,
-                }
-            }
+        let refresh_strategy = RefreshStrategy::Periodically {
+            interval: DEFAULT_KEY_CONFIG_REFRESH_SECOND,
         };
 
         let inner = Arc::new(OHttpClientInner {
@@ -172,82 +159,58 @@ impl OHttpClient {
 
 impl OHttpClientInner {
     async fn create_key_store_value(&self) -> Result<(KeyStoreValue, Expire)> {
+        let verify_set = self.ra_context.verify_set();
         #[cfg(unix)]
-        if self.ra_context.attest_context().is_some() {
-            bail!("client attestation over OHTTP is disabled");
-        }
-        let mut expire = Expire::NoExpire;
-        #[cfg(unix)]
-        let attestation_attempt = self.ra_context.verify_set().map(|set| {
+        let attestation_attempt = verify_set.map(|set| {
             set.attestation_metrics()
                 .start(AttestationOperation::Verify, AttestationProtocol::Ohttp)
         });
 
-        let (server_key_config, verified) = match self.ra_context.verify_set() {
-            Some(verify_set) => {
-                #[cfg(unix)]
-                let proposals = verify_set
-                    .make_proposals(|| {
-                        Some(
-                            verify_set
-                                .attestation_metrics()
-                                .start(AttestationOperation::Challenge, AttestationProtocol::Ohttp),
-                        )
-                    })
-                    .await?;
-                #[cfg(not(unix))]
-                let proposals = verify_set.make_proposals(|| ()).await?;
-
-                let request = KeyConfigRequest {
-                    attest_request: AttestRequest { proposals },
-                };
-                let response = self.get_hpke_configuration(request.clone()).await?;
-                let verified = check_response(
-                    &request.attest_request,
-                    &response.attest_response,
-                    Some(verify_set),
-                    |proposal| {
-                        ServerUserData {
-                            challenge_token: proposal.challenge_token().map(str::to_owned),
-                            hpke_key_config: response.hpke_key_config.clone(),
-                        }
-                        .to_claims()
-                    },
-                )
-                .await?;
-                (response.hpke_key_config, verified)
+        let proposals = match verify_set {
+            #[cfg(unix)]
+            Some(set) => {
+                set.make_proposals(|| {
+                    Some(
+                        set.attestation_metrics()
+                            .start(AttestationOperation::Challenge, AttestationProtocol::Ohttp),
+                    )
+                })
+                .await?
             }
-            None => {
-                let request = KeyConfigRequest::default();
-                let response = self.get_hpke_configuration(request.clone()).await?;
-                check_response(
-                    &request.attest_request,
-                    &response.attest_response,
-                    None,
-                    |_| bail!("unexpected attestation output"),
-                )
-                .await?;
-                (response.hpke_key_config, None)
-            }
+            #[cfg(not(unix))]
+            Some(set) => set.make_proposals(|| ()).await?,
+            None => vec![],
         };
+        let attest_request = AttestRequest { proposals };
+        let response = self
+            .get_hpke_configuration(KeyConfigRequest {
+                attest_request: attest_request.clone(),
+            })
+            .await?;
+        let server_key_config = response.hpke_key_config;
+        let server_attestation_result = check_response(
+            &attest_request,
+            &response.attest_response,
+            verify_set.map(|set| set as &dyn AttestVerifier),
+            |proposal| {
+                ServerUserData {
+                    challenge_token: proposal.challenge_token().map(str::to_owned),
+                    hpke_key_config: server_key_config.clone(),
+                }
+                .to_claims()
+            },
+        )
+        .await?;
 
         #[cfg(unix)]
         if let Some(attempt) = attestation_attempt {
             attempt.mark_succeeded();
         }
 
-        expire = std::cmp::min(
-            expire,
-            Expire::from_timestamp(server_key_config.expire_timestamp)?,
-        );
-
-        let server_attestation_result = match verified {
-            Some(result) => {
-                expire = std::cmp::min(expire, Expire::from_timestamp(result.exp()?)?);
-                Some(result)
-            }
-            None => None,
-        };
+        let mut expire = Expire::from_timestamp(server_key_config.expire_timestamp)?;
+        if let Some(result) = &server_attestation_result {
+            expire = std::cmp::min(expire, Expire::from_timestamp(result.exp()?)?);
+        }
 
         let expire = adjust_expire_for_early_refresh(expire, self.refresh_before_expiry);
 

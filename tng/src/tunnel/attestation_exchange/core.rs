@@ -18,7 +18,7 @@ use std::pin::Pin;
 
 use anyhow::Result;
 
-use crate::tunnel::attest::PassportTokenCache;
+use crate::tunnel::attest::{MintToken, PassportTokenCache};
 use crate::tunnel::provider::{ProviderType, TngToken};
 use crate::tunnel::utils::maybe_cached::Expire;
 
@@ -84,11 +84,9 @@ pub struct BoundPassportCache<'a> {
 impl PassportTokenCache for BoundPassportCache<'_> {
     fn get_or_mint<'a>(
         &'a self,
-        mint: Box<
-            dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> + Send + 'a,
-        >,
+        mint: MintToken<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> {
-        Box::pin(self.cache.get_or_mint(self.spki, move || mint()))
+        Box::pin(self.cache.get_or_mint(self.spki, mint))
     }
 }
 
@@ -112,8 +110,8 @@ mod tests {
 
     use crate::error::AttestError;
     use crate::tunnel::attest::{
-        error_response, produce_attest_response, AttestClaims, AttestRequest, Evidence,
-        EvidenceProducer, TokenProducer,
+        produce_attest_response, AttestClaims, AttestRequest, Evidence, EvidenceProducer,
+        TokenProducer,
     };
     use crate::tunnel::challenge::ChallengeSource;
     use crate::tunnel::proposal::{AttestProposal, Model};
@@ -197,12 +195,6 @@ mod tests {
         }
     }
 
-    fn as_response(
-        produced: Result<crate::tunnel::attest::AttestResponse, crate::error::AttestError>,
-    ) -> crate::tunnel::attest::AttestResponse {
-        produced.unwrap_or_else(error_response)
-    }
-
     async fn cached_passport(
         producer: &CountingTokenProducer,
         conv: &RecordingConverter,
@@ -214,20 +206,18 @@ mod tests {
         };
         let bound = BoundPassportCache { cache, spki };
         let claims = PassportTestClaims { conv, spki };
-        as_response(
-            produce_attest_response(
-                &AttestRequest {
-                    proposals: vec![proposal],
-                },
-                Some((Model::Passport, ProviderType::Coco)),
-                &claims,
-                None,
-                Some(producer),
-                Some(&bound),
-                0,
-            )
-            .await,
+        produce_attest_response(
+            &AttestRequest {
+                proposals: vec![proposal],
+            },
+            Some((Model::Passport, ProviderType::Coco)),
+            &claims,
+            None,
+            Some(producer),
+            Some(&bound),
+            0,
         )
+        .await
     }
 
     struct PassportTestClaims<'a> {
@@ -328,20 +318,18 @@ mod tests {
             provider: ProviderType::Coco,
             challenge_token: "nonce".into(),
         };
-        let evidence = as_response(
-            produce_attest_response(
-                &AttestRequest {
-                    proposals: vec![proposal],
-                },
-                Some((Model::BackgroundCheck, ProviderType::Coco)),
-                &EmptyClaims,
-                Some(&producer),
-                None,
-                None::<&BoundPassportCache>,
-                0,
-            )
-            .await,
-        );
+        let evidence = produce_attest_response(
+            &AttestRequest {
+                proposals: vec![proposal],
+            },
+            Some((Model::BackgroundCheck, ProviderType::Coco)),
+            &EmptyClaims,
+            Some(&producer),
+            None,
+            None::<&BoundPassportCache>,
+            0,
+        )
+        .await;
         assert_eq!(evidence, Err(AttestError::Unavailable));
 
         let conv = RecordingConverter {

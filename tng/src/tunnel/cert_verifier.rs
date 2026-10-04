@@ -1,11 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use rats_cert::tee::claims::Claims;
 
-use crate::tunnel::attest::AttestVerifier;
-use crate::tunnel::attestation_result::AttestationResult;
-use crate::tunnel::provider::ProviderType;
 use crate::tunnel::ra_context::VerifyContextSet;
 
 #[derive(Debug)]
@@ -20,6 +16,10 @@ impl TngCommonCertVerifier {
             verify_set,
             pending_cert: spin::mutex::spin::SpinMutex::new(None),
         }
+    }
+
+    pub fn verify_set(&self) -> &VerifyContextSet {
+        &self.verify_set
     }
 
     pub fn peer_spki_der(&self) -> Result<Vec<u8>> {
@@ -39,28 +39,5 @@ impl TngCommonCertVerifier {
         // Keep the leaf for SPKI binding after the post-handshake exchange.
         self.pending_cert.lock().replace(end_entity.to_vec());
         Ok(())
-    }
-}
-
-#[async_trait::async_trait]
-impl AttestVerifier for TngCommonCertVerifier {
-    async fn verify_evidence(
-        &self,
-        provider: ProviderType,
-        evidence: &serde_json::Value,
-        expected: Claims,
-    ) -> Result<AttestationResult> {
-        self.verify_set
-            .verify_evidence(provider, evidence, expected)
-            .await
-    }
-
-    async fn verify_token(
-        &self,
-        provider: ProviderType,
-        jwt: &str,
-        expected: Claims,
-    ) -> Result<AttestationResult> {
-        self.verify_set.verify_token(provider, jwt, expected).await
     }
 }

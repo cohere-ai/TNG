@@ -4,9 +4,7 @@
 //! `challenge_token` for background check, and nothing extra for passport.
 
 use std::fmt;
-use std::str::FromStr;
 
-use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
 use super::provider::ProviderType;
@@ -18,30 +16,12 @@ pub enum Model {
     Passport,
 }
 
-impl Model {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::BackgroundCheck => "background_check",
-            Self::Passport => "passport",
-        }
-    }
-}
-
 impl fmt::Display for Model {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for Model {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "background_check" => Ok(Self::BackgroundCheck),
-            "passport" => Ok(Self::Passport),
-            _ => bail!("unrecognized attestation model {s:?}"),
-        }
+        f.write_str(match self {
+            Self::BackgroundCheck => "background_check",
+            Self::Passport => "passport",
+        })
     }
 }
 

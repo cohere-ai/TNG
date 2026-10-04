@@ -56,14 +56,6 @@ impl AttestOutput {
 /// `Ok(None)` acks an empty proposal list. `Err` is the [`AttestError`] the peer matches.
 pub type AttestResponse = Result<Option<AttestOutput>, AttestError>;
 
-pub fn ack_response() -> AttestResponse {
-    Ok(None)
-}
-
-pub fn error_response(error: AttestError) -> AttestResponse {
-    Err(error)
-}
-
 pub fn evidence_response(provider: ProviderType, evidence: serde_json::Value) -> AttestResponse {
     Ok(Some(AttestOutput::BackgroundCheck { provider, evidence }))
 }
@@ -79,10 +71,10 @@ pub fn token_response(provider: ProviderType, token: impl Into<String>) -> Attes
 ///
 /// An empty list is `Ok(None)`. A non-empty list needs an exact `(model, provider)` match.
 /// A duplicate key is an error, and so is a list this side cannot answer.
-fn pick_proposal<'a>(
-    proposals: &'a [AttestProposal],
+fn pick_proposal(
+    proposals: &[AttestProposal],
     own_key: Option<(Model, ProviderType)>,
-) -> Result<Option<&'a AttestProposal>, AttestError> {
+) -> Result<Option<&AttestProposal>, AttestError> {
     if proposals.is_empty() {
         return Ok(None);
     }
@@ -207,13 +199,14 @@ pub trait AttestClaims: Sync {
     ) -> Pin<Box<dyn Future<Output = Result<Claims>> + Send + 'a>>;
 }
 
+pub type MintToken<'a> =
+    Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> + Send + 'a>;
+
 /// A passport token cache whose lookup key stays inside the implementation.
 pub trait PassportTokenCache: Sync {
     fn get_or_mint<'a>(
         &'a self,
-        mint: Box<
-            dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> + Send + 'a,
-        >,
+        mint: MintToken<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>>;
 }
 
@@ -231,13 +224,13 @@ pub async fn produce_attest_response<C, R>(
     token_producer: Option<&dyn TokenProducer>,
     passport_cache: Option<&C>,
     max_retries: usize,
-) -> Result<AttestResponse, AttestError>
+) -> AttestResponse
 where
     C: PassportTokenCache,
     R: AttestClaims,
 {
     let Some(proposal) = pick_proposal(&request.proposals, own_key)? else {
-        return Ok(ack_response());
+        return Ok(None);
     };
     match proposal {
         AttestProposal::BackgroundCheck {
@@ -256,8 +249,8 @@ where
                     return Err(AttestError::Unavailable);
                 }
             };
-            match produce_evidence_with_retry(producer, claims, max_retries).await {
-                Ok(evidence) => Ok(evidence_response(evidence.provider, evidence.evidence)),
+            match with_retry(max_retries, || producer.produce(claims.clone())).await {
+                Ok(evidence) => evidence_response(evidence.provider, evidence.evidence),
                 Err(error) => {
                     tracing::error!(?error, "Failed to produce background-check evidence");
                     Err(AttestError::Unavailable)
@@ -276,12 +269,12 @@ where
                     let claims = claims.claims(proposal);
                     Box::pin(async move {
                         let claims = claims.await?;
-                        produce_token_with_retry(producer, claims, max_retries).await
+                        with_retry(max_retries, || producer.produce(claims.clone())).await
                     })
                 }))
                 .await
             {
-                Ok(token) => Ok(token_response(token.provider_type(), token.as_str())),
+                Ok(token) => token_response(token.provider_type(), token.as_str()),
                 Err(error) => {
                     tracing::error!(?error, "Failed to produce passport token");
                     Err(AttestError::Unavailable)
@@ -291,42 +284,16 @@ where
     }
 }
 
-async fn produce_token_with_retry<P: TokenProducer + ?Sized>(
-    producer: &P,
-    claims: Claims,
-    max_retries: usize,
-) -> Result<TngToken> {
-    let policy = RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(max_retries);
-    policy
-        .retry(|| {
-            let claims = claims.clone();
-            async move {
-                producer
-                    .produce(claims)
-                    .await
-                    .context("Failed to generate attestation evidence")
-            }
-        })
+async fn with_retry<T, F, Fut>(max_retries: usize, task: F) -> Result<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T>>,
+{
+    RetryPolicy::fixed(Duration::from_secs(1))
+        .with_max_retries(max_retries)
+        .retry(task)
         .await
-}
-
-async fn produce_evidence_with_retry<P: EvidenceProducer + ?Sized>(
-    producer: &P,
-    claims: Claims,
-    max_retries: usize,
-) -> Result<Evidence> {
-    let policy = RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(max_retries);
-    policy
-        .retry(|| {
-            let claims = claims.clone();
-            async move {
-                producer
-                    .produce(claims)
-                    .await
-                    .context("Failed to generate attestation evidence")
-            }
-        })
-        .await
+        .context("Failed to generate attestation evidence")
 }
 
 #[async_trait::async_trait]
@@ -366,11 +333,11 @@ mod tests {
     #[test]
     fn response_json_shape() {
         assert_eq!(
-            serde_json::to_value(error_response(AttestError::NotConfigured)).unwrap(),
+            serde_json::to_value::<AttestResponse>(Err(AttestError::NotConfigured)).unwrap(),
             json!({"Err": "not_configured"})
         );
         assert_eq!(
-            serde_json::to_value(error_response(AttestError::DuplicateProposal {
+            serde_json::to_value::<AttestResponse>(Err(AttestError::DuplicateProposal {
                 model: Model::BackgroundCheck,
                 provider: ProviderType::Coco,
             }))
@@ -378,7 +345,7 @@ mod tests {
             json!({"Err": {"duplicate_proposal": {"model": "background_check", "provider": "coco"}}})
         );
         assert_eq!(
-            serde_json::to_value(ack_response()).unwrap(),
+            serde_json::to_value::<AttestResponse>(Ok(None)).unwrap(),
             json!({"Ok": null})
         );
         assert_eq!(
@@ -408,11 +375,7 @@ mod tests {
     impl PassportTokenCache for NoCache {
         fn get_or_mint<'a>(
             &'a self,
-            _mint: Box<
-                dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>>
-                    + Send
-                    + 'a,
-            >,
+            _mint: MintToken<'a>,
         ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> {
             Box::pin(async { bail!("cache should not be consulted") })
         }
@@ -433,9 +396,8 @@ mod tests {
             None::<&NoCache>,
             0,
         )
-        .await
-        .unwrap();
-        assert_eq!(ack, ack_response());
+        .await;
+        assert_eq!(ack, Ok(None));
 
         let err = produce_attest_response(
             &request(vec![AttestProposal::Passport {
@@ -525,12 +487,10 @@ mod tests {
     #[tokio::test]
     async fn empty_request_accepts_only_an_ack() {
         let sent = AttestRequest::default();
-        assert!(
-            check_response(&sent, &ack_response(), None, |_| bail!("unused"))
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(check_response(&sent, &Ok(None), None, |_| bail!("unused"))
+            .await
+            .unwrap()
+            .is_none());
         let err = check_response(
             &sent,
             &evidence_response(ProviderType::Coco, json!({})),
@@ -540,12 +500,9 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains("unsolicited"));
-        let err = check_response(
-            &sent,
-            &error_response(AttestError::Unavailable),
-            None,
-            |_| bail!("unused"),
-        )
+        let err = check_response(&sent, &Err(AttestError::Unavailable), None, |_| {
+            bail!("unused")
+        })
         .await
         .unwrap_err();
         assert!(err.to_string().contains("attestation unavailable"));

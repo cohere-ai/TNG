@@ -8,8 +8,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::error::AttestError;
 use crate::tunnel::attest::{
-    check_response, error_response, produce_attest_response, AttestClaims, AttestRequest,
-    AttestResponse, AttestVerifier, EvidenceProducer, TokenProducer,
+    check_response, produce_attest_response, AttestClaims, AttestRequest, AttestResponse,
+    AttestVerifier, EvidenceProducer, TokenProducer,
 };
 use crate::tunnel::attestation_metrics::AttestationAttempt;
 use crate::tunnel::attestation_result::AttestationResult;
@@ -217,7 +217,7 @@ where
     };
     let resources = resources_from_ra(
         ra,
-        verifier.map(|v| v as &dyn AttestVerifier),
+        verifier.map(|v| v.verify_set() as &dyn AttestVerifier),
         exporter,
         own_spki.as_deref(),
         peer_spki.as_deref(),
@@ -248,7 +248,7 @@ where
         Ok(req) => req,
         Err(e) if codec::is_malformed(&e) => {
             tracing::warn!(error = ?e, "peer sent a malformed attestation request");
-            let outgoing = error_response(AttestError::Malformed);
+            let outgoing = Err(AttestError::Malformed);
             let _ = tokio::join!(write_response(wr, &outgoing), read_response(rd));
             bail!("failed to attest to peer: malformed attestation proposal");
         }
@@ -293,7 +293,7 @@ async fn produce_outgoing(
         exporter: &resources.exporter,
         converter: resources.attest_converter,
     };
-    match produce_attest_response(
+    produce_attest_response(
         peer,
         resources.attest_key,
         &claims,
@@ -303,10 +303,6 @@ async fn produce_outgoing(
         resources.max_retries,
     )
     .await
-    {
-        Ok(response) => response,
-        Err(error) => error_response(error),
-    }
 }
 
 struct TlsClaims<'a> {
@@ -384,7 +380,6 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::super::claims::expected_subset_of;
-    use crate::tunnel::attest::ack_response;
     use crate::tunnel::attest::Evidence;
     use crate::tunnel::attest::{evidence_response, token_response};
     use crate::tunnel::provider::TngToken;
@@ -535,7 +530,7 @@ mod tests {
             write_request(&mut peer, &peer_req).await.unwrap();
             let _ = read_request(&mut peer).await.unwrap();
             let resp = read_response(&mut peer).await.unwrap();
-            write_response(&mut peer, &ack_response()).await.unwrap();
+            write_response(&mut peer, &Ok(None)).await.unwrap();
             resp
         };
         let (local_res, resp) = tokio::join!(local_fut, peer_fut);
@@ -630,7 +625,7 @@ mod tests {
         let (res, _) = against_peer(
             verify_only(&proposals, &verifier),
             AttestRequest::default(),
-            error_response(AttestError::NotConfigured),
+            Err(AttestError::NotConfigured),
         )
         .await;
         let err = res.unwrap_err().to_string();
@@ -640,7 +635,7 @@ mod tests {
         let (res, _) = against_peer(
             verify_only(&proposals, &verifier),
             AttestRequest::default(),
-            ack_response(),
+            Ok(None),
         )
         .await;
         assert_err_contains(res, "peer did not attest");
@@ -746,7 +741,7 @@ mod tests {
             peer.flush().await.unwrap();
             let _ = read_request(&mut peer).await.unwrap();
             let resp = read_response(&mut peer).await.unwrap();
-            write_response(&mut peer, &ack_response()).await.unwrap();
+            write_response(&mut peer, &Ok(None)).await.unwrap();
             resp
         };
         let (res, resp) = tokio::join!(local_fut, peer_fut);
@@ -773,9 +768,9 @@ mod tests {
             write_request(&mut peer, &AttestRequest::default())
                 .await
                 .unwrap();
-            write_response(&mut peer, &ack_response()).await.unwrap();
+            write_response(&mut peer, &Ok(None)).await.unwrap();
             let resp = read_response(&mut peer).await.unwrap();
-            assert_eq!(resp, ack_response());
+            assert_eq!(resp, Ok(None));
         };
         let (local_res, _) = tokio::join!(local_fut, peer_fut);
         assert!(local_res.unwrap().1.is_none());

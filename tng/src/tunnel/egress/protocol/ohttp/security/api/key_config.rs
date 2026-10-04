@@ -16,7 +16,7 @@ use rats_cert::tee::{AttesterPipeline, GenericConverter as _};
 use crate::error::TngError;
 use crate::tunnel::attest::{
     produce_attest_response, AttestClaims, AttestRequest, AttestResponse, EvidenceProducer,
-    PassportTokenCache, TokenProducer,
+    MintToken, PassportTokenCache, TokenProducer,
 };
 use crate::tunnel::egress::protocol::ohttp::security::api::OhttpServerApi;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::KeyManager;
@@ -104,25 +104,24 @@ impl OhttpServerApi {
                 metrics.record(
                     AttestationOperation::Generate,
                     AttestationProtocol::Ohttp,
-                    matches!(attest_resp, Ok(Ok(Some(_)))),
+                    matches!(attest_resp, Ok(Some(_))),
                 );
             }
         }
 
         Ok(KeyConfigResponse {
             hpke_key_config,
-            attest_response: attest_resp?,
+            attest_response: Ok(attest_resp.map_err(TngError::from)?),
         })
     }
 }
 
-/// `Ok` is an attestation body for HTTP 200. `Err` is the HTTP status for that failure.
 async fn make_attest_response(
     ra_context: &RaContext,
     passport_cache: &OhttpPassportCache,
     request: &AttestRequest,
     hpke_key_config: &HpkeKeyConfig,
-) -> Result<AttestResponse, TngError> {
+) -> AttestResponse {
     let attest_ctx = ra_context.attest_context();
     let own_key = attest_ctx.map(AttestContext::proposal_key);
     let mut pipeline = None;
@@ -166,7 +165,6 @@ async fn make_attest_response(
         max_retries,
     )
     .await
-    .map_err(TngError::from)
 }
 
 struct OhttpClaims<'a> {
@@ -245,9 +243,7 @@ struct BoundOhttpPassportCache<'a> {
 impl PassportTokenCache for BoundOhttpPassportCache<'_> {
     fn get_or_mint<'a>(
         &'a self,
-        mint: Box<
-            dyn FnOnce() -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> + Send + 'a,
-        >,
+        mint: MintToken<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<TngToken>> + Send + 'a>> {
         Box::pin(async move {
             {

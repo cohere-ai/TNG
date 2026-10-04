@@ -19,15 +19,6 @@ impl ProviderType {
             Self::Ita => "ita",
         }
     }
-
-    /// Wire provider (RA-TLS and OHTTP): empty or unknown is an error, with no CoCo default.
-    pub fn from_required_wire_str(s: &str) -> anyhow::Result<Self> {
-        let s = s.trim();
-        if s.is_empty() {
-            anyhow::bail!("empty provider");
-        }
-        s.parse()
-    }
 }
 
 impl fmt::Display for ProviderType {
@@ -64,17 +55,6 @@ impl<'de> Deserialize<'de> for ProviderType {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn from_required_wire_str_rejects_empty_and_unknown() {
-        assert!(ProviderType::from_required_wire_str("").is_err());
-        assert!(ProviderType::from_required_wire_str("   ").is_err());
-        assert!(ProviderType::from_required_wire_str("notaprovider").is_err());
-        assert_eq!(
-            ProviderType::from_required_wire_str("ita").unwrap(),
-            ProviderType::Ita
-        );
-    }
 
     #[test]
     fn serde_json_round_trip() {
