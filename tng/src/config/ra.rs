@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::error::TngError;
+use crate::tunnel::attest::Model;
+use crate::tunnel::provider::ProviderType;
 #[cfg(unix)]
 use crate::tunnel::utils::maybe_cached::RefreshStrategy;
 
@@ -763,6 +765,32 @@ pub enum VerifyArgs {
     },
 }
 
+impl VerifyArgs {
+    /// The `(model, provider)` a peer answers this entry with.
+    pub fn key(&self) -> (Model, ProviderType) {
+        match self {
+            Self::Passport { verifier } => (
+                Model::Passport,
+                match verifier {
+                    VerifierArgs::Coco(_) => ProviderType::Coco,
+                    #[cfg(feature = "__coco-builtin-as")]
+                    VerifierArgs::CocoBuiltin => ProviderType::Coco,
+                    VerifierArgs::Ita(_) => ProviderType::Ita,
+                },
+            ),
+            Self::BackgroundCheck { converter, .. } => (
+                Model::BackgroundCheck,
+                match converter {
+                    ConverterArgs::Coco(_) => ProviderType::Coco,
+                    #[cfg(feature = "__coco-builtin-as")]
+                    ConverterArgs::CocoBuiltin { .. } => ProviderType::Coco,
+                    ConverterArgs::Ita(_) => ProviderType::Ita,
+                },
+            ),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -833,10 +861,6 @@ mod tests {
         empty
             .into_checked()
             .expect_err("empty verify list should be rejected");
-
-        let duplicate: RaArgsUnchecked =
-            serde_json::from_value(json!({"verify": [bgcheck.clone(), bgcheck]})).unwrap();
-        duplicate.into_checked().unwrap();
     }
 
     #[test]

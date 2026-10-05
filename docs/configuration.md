@@ -524,7 +524,6 @@ In the TNG architecture, the Verifier can be part of the control plane or servic
 - Each `(model, provider)` pair may appear at most once, where `coco_builtin` counts as `coco`. An empty list is rejected.
 - A peer is accepted if it satisfies **any** entry, so the endpoint is only as strict as its weakest entry.
 - A peer with no matching entry fails with `no compatible attestation proposal`, and the peer's configuration is not disclosed.
-- Both ends must run a TNG version with this feature, since the RA-TLS exchange and the OHTTP key-config API changed incompatibly.
 
 
 ## Attester and Verifier Combinations and Bidirectional Remote Attestation
@@ -773,7 +772,7 @@ In the Passport model, the [Attest](#attest) configuration should include the fo
 - **`model`** (string): Set to "passport" to enable the Passport model
 - **`aa_type`** (string, optional, defaults to "uds"): Attestation Agent type. Possible values: "uds"
 - **`aa_addr`** (string, required for "uds"): Attestation Agent unix socket address (e.g., "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock")
-- **`refresh_interval`** (int, optional, default value is 600): Specifies the frequency of obtaining attestation credentials (Attestation Token) from the Attestation Agent and Attestation Service (in seconds). If set to 0, it requests the latest Attestation Token each time a secure session is established. On the `rats_tls` path this option sets the TLS key-carrier certificate rotation frequency; in Passport mode a new Attestation Token is minted with each certificate. If communicating using the OHTTP protocol, this option affects the internal Attestation Token cache update frequency, but does not affect the OHTTP key rotation frequency; the token is also re-minted whenever a new OHTTP key becomes active. In Passport mode the token is always refreshed 30 seconds before it expires, even if this interval is longer.
+- **`refresh_interval`** (int, optional, default value is 600): Specifies the frequency of obtaining attestation credentials (Attestation Token) from the Attestation Agent and Attestation Service (in seconds). If set to 0, it requests the latest Attestation Token each time a secure session is established. On the `rats_tls` path this option sets the TLS key-carrier certificate rotation frequency, and a new Attestation Token is minted with each certificate. With OHTTP, it sets how often the cached Attestation Token is refreshed but not the OHTTP key rotation frequency; the token is also re-minted whenever a new OHTTP key becomes active. A cached token is always refreshed 30 seconds before it expires, even if this interval is longer.
 - **`max_retries`** (int, optional, default value is 3): Maximum number of attestation retry attempts. In Passport mode this controls how many times the full attestation flow (evidence generation and passport conversion) is retried on failure before giving up. Set to 0 to disable retries.
 - **`as_type`** (string, optional, defaults to "restful"): Attestation Service type. Possible values: "restful", "grpc"
 - **`as_addr`** (string): Address of the Attestation Service

@@ -17,15 +17,13 @@ use crate::config::ra::{RaArgs, VerifyArgs};
 use crate::tunnel::attestation_metrics::AttestationMetrics;
 use rats_cert::tee::claims::Claims;
 #[cfg(unix)]
-use rats_cert::tee::AttesterPipeline;
+use rats_cert::tee::{AttesterPipeline, GenericAttester};
 use rats_cert::tee::{GenericConverter, GenericVerifier, ReportData};
 
-use crate::tunnel::attest::AttestVerifier;
 #[cfg(unix)]
-use crate::tunnel::attest::{mint_passport, Attester, Prepared};
+use crate::tunnel::attest::{with_retry, Attester, Prepared};
+use crate::tunnel::attest::{ChallengeSource, Model, Proposer, Verifier};
 use crate::tunnel::attestation_result::AttestationResult;
-use crate::tunnel::challenge::ChallengeSource;
-use crate::tunnel::proposal::Model;
 use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
 #[cfg(unix)]
 use crate::tunnel::utils::maybe_cached::RefreshStrategy;
@@ -118,7 +116,7 @@ impl RaContext {
 
     #[cfg(unix)]
     pub fn attestation_metrics(&self) -> Option<&AttestationMetrics> {
-        self.verify_set()
+        self.verify_ctx_set()
             .map(VerifyContextSet::attestation_metrics)
             .or_else(|| {
                 self.attest_context()
@@ -127,7 +125,7 @@ impl RaContext {
     }
 
     /// Get the verifiers if this side verifies its peer
-    pub fn verify_set(&self) -> Option<&VerifyContextSet> {
+    pub fn verify_ctx_set(&self) -> Option<&VerifyContextSet> {
         match self {
             Self::VerifyOnly(verify) => Some(verify),
             #[cfg(unix)]
@@ -184,15 +182,15 @@ impl VerifyContextSet {
         &self.metrics
     }
 
-    pub fn entry(&self, model: Model, provider: ProviderType) -> Result<&VerifyContext> {
+    pub fn verifiers(&self) -> Vec<&dyn Verifier> {
         self.entries
             .iter()
-            .find(|e| e.key() == (model, provider))
-            .with_context(|| format!("no verifier is configured for ({model}, {provider})"))
+            .map(|entry| entry as &dyn Verifier)
+            .collect()
     }
 
     /// Each verifier's provider, with the nonce source a background check proposes from.
-    pub fn proposers(&self) -> Vec<(ProviderType, Option<&dyn ChallengeSource>)> {
+    pub fn proposers(&self) -> Vec<Proposer<'_>> {
         self.entries
             .iter()
             .map(|entry| match entry {
@@ -207,25 +205,28 @@ impl VerifyContextSet {
 }
 
 #[async_trait::async_trait]
-impl AttestVerifier for VerifyContextSet {
+impl Verifier for VerifyContext {
+    fn key(&self) -> (Model, ProviderType) {
+        VerifyContext::key(self)
+    }
+
     async fn verify_evidence(
         &self,
-        provider: ProviderType,
         evidence: &serde_json::Value,
         expected: Claims,
     ) -> Result<AttestationResult> {
         tracing::debug!("Verifying attestation evidence");
 
-        let evidence = TngEvidence::deserialize_from_json(provider, evidence.clone())
-            .context("failed to parse evidence JSON")?;
-
-        let VerifyContext::BackgroundCheck {
+        let Self::BackgroundCheck {
             converter,
             verifier,
-        } = self.entry(Model::BackgroundCheck, provider)?
+        } = self
         else {
-            anyhow::bail!("background-check entry holds no converter");
+            anyhow::bail!("a passport verifier cannot check evidence");
         };
+        let evidence =
+            TngEvidence::deserialize_from_json(converter.provider_type(), evidence.clone())
+                .context("failed to parse evidence JSON")?;
         let token = converter
             .convert(&evidence)
             .await
@@ -239,18 +240,15 @@ impl AttestVerifier for VerifyContextSet {
         Ok(AttestationResult::from_token(Model::BackgroundCheck, token))
     }
 
-    async fn verify_token(
-        &self,
-        provider: ProviderType,
-        jwt: &str,
-        expected: Claims,
-    ) -> Result<AttestationResult> {
+    async fn verify_token(&self, jwt: &str, expected: Claims) -> Result<AttestationResult> {
         tracing::debug!("Verifying attestation token");
 
-        let token = TngToken::from_wire(provider, jwt.to_owned())
+        let Self::Passport { verifier } = self else {
+            anyhow::bail!("a background-check verifier cannot check a token");
+        };
+        let token = TngToken::from_wire(verifier.provider_type(), jwt.to_owned())
             .context("failed to parse attestation token")?;
-        self.entry(Model::Passport, provider)?
-            .verifier()
+        verifier
             .verify_evidence(&token, &ReportData::Claims(expected))
             .await
             .map_err(|e| anyhow::anyhow!("Token verification failed: {:?}", e))?;
@@ -356,24 +354,6 @@ impl AttestContext {
         }
     }
 
-    /// The view [`crate::tunnel::attest::respond`] answers proposals with.
-    pub fn attester(&self) -> Attester<'_> {
-        match self {
-            Self::Passport { converter, .. } => Attester::Passport {
-                provider: converter.provider_type(),
-            },
-            Self::BackgroundCheck {
-                attester,
-                max_retries,
-                ..
-            } => Attester::BackgroundCheck {
-                provider: attester.provider_type(),
-                producer: attester,
-                max_retries: *max_retries,
-            },
-        }
-    }
-
     /// Attest ahead of requests to the key `passport_claims` binds. Called by the transport
     /// whenever it rebuilds its key snapshot; background check has nothing to prepare.
     pub async fn prepare(
@@ -388,8 +368,17 @@ impl AttestContext {
                 max_retries,
                 ..
             } => {
+                // A fresh nonce from this side's own attestation service on every attempt.
                 let pipeline = AttesterPipeline::new(attester, converter);
-                mint_passport(converter, &pipeline, passport_claims, *max_retries).await
+                let token = with_retry(*max_retries, || async {
+                    let nonce = ChallengeSource::get_nonce(converter).await?;
+                    pipeline
+                        .get_evidence(&ReportData::Claims(passport_claims(&nonce)?))
+                        .await
+                        .map_err(|error| anyhow::anyhow!("attester failed: {error}"))
+                })
+                .await?;
+                Ok(Prepared::new(token))
             }
         }
     }
@@ -412,6 +401,38 @@ impl AttestContext {
                 *max_retries
             }
         }
+    }
+}
+
+#[cfg(unix)]
+#[async_trait::async_trait]
+impl Attester for AttestContext {
+    fn key(&self) -> (Model, ProviderType) {
+        match self {
+            Self::Passport { converter, .. } => (Model::Passport, converter.provider_type()),
+            Self::BackgroundCheck { attester, .. } => {
+                (Model::BackgroundCheck, attester.provider_type())
+            }
+        }
+    }
+
+    async fn produce_evidence(&self, claims: Claims) -> Result<serde_json::Value> {
+        let Self::BackgroundCheck {
+            attester,
+            max_retries,
+            ..
+        } = self
+        else {
+            bail!("a passport attester produces no evidence per request");
+        };
+        with_retry(*max_retries, || async {
+            let evidence = attester
+                .get_evidence(&ReportData::Claims(claims.clone()))
+                .await
+                .map_err(|error| anyhow::anyhow!("attester failed: {error}"))?;
+            Ok(evidence.serialize_to_json()?)
+        })
+        .await
     }
 }
 
@@ -488,12 +509,6 @@ impl VerifyContext {
             Self::BackgroundCheck { converter, .. } => {
                 (Model::BackgroundCheck, converter.provider_type())
             }
-        }
-    }
-
-    pub fn verifier(&self) -> &TngVerifier {
-        match self {
-            Self::Passport { verifier } | Self::BackgroundCheck { verifier, .. } => verifier,
         }
     }
 }
@@ -578,7 +593,7 @@ mod tests {
             std::mem::discriminant(&ctx)
         );
         assert!(
-            ctx.verify_set().is_none(),
+            ctx.verify_ctx_set().is_none(),
             "NoRa should have no verify context"
         );
     }
@@ -599,7 +614,7 @@ mod tests {
             "Expected VerifyOnly variant"
         );
         assert!(
-            ctx.verify_set().is_some(),
+            ctx.verify_ctx_set().is_some(),
             "VerifyOnly should have verify context"
         );
     }
@@ -616,7 +631,7 @@ mod tests {
             "Expected VerifyOnly variant"
         );
         assert!(
-            ctx.verify_set().is_some(),
+            ctx.verify_ctx_set().is_some(),
             "VerifyOnly should have verify context"
         );
     }
@@ -653,7 +668,7 @@ mod tests {
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let ctx = result.unwrap();
         assert!(
-            ctx.verify_set().is_some(),
+            ctx.verify_ctx_set().is_some(),
             "VerifyOnly should have verify context"
         );
     }
@@ -768,7 +783,7 @@ mod tests {
                 "Expected AttestAndVerify variant"
             );
             assert!(
-                ctx.verify_set().is_some(),
+                ctx.verify_ctx_set().is_some(),
                 "AttestAndVerify should have verify context"
             );
             assert!(
@@ -790,7 +805,7 @@ mod tests {
                 "Expected AttestAndVerify variant"
             );
             assert!(
-                ctx.verify_set().is_some(),
+                ctx.verify_ctx_set().is_some(),
                 "AttestAndVerify should have verify context"
             );
             assert!(
@@ -812,7 +827,7 @@ mod tests {
                 "Expected AttestAndVerify variant"
             );
             assert!(
-                ctx.verify_set().is_some(),
+                ctx.verify_ctx_set().is_some(),
                 "AttestAndVerify should have verify context"
             );
             assert!(
@@ -833,7 +848,7 @@ mod tests {
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
-                ctx.verify_set().is_none(),
+                ctx.verify_ctx_set().is_none(),
                 "AttestOnly should have no verify context"
             );
             assert!(
@@ -851,7 +866,7 @@ mod tests {
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
-                ctx.verify_set().is_some(),
+                ctx.verify_ctx_set().is_some(),
                 "AttestAndVerify should have verify context"
             );
             assert!(

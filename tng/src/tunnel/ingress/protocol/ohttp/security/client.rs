@@ -32,7 +32,7 @@ use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 use crate::{
     error::CheckErrorResponse as _,
     tunnel::{
-        attest::{check_response, make_proposals, AttestRequest, AttestVerifier},
+        attest::{check_response, make_request},
         ohttp::protocol::{
             metadata::{Metadata, ServerKeyConfigHint, METADATA_MAX_LEN},
             userdata::ServerUserData,
@@ -159,29 +159,26 @@ impl OHttpClient {
 
 impl OHttpClientInner {
     async fn create_key_store_value(&self) -> Result<(KeyStoreValue, Expire)> {
-        let verify_set = self.ra_context.verify_set();
+        let verify_ctx_set = self.ra_context.verify_ctx_set();
         #[cfg(unix)]
-        let attestation_attempt = verify_set.map(|set| {
+        let attestation_attempt = verify_ctx_set.map(|set| {
             set.attestation_metrics()
                 .start(AttestationOperation::Verify, AttestationProtocol::Ohttp)
         });
 
-        let proposals = match verify_set {
-            #[cfg(unix)]
-            Some(set) => {
-                make_proposals(set.proposers(), || {
-                    Some(
-                        set.attestation_metrics()
-                            .start(AttestationOperation::Challenge, AttestationProtocol::Ohttp),
-                    )
-                })
-                .await?
-            }
-            #[cfg(not(unix))]
-            Some(set) => make_proposals(set.proposers(), || ()).await?,
-            None => vec![],
-        };
-        let attest_request = AttestRequest { proposals };
+        let proposers = verify_ctx_set
+            .map(|set| set.proposers())
+            .unwrap_or_default();
+        #[cfg(unix)]
+        let attest_request = make_request(&proposers, || {
+            verify_ctx_set.map(|set| {
+                set.attestation_metrics()
+                    .start(AttestationOperation::Challenge, AttestationProtocol::Ohttp)
+            })
+        })
+        .await?;
+        #[cfg(not(unix))]
+        let attest_request = make_request(&proposers, || ()).await?;
         let response = self
             .get_hpke_configuration(KeyConfigRequest {
                 attest_request: attest_request.clone(),
@@ -191,7 +188,9 @@ impl OHttpClientInner {
         let server_attestation_result = check_response(
             &attest_request,
             &response.attest_response,
-            verify_set.map(|set| set as &dyn AttestVerifier),
+            &verify_ctx_set
+                .map(|set| set.verifiers())
+                .unwrap_or_default(),
             |proposal| {
                 ServerUserData {
                     challenge_token: proposal.challenge_token().map(str::to_owned),

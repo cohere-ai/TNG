@@ -25,6 +25,7 @@ async fn test() -> Result<()> {
                                 }
                             },
                             "attest": {
+                                "model": "background_check",
                                 "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
                             }
                         }
@@ -55,6 +56,7 @@ async fn test() -> Result<()> {
                                     ]
                                 },
                                 {
+                                    "model": "background_check",
                                     "as_addr": "http://192.168.1.254:8080/",
                                     "policy_ids": [
                                         "default"

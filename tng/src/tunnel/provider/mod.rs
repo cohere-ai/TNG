@@ -6,10 +6,10 @@
 //! (`create_attester`, `create_converter`, `create_verifier`) instantiate
 //! the correct underlying provider based on config enums.
 //!
-//! **Wire format:** Which provider applies to a given evidence object or AS token
-//! is signaled by a required `provider` field next to the payload, not by nesting
-//! a provider tag inside the evidence JSON or JWT. Call sites pass [`ProviderType`]
-//! into [`TngEvidence`] / [`TngToken`] deserialization.
+//! **Wire format:** Every [`AttestProposal`](crate::tunnel::attest::AttestProposal)
+//! and every evidence object or AS token carries a required `provider` field.
+//! Call sites pass that [`ProviderType`] to [`TngEvidence::deserialize_from_json`]
+//! / [`TngToken::from_wire`].
 
 #[cfg(unix)]
 pub mod attester;

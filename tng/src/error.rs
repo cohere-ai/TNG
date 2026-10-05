@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use strum_macros::AsRefStr;
 use thiserror::Error;
 
+use crate::tunnel::attest::Model;
 use crate::tunnel::ohttp::key_config::PublicKeyData;
-use crate::tunnel::proposal::Model;
 use crate::tunnel::provider::ProviderType;
 
 /// Failure while answering an attestation request.

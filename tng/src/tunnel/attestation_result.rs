@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 
-use super::proposal::Model;
+use super::attest::Model;
 use super::provider::{ProviderType, TngToken};
 
 /// The result of remote attestation.

@@ -96,8 +96,9 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::error::AttestError;
-    use crate::tunnel::attest::{evidence_response, token_response, AttestResponse};
-    use crate::tunnel::proposal::{AttestProposal, Model};
+    use crate::tunnel::attest::{
+        evidence_response, token_response, AttestProposal, AttestResponse, Model,
+    };
     use crate::tunnel::provider::ProviderType;
     use serde_json::json;
 

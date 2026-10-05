@@ -6,20 +6,20 @@ use crate::tunnel::ra_context::VerifyContextSet;
 
 #[derive(Debug)]
 pub struct TngCommonCertVerifier {
-    verify_set: Arc<VerifyContextSet>,
+    verify_ctx_set: Arc<VerifyContextSet>,
     pending_cert: spin::mutex::spin::SpinMutex<Option<Vec<u8>>>,
 }
 
 impl TngCommonCertVerifier {
-    pub fn new(verify_set: Arc<VerifyContextSet>) -> Self {
+    pub fn new(verify_ctx_set: Arc<VerifyContextSet>) -> Self {
         Self {
-            verify_set,
+            verify_ctx_set,
             pending_cert: spin::mutex::spin::SpinMutex::new(None),
         }
     }
 
-    pub fn verify_set(&self) -> &VerifyContextSet {
-        &self.verify_set
+    pub fn verify_ctx_set(&self) -> &VerifyContextSet {
+        &self.verify_ctx_set
     }
 
     pub fn peer_spki_der(&self) -> Result<Vec<u8>> {

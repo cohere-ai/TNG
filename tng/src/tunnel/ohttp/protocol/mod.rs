@@ -37,7 +37,7 @@ pub struct HpkeKeyConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tunnel::proposal::AttestProposal;
+    use crate::tunnel::attest::AttestProposal;
     use crate::tunnel::provider::ProviderType;
     use serde_json::json;
 

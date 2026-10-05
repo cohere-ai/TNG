@@ -11,13 +11,13 @@ use ohttp::KeyConfig;
 use rats_cert::tee::claims::Claims;
 
 use crate::error::{AttestError, TngError};
-use crate::tunnel::attest::{respond, Prepared};
+use crate::tunnel::attest::{respond, Attester, Prepared};
 use crate::tunnel::egress::protocol::ohttp::security::api::OhttpServerApi;
 use crate::tunnel::egress::protocol::ohttp::security::context::TngStreamContext;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::KeyManager;
 use crate::tunnel::ohttp::protocol::userdata::ServerUserData;
 use crate::tunnel::ohttp::protocol::{HpkeKeyConfig, KeyConfigRequest, KeyConfigResponse};
-use crate::tunnel::ra_context::{AttestContext, RaContext};
+use crate::tunnel::ra_context::RaContext;
 use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
 use crate::tunnel::utils::maybe_cached::{Expire, MaybeCached};
 
@@ -53,7 +53,7 @@ impl OhttpServerApi {
 
                         MaybeCached::new(context.runtime.clone(), refresh_strategy, move || {
                             Box::pin({
-                                tracing::info!("Regenerating passport response");
+                                tracing::info!("Regenerating key config snapshot");
 
                                 let ra_context = ra_context.clone();
                                 let key_manager = key_manager.clone();
@@ -87,7 +87,7 @@ impl OhttpServerApi {
             .unwrap_or_default();
         let attest_resp = respond(
             &attest_request,
-            attest_ctx.map(AttestContext::attester),
+            attest_ctx.map(|a| a as &dyn Attester),
             prepared,
             |nonce| ohttp_claims(hpke_key_config, nonce),
         )
