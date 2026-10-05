@@ -141,12 +141,13 @@ impl OhttpServerApi {
             encoded_key_config_list,
         };
 
+        let keys_expire = Expire::ExpireAt(keys_expire_time);
         let (prepared, expire) = match ra_context.attest_context() {
             Some(attest_ctx) => async {
                 let prepared = attest_ctx
                     .prepare(|nonce| ohttp_claims(&hpke_key_config, nonce))
                     .await?;
-                let expire = prepared.expire()?;
+                let expire = std::cmp::min(keys_expire, prepared.expire()?);
                 anyhow::Ok((prepared, expire))
             }
             .await
@@ -154,7 +155,7 @@ impl OhttpServerApi {
                 tracing::error!(?error, "Failed to prepare attestation for the key config");
                 TngError::from(AttestError::Unavailable)
             })?,
-            None => (Prepared::default(), Expire::NoExpire),
+            None => (Prepared::default(), keys_expire),
         };
 
         Ok(((hpke_key_config, prepared), expire))
