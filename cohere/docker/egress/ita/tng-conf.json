@@ -57,9 +57,9 @@
                     "join_max_attempts": 0,
                     "join_retry_interval": 5,
                     "verify": {
+                        "model": "passport",
                         "as_provider": "ita",
                         "ita_jwks_addr": "https://portal.trustauthority.intel.com",
-                        "model": "passport",
                         "policy_ids": []
                     }
                 }
