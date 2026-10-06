@@ -1,8 +1,9 @@
 """Encrypted httpx transports for AI APIs.
 
-Extends tng.Transport with Cohere-specific defaults (ITA attestation,
-header forwarding, and model-name header promotion from JSON request
-bodies via TNG's body_field_headers config).
+Extends tng.Transport with Cohere-specific defaults (ITA passport and
+builtin background-check attestation, header forwarding, and model-name
+header promotion from JSON request bodies via TNG's body_field_headers
+config).
 """
 
 from __future__ import annotations
@@ -22,12 +23,31 @@ _DEFAULT_BODY_FIELD_HEADERS: list = [
     {"field_name": "model", "header_name": "x-gateway-model-name"},
 ]
 
-_DEFAULT_VERIFY: dict = {
-    "model": "passport",
-    "as_provider": "ita",
-    "ita_jwks_addr": "https://portal.trustauthority.intel.com",
-    "policy_ids": ["cbeedffa-e224-4664-b6b4-573fcd4133d3"],
-}
+_DEFAULT_VERIFY: list = [
+    {
+        "model": "passport",
+        "as_provider": "ita",
+        "ita_jwks_addr": "https://portal.trustauthority.intel.com",
+        "policy_ids": ["cbeedffa-e224-4664-b6b4-573fcd4133d3"],
+    },
+    {
+        "model": "background_check",
+        "as_provider": "coco_builtin",
+        "policy_ids": ["trustee_policy"],
+        "required_tee_classes": ["cpu", "gpu"],
+        "policy_source": {
+            "url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+            "provenance": {
+                "repo": "cohere-ai/integritee",
+                "signer_workflow": ".github/workflows/release-policy.yaml",
+                "source_ref": "refs/heads/main",
+                "predicate_type": "https://cohere.com/attestation-policy/v1",
+                "environment": "release",
+            },
+        },
+        "verifier_config": {"nvidia_verifier": {"type": "remote"}},
+    },
+]
 
 _UNSET = object()
 
