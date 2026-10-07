@@ -39,9 +39,9 @@ pub struct RandomKeyManagerInner {
 impl SelfGeneratedKeyManager {
     /// Create a new RandomKeyManager with auto-refresh task
     ///
-    /// Initializes the key manager with an empty key set and starts a background
+    /// Initializes the key manager with its first key and starts a background
     /// task that automatically refreshes keys based on their expiration schedule
-    pub fn new_with_auto_refresh(
+    pub async fn new_with_auto_refresh(
         runtime: TokioRuntime,
         rotation_interval: u64,
         activation_delay: u64,
@@ -58,6 +58,7 @@ impl SelfGeneratedKeyManager {
             rotation_interval,
             activation_delay,
         });
+        inner.refresh_keys().await?;
 
         let inner_clone = inner.clone();
 
@@ -329,13 +330,13 @@ mod tests {
     #[tokio::test]
     async fn activation_delay_rejects_invalid_config() {
         run_test_with_tokio_runtime(|rt| async move {
-            let err = SelfGeneratedKeyManager::new_with_auto_refresh(rt.clone(), 10, 10);
+            let err = SelfGeneratedKeyManager::new_with_auto_refresh(rt.clone(), 10, 10).await;
             assert!(err.is_err());
 
-            let err = SelfGeneratedKeyManager::new_with_auto_refresh(rt.clone(), 10, 15);
+            let err = SelfGeneratedKeyManager::new_with_auto_refresh(rt.clone(), 10, 15).await;
             assert!(err.is_err());
 
-            let ok = SelfGeneratedKeyManager::new_with_auto_refresh(rt, 10, 0);
+            let ok = SelfGeneratedKeyManager::new_with_auto_refresh(rt, 10, 0).await;
             assert!(ok.is_ok());
 
             Ok(())
@@ -347,7 +348,9 @@ mod tests {
     #[tokio::test]
     async fn cold_start_key_is_immediately_visible() {
         run_test_with_tokio_runtime(|rt| async move {
-            let manager = SelfGeneratedKeyManager::new_with_auto_refresh(rt, 300, 30).unwrap();
+            let manager = SelfGeneratedKeyManager::new_with_auto_refresh(rt, 300, 30)
+                .await
+                .unwrap();
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             let k1 = &manager.get_client_visible_keys().await.unwrap()[0];
@@ -370,7 +373,9 @@ mod tests {
     #[tokio::test]
     async fn stale_key_serves_as_fallback_during_activation_delay() {
         run_test_with_tokio_runtime(|rt| async move {
-            let manager = SelfGeneratedKeyManager::new_with_auto_refresh(rt, 2, 1).unwrap();
+            let manager = SelfGeneratedKeyManager::new_with_auto_refresh(rt, 2, 1)
+                .await
+                .unwrap();
             tokio::time::sleep(Duration::from_millis(100)).await;
 
             let k1 = &manager.get_client_visible_keys().await.unwrap()[0];
@@ -401,7 +406,9 @@ mod tests {
     #[tokio::test]
     async fn get_all_keys_includes_non_active_keys_during_activation_delay() {
         run_test_with_tokio_runtime(|rt| async move {
-            let manager = SelfGeneratedKeyManager::new_with_auto_refresh(rt, 2, 1).unwrap();
+            let manager = SelfGeneratedKeyManager::new_with_auto_refresh(rt, 2, 1)
+                .await
+                .unwrap();
             // wait for first key to be generated and go stale, second key to be generated but not yet active
             tokio::time::sleep(Duration::from_millis(2500)).await;
 

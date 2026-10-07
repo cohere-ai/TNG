@@ -78,7 +78,8 @@ impl PeerSharedKeyManager {
                 runtime.clone(),
                 peer_shared.rotation_interval,
                 peer_shared.activation_delay,
-            )?,
+            )
+            .await?,
             keys_from_peers: Default::default(),
         });
 

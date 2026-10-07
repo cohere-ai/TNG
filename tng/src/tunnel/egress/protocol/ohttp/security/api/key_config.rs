@@ -12,14 +12,15 @@ use rats_cert::tee::claims::Claims;
 
 use crate::error::{AttestError, TngError};
 use crate::tunnel::attest::{respond, Attester, Prepared};
-use crate::tunnel::egress::protocol::ohttp::security::api::OhttpServerApi;
+use crate::tunnel::egress::protocol::ohttp::security::api::{KeyConfigSnapshot, OhttpServerApi};
 use crate::tunnel::egress::protocol::ohttp::security::context::TngStreamContext;
 use crate::tunnel::egress::protocol::ohttp::security::key_manager::KeyManager;
 use crate::tunnel::ohttp::protocol::userdata::ServerUserData;
 use crate::tunnel::ohttp::protocol::{HpkeKeyConfig, KeyConfigRequest, KeyConfigResponse};
 use crate::tunnel::ra_context::RaContext;
 use crate::tunnel::service_metrics::{AttestationOperation, AttestationProtocol};
-use crate::tunnel::utils::maybe_cached::{Expire, MaybeCached};
+use crate::tunnel::utils::maybe_cached::{Expire, MaybeCached, RefreshStrategy};
+use crate::TokioRuntime;
 
 impl OhttpServerApi {
     /// Interface 1: Get HPKE Configuration
@@ -36,43 +37,12 @@ impl OhttpServerApi {
     pub async fn get_hpke_configuration(
         &self,
         payload: Option<Json<KeyConfigRequest>>,
-        context: TngStreamContext,
+        _context: TngStreamContext,
     ) -> Result<Response, TngError> {
         let attest_ctx = self.ra_context.attest_context();
-        let snapshot = match attest_ctx {
-            // If the server is set to be a attester, we cache the key config with the attestation prepared for it
-            Some(attest_ctx) => {
-                self.passport_cache
-                    .read()
-                    .await
-                    .get_or_try_init(|| async {
-                        let ra_context = self.ra_context.clone();
-                        let key_manager = Arc::clone(&self.key_manager);
-
-                        let refresh_strategy = attest_ctx.refresh_strategy();
-
-                        MaybeCached::new(context.runtime.clone(), refresh_strategy, move || {
-                            Box::pin({
-                                tracing::info!("Regenerating key config snapshot");
-
-                                let ra_context = ra_context.clone();
-                                let key_manager = key_manager.clone();
-
-                                async move {
-                                    Self::get_hpke_configuration_internal(
-                                        &ra_context,
-                                        key_manager.as_ref(),
-                                    )
-                                    .await
-                                }
-                            }) as Pin<Box<_>>
-                        })
-                        .await
-                    })
-                    .await?
-                    .get_latest()
-                    .await?
-            }
+        let snapshot = match self.passport_cache.get() {
+            // If the server is set to be a attester, the key config is cached with the attestation prepared for it
+            Some(cache) => cache.get_latest().await?,
             // Otherwise, we generate a new key config
             None => Arc::new(
                 Self::get_hpke_configuration_internal(&self.ra_context, self.key_manager.as_ref())
@@ -107,6 +77,27 @@ impl OhttpServerApi {
             hpke_key_config: hpke_key_config.clone(),
             attest_response: Ok(attest_resp.map_err(TngError::from)?),
         })))
+    }
+
+    pub(super) async fn new_snapshot_cache(
+        ra_context: Arc<RaContext>,
+        key_manager: Arc<dyn KeyManager>,
+        refresh_strategy: RefreshStrategy,
+        runtime: TokioRuntime,
+    ) -> Result<MaybeCached<KeyConfigSnapshot, TngError>, TngError> {
+        MaybeCached::new(runtime, refresh_strategy, move || {
+            Box::pin({
+                tracing::info!("Regenerating key config snapshot");
+
+                let ra_context = ra_context.clone();
+                let key_manager = key_manager.clone();
+
+                async move {
+                    Self::get_hpke_configuration_internal(&ra_context, key_manager.as_ref()).await
+                }
+            }) as Pin<Box<_>>
+        })
+        .await
     }
 
     async fn get_hpke_configuration_internal(

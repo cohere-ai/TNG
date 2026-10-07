@@ -4,7 +4,7 @@ pub mod tunnel;
 use std::sync::Arc;
 
 use anyhow::Result;
-use tokio::sync::{OnceCell, RwLock};
+use tokio::sync::OnceCell;
 
 use crate::config::egress::KeyArgs;
 use crate::error::TngError;
@@ -41,7 +41,7 @@ pub struct OhttpServerApi {
     /// In passport mode, the server generates an attestation (passport) that is cached
     /// and reused for subsequent client requests to avoid expensive re-attestation.
     /// The cache automatically refreshes based on configured refresh strategy.
-    passport_cache: Arc<RwLock<OnceCell<MaybeCached<KeyConfigSnapshot, TngError>>>>,
+    passport_cache: Arc<OnceCell<MaybeCached<KeyConfigSnapshot, TngError>>>,
 }
 
 impl OhttpServerApi {
@@ -56,21 +56,28 @@ impl OhttpServerApi {
         // Create key manager based on configuration
         let key_manager: Arc<dyn KeyManager> = match key {
             KeyArgs::SelfGenerated { rotation_interval } => Arc::new(
-                SelfGeneratedKeyManager::new_with_auto_refresh(runtime, rotation_interval, 0)?,
+                SelfGeneratedKeyManager::new_with_auto_refresh(
+                    runtime.clone(),
+                    rotation_interval,
+                    0,
+                )
+                .await?,
             ),
             KeyArgs::File { path } => {
-                Arc::new(FileBasedKeyManager::new(runtime, path.into()).await?)
+                Arc::new(FileBasedKeyManager::new(runtime.clone(), path.into()).await?)
             }
             KeyArgs::PeerShared(peer_shared_args) => {
                 let metrics = ra_context
                     .attestation_metrics()
                     .cloned()
                     .unwrap_or_else(crate::tunnel::attestation_metrics::AttestationMetrics::noop);
-                Arc::new(PeerSharedKeyManager::new(runtime, peer_shared_args, metrics).await?)
+                Arc::new(
+                    PeerSharedKeyManager::new(runtime.clone(), peer_shared_args, metrics).await?,
+                )
             }
         };
 
-        let passport_cache: Arc<RwLock<OnceCell<MaybeCached<_, TngError>>>> = Default::default();
+        let passport_cache: Arc<OnceCell<MaybeCached<_, TngError>>> = Default::default();
 
         // Register a callback to refresh the passport cache when the advertised keys change
         {
@@ -81,7 +88,7 @@ impl OhttpServerApi {
                     let refresh = changes_advertised_keys(event);
                     Box::pin(async move {
                         // Only signal: key managers may fire this while holding their key lock
-                        if let Some(cache) = passport_cache_cloned.read().await.get() {
+                        if let Some(cache) = passport_cache_cloned.get() {
                             if refresh {
                                 cache.invalidate();
                             }
@@ -89,6 +96,18 @@ impl OhttpServerApi {
                     })
                 }))
                 .await;
+        }
+
+        // Built after the callback is registered so no key activation is missed
+        if let Some(attest_ctx) = ra_context.attest_context() {
+            let cache = Self::new_snapshot_cache(
+                ra_context.clone(),
+                key_manager.clone(),
+                attest_ctx.refresh_strategy(),
+                runtime,
+            )
+            .await?;
+            let _ = passport_cache.set(cache);
         }
 
         Ok(OhttpServerApi {
@@ -118,7 +137,6 @@ mod tests {
     use super::*;
     use crate::config::ra::{AttestArgs, AttesterArgs, CocoAttesterArgs, RaArgs};
     use crate::tests::run_test_with_tokio_runtime;
-    use crate::tunnel::egress::protocol::ohttp::security::context::TngStreamContext;
     use crate::tunnel::utils::cert_manager::tests::dummy_aa;
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -137,25 +155,11 @@ mod tests {
                 KeyArgs::SelfGenerated {
                     rotation_interval: 2,
                 },
-                runtime.clone(),
+                runtime,
             )
             .await?;
-            let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-            let context = TngStreamContext { runtime, sender };
-            // The first key is generated in the background.
-            tokio::time::timeout(Duration::from_secs(5), async {
-                while api
-                    .get_hpke_configuration(None, context.clone())
-                    .await
-                    .is_err()
-                {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            })
-            .await?;
 
-            let cache = api.passport_cache.read().await;
-            let cache = cache.get().context("snapshot not built")?;
+            let cache = api.passport_cache.get().context("snapshot not built")?;
             let first = cache.get_latest().await?;
             for _ in 0..100 {
                 tokio::time::sleep(Duration::from_millis(100)).await;
