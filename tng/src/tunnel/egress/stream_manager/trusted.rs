@@ -108,3 +108,32 @@ impl StreamManager for TrustedStreamManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::tests::run_test_with_tokio_runtime;
+
+    #[tokio::test]
+    async fn verify_with_ohttp_is_rejected() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let common_args: CommonArgs = serde_json::from_value(json!({
+                "ohttp": {},
+                "verify": {"as_addr": "http://127.0.0.1:8080/", "policy_ids": ["default"]}
+            }))?;
+            let Err(error) =
+                TrustedStreamManager::new(&common_args, AttestationMetrics::noop(), runtime).await
+            else {
+                bail!("egress started with 'verify' and 'ohttp'");
+            };
+            assert!(
+                error.to_string().contains("not supported with 'ohttp'"),
+                "{error:#}"
+            );
+            Ok(())
+        })
+        .await
+    }
+}

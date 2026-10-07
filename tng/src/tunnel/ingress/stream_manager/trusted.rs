@@ -100,3 +100,38 @@ impl StreamManager for TrustedStreamManager {
             .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::tests::run_test_with_tokio_runtime;
+
+    #[tokio::test]
+    async fn attest_with_ohttp_is_rejected() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let common_args: CommonArgs = serde_json::from_value(json!({
+                "ohttp": {},
+                "attest": {"aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"}
+            }))?;
+            let Err(error) = TrustedStreamManager::new(
+                &common_args,
+                AttestationMetrics::noop(),
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                None,
+                runtime,
+            )
+            .await
+            else {
+                bail!("ingress started with 'attest' and 'ohttp'");
+            };
+            assert!(
+                error.to_string().contains("not supported with 'ohttp'"),
+                "{error:#}"
+            );
+            Ok(())
+        })
+        .await
+    }
+}
