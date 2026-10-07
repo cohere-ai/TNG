@@ -44,7 +44,7 @@ class Transport(tng.Transport):
     def __init__(
         self,
         *,
-        verify: Optional[dict] = _UNSET,
+        verify: Optional[tng.VerifyConfig] = _UNSET,
         ohttp: Optional[dict] = None,
     ):
         if verify is _UNSET:
@@ -56,7 +56,7 @@ class AsyncTransport(tng.AsyncTransport):
     def __init__(
         self,
         *,
-        verify: Optional[dict] = _UNSET,
+        verify: Optional[tng.VerifyConfig] = _UNSET,
         ohttp: Optional[dict] = None,
     ):
         if verify is _UNSET:

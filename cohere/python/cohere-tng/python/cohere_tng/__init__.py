@@ -1,3 +1,3 @@
-from cohere_tng.transport import AsyncTransport, Transport
+from cohere_tng.transport import AsyncTransport, Transport, VerifyConfig
 
-__all__ = ["Transport", "AsyncTransport"]
+__all__ = ["Transport", "AsyncTransport", "VerifyConfig"]

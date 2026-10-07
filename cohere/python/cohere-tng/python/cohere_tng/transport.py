@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Iterator, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Union
 
 import httpx
 
 from cohere_tng._rust import TngClient, TngResponse, TngTimeoutError
 
 _ATTESTATION_HEADER = "x-tng-attestation-token"
+
+VerifyConfig = Union[Dict[str, Any], List[Dict[str, Any]]]
+"""One verifier config dict, or a list of them to accept peers that attest in different ways."""
 
 
 def _extract_timeouts(request: httpx.Request) -> Tuple[Optional[float], Optional[float]]:
@@ -28,7 +31,7 @@ def _extract_timeouts(request: httpx.Request) -> Tuple[Optional[float], Optional
 
 
 def _build_config(
-    verify: Optional[dict],
+    verify: Optional[VerifyConfig],
     ohttp: Optional[dict],
 ) -> dict:
     """Build a CommonArgs-shaped config dict for the Rust layer."""
@@ -57,16 +60,17 @@ class Transport(httpx.BaseTransport):
     ``x-tng-attestation-token`` header with the verification token (JWT).
 
     Args:
-        verify: Attestation verification config (required). Pass a dict
-                to configure verification. To disable verification, pass
-                ``None`` explicitly — not recommended for production.
+        verify: Attestation verification config (required). Pass a dict,
+                or a list of dicts to accept any one of several verifiers.
+                To disable verification, pass ``None`` explicitly — not
+                recommended for production.
         ohttp: OHTTP config dict (forward_headers, tls_ca_certs, etc.).
     """
 
     def __init__(
         self,
         *,
-        verify: Optional[dict],
+        verify: Optional[VerifyConfig],
         ohttp: Optional[dict] = None,
     ):
         self._client = TngClient(_build_config(verify=verify, ohttp=ohttp))
@@ -111,7 +115,7 @@ class AsyncTransport(httpx.AsyncBaseTransport):
     def __init__(
         self,
         *,
-        verify: Optional[dict],
+        verify: Optional[VerifyConfig],
         ohttp: Optional[dict] = None,
     ):
         self._client = TngClient(_build_config(verify=verify, ohttp=ohttp))
