@@ -188,7 +188,7 @@ mod tests {
         let err = read_request(&mut b).await.unwrap_err();
         assert!(is_malformed(&err));
         assert!(
-            format!("{err:#}").contains("unrecognized provider"),
+            format!("{err:#}").contains("no recognized proposal"),
             "{err:#}"
         );
     }

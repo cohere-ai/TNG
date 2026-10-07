@@ -72,11 +72,32 @@ impl AttestProposal {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 pub struct AttestRequest {
-    /// Empty when this side does not verify its peer.
-    #[serde(default)]
+    /// Empty when this side does not verify its peer. Proposals this version does not know, such
+    /// as a newer model or provider, are skipped, but a list with none known is rejected.
+    #[serde(default, deserialize_with = "known_proposals")]
     pub proposals: Vec<AttestProposal>,
+}
+
+fn known_proposals<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<AttestProposal>, D::Error> {
+    let sent = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    let is_empty = sent.is_empty();
+    let known: Vec<AttestProposal> = sent
+        .into_iter()
+        .filter_map(|value| match AttestProposal::deserialize(value) {
+            Ok(proposal) => Some(proposal),
+            Err(error) => {
+                tracing::warn!(%error, "Skipping unrecognized attestation proposal");
+                None
+            }
+        })
+        .collect();
+    if !is_empty && known.is_empty() {
+        return Err(serde::de::Error::custom("no recognized proposal"));
+    }
+    Ok(known)
 }
 
 /// Evidence or a passport token. The producing side chooses the arm its matched proposal asked for.
@@ -465,6 +486,34 @@ mod tests {
             json!({"Ok": {"passport": {"provider": "coco", "token": "jwt"}}})
         );
         assert!(serde_json::from_str::<AttestResponse>(r#"{"type":"ack"}"#).is_err());
+    }
+
+    #[test]
+    fn request_skips_proposals_this_version_does_not_know() {
+        let request: AttestRequest = serde_json::from_value(json!({
+            "proposals": [
+                {"model": "passport", "provider": "future_provider"},
+                {"model": "future_model", "provider": "coco"},
+                {"model": "passport", "provider": "coco"}
+            ],
+            "future_field": true
+        }))
+        .unwrap();
+        assert_eq!(
+            request.proposals,
+            [AttestProposal::Passport {
+                provider: ProviderType::Coco
+            }]
+        );
+
+        let error = serde_json::from_value::<AttestRequest>(json!({
+            "proposals": [{"model": "passport", "provider": "future_provider"}]
+        }))
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("no recognized proposal"),
+            "{error}"
+        );
     }
 
     fn request(proposals: Vec<AttestProposal>) -> AttestRequest {
