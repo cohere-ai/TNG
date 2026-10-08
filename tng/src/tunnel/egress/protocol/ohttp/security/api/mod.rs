@@ -135,9 +135,60 @@ mod tests {
     use anyhow::Context as _;
 
     use super::*;
-    use crate::config::ra::{AttestArgs, AttesterArgs, CocoAttesterArgs, RaArgs};
+    use crate::config::ra::{
+        AttestArgs, AttesterArgs, CocoAttesterArgs, CocoConverterArgs, ConverterArgs, RaArgs,
+    };
     use crate::tests::run_test_with_tokio_runtime;
+    use crate::tunnel::attest::{AttestProposal, AttestRequest};
+    use crate::tunnel::egress::protocol::ohttp::security::context::TngStreamContext;
+    use crate::tunnel::ohttp::protocol::KeyConfigRequest;
+    use crate::tunnel::provider::ProviderType;
     use crate::tunnel::utils::cert_manager::tests::dummy_aa;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn failed_passport_mint_still_serves_the_key_config() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let (aa_addr, _listener) = dummy_aa();
+            let ra_context = RaContext::from_ra_args(&RaArgs::AttestOnly(AttestArgs::Passport {
+                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
+                converter: ConverterArgs::Coco(CocoConverterArgs::Restful {
+                    as_addr: "http://127.0.0.1:1".into(),
+                    policy_ids: vec![],
+                    as_headers: Default::default(),
+                    as_ca_certs: vec![],
+                }),
+                refresh_interval: None,
+                max_retries: Some(0),
+            }))
+            .await?;
+            let api = OhttpServerApi::new(
+                Arc::new(ra_context),
+                KeyArgs::SelfGenerated {
+                    rotation_interval: 3600,
+                },
+                runtime.clone(),
+            )
+            .await?;
+            let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
+            let context = TngStreamContext { runtime, sender };
+
+            let response = api.get_hpke_configuration(None, context.clone()).await?;
+            assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+            let proposals = vec![AttestProposal::Passport {
+                provider: ProviderType::Coco,
+            }];
+            let request = KeyConfigRequest {
+                attest_request: AttestRequest { proposals },
+            };
+            let response = api
+                .get_hpke_configuration(Some(axum::Json(request)), context)
+                .await;
+            assert!(matches!(response, Err(TngError::AttestationUnavailable(_))));
+            Ok(())
+        })
+        .await
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn key_rotation_refreshes_snapshot_without_a_request() -> Result<()> {

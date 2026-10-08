@@ -134,10 +134,6 @@ impl<
 
                     let join_handle = runtime.spawn_supervised_task_current_span(async move {
                         let mut expire = init_expire;
-                        let interval_duration = Duration::from_secs(interval);
-                        // After a failed rebuild, wake sooner than `interval`. Doubled until it
-                        // reaches `interval`, then the periodic wake is left in charge.
-                        let mut retry_delay = Duration::from_secs(1);
 
                         loop {
                             // Update certs in loop
@@ -189,20 +185,8 @@ impl<
                                 })
                             };
 
-                            match fut.await {
-                                Ok(()) => retry_delay = Duration::from_secs(1),
-                                Err(e) => {
-                                    tracing::error!(error=?e, "Failed to update the cached value");
-                                    if retry_delay < interval_duration {
-                                        if let Some(wake_at) =
-                                            SystemTime::now().checked_add(retry_delay)
-                                        {
-                                            expire = Expire::ExpireAt(wake_at);
-                                        }
-                                        retry_delay =
-                                            retry_delay.saturating_mul(2).min(interval_duration);
-                                    }
-                                }
+                            if let Err(e) = fut.await {
+                                tracing::error!(error=?e,"Failed to update the cached value");
                             }
                         }
                     });
@@ -571,46 +555,6 @@ mod tests {
             assert_eq!(*value4, "value3");
             // Verify the function was called three times
             assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 3);
-            Ok(())
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn failed_refresh_retries_before_the_interval() -> Result<()> {
-        run_test_with_tokio_runtime(|runtime| async move {
-            let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-            let call_count_clone = call_count.clone();
-
-            let maybe_cached: MaybeCached<String, anyhow::Error> = MaybeCached::new(
-                runtime,
-                RefreshStrategy::Periodically { interval: 30 },
-                move || {
-                    let call_count_clone = call_count_clone.clone();
-                    Box::pin(async move {
-                        let count =
-                            call_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        if count == 1 {
-                            return Err(anyhow!("refresh failed"));
-                        }
-                        let expire = if count == 0 {
-                            Expire::ExpireAt(SystemTime::now() + Duration::from_millis(200))
-                        } else {
-                            Expire::NoExpire
-                        };
-                        Ok((format!("value{count}"), expire))
-                    })
-                },
-            )
-            .await
-            .expect("Failed to create MaybeCached");
-
-            assert_eq!(*maybe_cached.get_latest().await?, "value0");
-
-            tokio_time::sleep(Duration::from_secs(3)).await;
-
-            assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 3);
-            assert_eq!(*maybe_cached.get_latest().await?, "value2");
             Ok(())
         })
         .await

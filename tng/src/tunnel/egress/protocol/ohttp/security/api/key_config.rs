@@ -10,7 +10,7 @@ use itertools::Itertools;
 use ohttp::KeyConfig;
 use rats_cert::tee::claims::Claims;
 
-use crate::error::{AttestError, TngError};
+use crate::error::TngError;
 use crate::tunnel::attest::{respond, Attester, Prepared};
 use crate::tunnel::egress::protocol::ohttp::security::api::{KeyConfigSnapshot, OhttpServerApi};
 use crate::tunnel::egress::protocol::ohttp::security::context::TngStreamContext;
@@ -134,18 +134,12 @@ impl OhttpServerApi {
 
         let keys_expire = Expire::ExpireAt(keys_expire_time);
         let (prepared, expire) = match ra_context.attest_context() {
-            Some(attest_ctx) => async {
-                let prepared = attest_ctx
+            Some(attest_ctx) => {
+                let (prepared, prepared_expire) = attest_ctx
                     .prepare(|nonce| ohttp_claims(&hpke_key_config, nonce))
-                    .await?;
-                let expire = std::cmp::min(keys_expire, prepared.expire()?);
-                anyhow::Ok((prepared, expire))
+                    .await;
+                (prepared, std::cmp::min(keys_expire, prepared_expire))
             }
-            .await
-            .map_err(|error| {
-                tracing::error!(?error, "Failed to prepare attestation for the key config");
-                TngError::from(AttestError::Unavailable)
-            })?,
             None => (Prepared::default(), keys_expire),
         };
 

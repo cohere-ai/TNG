@@ -26,7 +26,11 @@ use crate::tunnel::attest::{ChallengeSource, Model, Proposer, Verifier};
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
 #[cfg(unix)]
-use crate::tunnel::utils::maybe_cached::RefreshStrategy;
+use crate::tunnel::utils::maybe_cached::{Expire, RefreshStrategy};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+#[cfg(unix)]
+use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
 use crate::tunnel::provider::{create_attester, TngAttester};
@@ -275,6 +279,29 @@ fn check_keys_unique(entries: &[VerifyContext]) -> Result<()> {
     Ok(())
 }
 
+/// Delay before minting again after a failed passport mint: 1s, doubling up to `cap`, and reset by
+/// a successful mint.
+#[cfg(unix)]
+#[derive(Debug, Default)]
+pub struct MintBackoff(AtomicU64);
+
+#[cfg(unix)]
+impl MintBackoff {
+    fn succeeded(&self) {
+        self.0.store(0, AtomicOrdering::Relaxed);
+    }
+
+    fn failed(&self, cap_secs: u64) -> Duration {
+        let delay = self
+            .0
+            .load(AtomicOrdering::Relaxed)
+            .clamp(1, cap_secs.max(1));
+        self.0
+            .store(delay.saturating_mul(2), AtomicOrdering::Relaxed);
+        Duration::from_secs(delay)
+    }
+}
+
 /// Pre-instantiated attestation context
 ///
 /// Holds attester and converter instances for server attestation.
@@ -288,6 +315,7 @@ pub enum AttestContext {
         refresh_strategy: RefreshStrategy,
         max_retries: usize,
         metrics: AttestationMetrics,
+        mint_backoff: MintBackoff,
     },
 
     /// Background check mode - just attest via AA (client verifies)
@@ -324,6 +352,7 @@ impl AttestContext {
                     refresh_strategy: attest_args.refresh_strategy(),
                     max_retries: attest_args.max_retries(),
                     metrics,
+                    mint_backoff: MintBackoff::default(),
                 })
             }
             AttestArgs::BackgroundCheck {
@@ -356,29 +385,59 @@ impl AttestContext {
 
     /// Attest ahead of requests to the key `passport_claims` binds. Called by the transport
     /// whenever it rebuilds its key snapshot; background check has nothing to prepare.
+    ///
+    /// Returns the prepared value and when the snapshot should be rebuilt. A failed mint still
+    /// returns, so the key is published without a token and rebuilt after a [`MintBackoff`].
     pub async fn prepare(
         &self,
         passport_claims: impl Fn(&str) -> Result<Claims>,
-    ) -> Result<Prepared> {
+    ) -> (Prepared, Expire) {
         match self {
-            Self::BackgroundCheck { .. } => Ok(Prepared::default()),
+            Self::BackgroundCheck { .. } => (Prepared::default(), Expire::NoExpire),
             Self::Passport {
                 attester,
                 converter,
+                refresh_strategy,
                 max_retries,
+                mint_backoff,
                 ..
             } => {
                 // A fresh nonce from this side's own attestation service on every attempt.
                 let pipeline = AttesterPipeline::new(attester, converter);
-                let token = with_retry(*max_retries, || async {
+                let minted = with_retry(*max_retries, || async {
                     let nonce = ChallengeSource::get_nonce(converter).await?;
                     pipeline
                         .get_evidence(&ReportData::Claims(passport_claims(&nonce)?))
                         .await
                         .map_err(|error| anyhow::anyhow!("attester failed: {error}"))
                 })
-                .await?;
-                Ok(Prepared::new(token))
+                .await
+                .and_then(|token| {
+                    let prepared = Prepared::new(token);
+                    let expire = prepared.expire()?;
+                    Ok((prepared, expire))
+                });
+                match minted {
+                    Ok(minted) => {
+                        mint_backoff.succeeded();
+                        minted
+                    }
+                    Err(error) => {
+                        let delay = mint_backoff.failed(match refresh_strategy {
+                            RefreshStrategy::Periodically { interval } => *interval,
+                            RefreshStrategy::Always => 0,
+                        });
+                        tracing::error!(
+                            ?error,
+                            ?delay,
+                            "Failed to mint the passport token, publishing the key without it"
+                        );
+                        let retry = SystemTime::now()
+                            .checked_add(delay)
+                            .map_or(Expire::NoExpire, Expire::ExpireAt);
+                        (Prepared::default(), retry)
+                    }
+                }
             }
         }
     }
@@ -521,6 +580,16 @@ mod tests {
         VerifierArgs,
     };
     use std::collections::HashMap;
+
+    #[cfg(unix)]
+    #[test]
+    fn mint_backoff_doubles_up_to_the_cap_and_resets() {
+        let backoff = MintBackoff::default();
+        let delays: Vec<u64> = (0..5).map(|_| backoff.failed(5).as_secs()).collect();
+        assert_eq!(delays, [1, 2, 4, 5, 5]);
+        backoff.succeeded();
+        assert_eq!(backoff.failed(5).as_secs(), 1);
+    }
 
     // =========================================================================
     // Test Constants

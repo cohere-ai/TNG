@@ -62,10 +62,10 @@ impl CertManager {
         );
 
         let spki = spki_from_certified_key(&certified_key)?;
-        let prepared = attest_ctx
+        let (prepared, prepared_expire) = attest_ctx
             .prepare(|nonce| passport_attester_claims(&spki, nonce))
-            .await?;
-        let expire = std::cmp::min(Expire::ExpireAt(not_after), prepared.expire()?);
+            .await;
+        let expire = std::cmp::min(Expire::ExpireAt(not_after), prepared_expire);
         Ok((
             AttestedKey {
                 cert: certified_key,
