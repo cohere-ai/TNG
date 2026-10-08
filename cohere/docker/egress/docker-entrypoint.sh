@@ -16,10 +16,9 @@ fi
 if [ -n "$POLICY_IDS" ]; then
     tmp=$(mktemp)
     jq --arg pid "$POLICY_IDS" '($pid | split(",")) as $ids |
-        def set_ids: if type == "array" then map(.policy_ids = $ids) else .policy_ids = $ids end;
-        (.add_egress[].ohttp.key.attest.policy_ids) = $ids |
-        (.add_egress[].ohttp.key.verify) |= set_ids |
-        (.add_egress[].attest.policy_ids) = $ids
+        (.add_egress[] | (.attest, .ohttp.key.attest, .ohttp.key.verify)
+            | if type == "array" then .[] else . end
+            | select(.as_provider? == "ita") | .policy_ids) = $ids
     ' "$CONFIG" > "$tmp"
     mv "$tmp" "$CONFIG"
 fi

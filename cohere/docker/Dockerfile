@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
-# Cohere TNG images. Use `--target egress-ita`, `--target egress-trustee`, or `--target ingress`.
+# Cohere TNG images. Use `--target tng` (no baked-in config), `--target egress-ita`,
+# `--target egress-trustee`, or `--target ingress`.
 
 # Verifiers for the in-process attestation service, one argument each because each one brings its
 # own system dependencies. Each takes a boolean: 1, true, yes or on to build it, and 0, false, no,
@@ -164,20 +165,29 @@ RUN set -eu; \
 
 COPY --from=builder /out/bin/tng /usr/local/bin/tng
 
+FROM runtime-base AS tng
+
+# Each egress variant is the shared tng-conf.json plus its own attest.json, used for both the
+# tunnel and the OHTTP key, and verify.json for the gossip peers.
+FROM runtime-base AS egress-conf
+COPY cohere/docker/egress/ /src/
+RUN set -eu; \
+    for variant in ita trustee; do \
+        jq --slurpfile attest "/src/$variant/attest.json" --slurpfile verify "/src/$variant/verify.json" \
+            '.add_egress |= map(.attest = $attest[0] | .ohttp.key.attest = $attest[0] | .ohttp.key.verify = $verify[0])' \
+            /src/tng-conf.json > "/src/$variant/conf.json"; \
+    done
+
 FROM runtime-base AS egress-base
 COPY cohere/docker/egress/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 CMD ["docker-entrypoint.sh"]
 
 FROM egress-base AS egress-ita
-COPY cohere/docker/egress/ita/tng-conf.json /etc/tng/conf.default.json
-COPY cohere/docker/egress/ita/customize-attester.sh /usr/local/bin/customize-attester.sh
-RUN chmod +x /usr/local/bin/customize-attester.sh
+COPY --from=egress-conf /src/ita/conf.json /etc/tng/conf.default.json
 
 FROM egress-base AS egress-trustee
-COPY cohere/docker/egress/trustee/tng-conf.json /etc/tng/conf.default.json
-COPY cohere/docker/egress/trustee/customize-attester.sh /usr/local/bin/customize-attester.sh
-RUN chmod +x /usr/local/bin/customize-attester.sh
+COPY --from=egress-conf /src/trustee/conf.json /etc/tng/conf.default.json
 
 FROM runtime-base AS ingress
 RUN apt-get update && apt-get install -y --no-install-recommends \
