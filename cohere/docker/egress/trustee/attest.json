@@ -1,0 +1,6 @@
+{
+    "model": "background_check",
+    "aa_provider": "coco_asr",
+    "asr_addr": "http://127.0.0.1:8006/",
+    "max_retries": 0
+}

@@ -13,7 +13,13 @@ else
     cp "$DEFAULT" "$CONFIG"
 fi
 
-/usr/local/bin/customize-attester.sh "$CONFIG"
+if [ -n "$POLICY_IDS" ]; then
+    tmp=$(mktemp)
+    jq --arg pid "$POLICY_IDS" '($pid | split(",")) as $ids |
+        (.add_egress[] | (.attest, .ohttp.key.attest, .ohttp.key.verify)
+            | select(.as_provider? == "ita") | .policy_ids) = $ids
+    ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+fi
 
 if [ -n "$PEERS" ]; then
     tmp=$(mktemp)
