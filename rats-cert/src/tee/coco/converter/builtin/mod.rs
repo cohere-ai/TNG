@@ -66,7 +66,11 @@ impl CocoBuiltinConverter {
             // The default leaves `signer: None`, which makes the AS mint an ephemeral P-256
             // key and publish its public JWK in each token header. That is what lets the
             // verifier skip trust material entirely; see `CocoBuiltinVerifier`.
-            attestation_token_broker: EarTokenConfiguration::default(),
+            attestation_token_broker: EarTokenConfiguration {
+                // Upstream never bumps its crate version, so its default reads 0.1.0 forever.
+                build_name: format!("cohere-tng {}", env!("CARGO_PKG_VERSION")),
+                ..Default::default()
+            },
             verifier_config,
             storage_backend: StorageBackendConfig {
                 storage_type: KeyValueStorageType::Memory,
@@ -556,6 +560,11 @@ configuration := 2 if input.nvidia"#,
             .verify_evidence(&token, &report_data)
             .await
             .expect("a token appraised under an affirming policy should verify");
+
+        assert_eq!(
+            payload_of(&token)["ear.verifier-id"]["build"],
+            format!("cohere tng {}", env!("CARGO_PKG_VERSION"))
+        );
     }
 
     /// Without this, an affirming result proves only that the pipeline runs, not that the policy
