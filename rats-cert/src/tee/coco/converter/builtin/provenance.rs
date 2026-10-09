@@ -46,8 +46,6 @@ pub struct VerifiedRelease {
     pub policies: TeeClassPolicies,
     /// Earliest verified timestamp of the signature, in seconds since the Unix epoch.
     pub signed_at: i64,
-    /// The `version` the release's predicate declares, if any.
-    pub version: Option<String>,
 }
 
 /// Identifies a release by its bundle, without verifying anything.
@@ -135,19 +133,19 @@ fn verify(
             "predicate declares {field} {got:?}, not {want:?}"
         );
     }
-    let version = statement.predicate["version"].as_str().map(str::to_owned);
 
     let verifier = Verifier::new(trusted_root)?;
     let identity = format!(
         "https://github.com/{}/{}@{}",
         provenance.repo, provenance.signer_workflow, provenance.source_ref
     );
-    let policy = VerificationPolicy::new(IdentityMatcher::Uri(identity), GITHUB_ACTIONS_ISSUER);
+    let sigstore_policy =
+        VerificationPolicy::new(IdentityMatcher::Uri(identity), GITHUB_ACTIONS_ISSUER);
 
     let mut policies = TeeClassPolicies::new();
     let mut signed_at = None;
     for file in files {
-        let result = verifier.verify(file.bytes, &bundle, &policy)?;
+        let result = verifier.verify(file.bytes, &bundle, &sigstore_policy)?;
         ensure!(
             result.certificate_verified() && result.sct_verified() && result.tlog_verified(),
             "certificate, SCT or transparency log not verified"
@@ -189,7 +187,6 @@ fn verify(
     Ok(VerifiedRelease {
         policies,
         signed_at: signed_at.context("no files to verify")?,
-        version,
     })
 }
 
@@ -317,7 +314,6 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        assert_eq!(a71.version.as_deref(), Some("v0.0.1a71"));
         assert_eq!(a71.policies["cpu"].as_bytes(), A71.cpu);
         assert_eq!(a71.policies["gpu"].as_bytes(), A71.gpu);
 

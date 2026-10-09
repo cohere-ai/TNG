@@ -109,11 +109,14 @@ pub(crate) mod tests {
     async fn test_cert_gen_with_nonzero_interval() -> Result<()> {
         run_test_with_tokio_runtime(|runtime| async move {
             let (aa_addr, _listener) = dummy_aa();
-            let attest_ctx = AttestContext::from_attest_args(&AttestArgs::BackgroundCheck {
-                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
-                refresh_interval: Some(3),
-                max_retries: None,
-            })
+            let attest_ctx = AttestContext::from_attest_args(
+                &AttestArgs::BackgroundCheck {
+                    attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
+                    refresh_interval: Some(3),
+                    max_retries: None,
+                },
+                &runtime,
+            )
             .await?;
             let mut cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
 
@@ -161,11 +164,14 @@ pub(crate) mod tests {
     async fn test_cert_gen_with_zero_interval() -> Result<()> {
         run_test_with_tokio_runtime(|runtime| async move {
             let (aa_addr, _listener) = dummy_aa();
-            let attest_ctx = AttestContext::from_attest_args(&AttestArgs::BackgroundCheck {
-                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
-                refresh_interval: Some(0),
-                max_retries: None,
-            })
+            let attest_ctx = AttestContext::from_attest_args(
+                &AttestArgs::BackgroundCheck {
+                    attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
+                    refresh_interval: Some(0),
+                    max_retries: None,
+                },
+                &runtime,
+            )
             .await?;
             let cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
 
@@ -192,11 +198,14 @@ pub(crate) mod tests {
 
         run_test_with_tokio_runtime(|runtime| async move {
             let (aa_addr, _listener) = dummy_aa();
-            let attest_ctx = AttestContext::from_attest_args(&AttestArgs::BackgroundCheck {
-                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
-                refresh_interval: Some(0),
-                max_retries: None,
-            })
+            let attest_ctx = AttestContext::from_attest_args(
+                &AttestArgs::BackgroundCheck {
+                    attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
+                    refresh_interval: Some(0),
+                    max_retries: None,
+                },
+                &runtime,
+            )
             .await?;
             let cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
 

@@ -1508,7 +1508,7 @@ mod tests {
         with(|_| {}).unwrap();
         with(|v| v["policy_dir"] = json!("/tmp")).unwrap_err();
         with(|v| v["policy_source"]["url"] = json!("http://example.com")).unwrap_err();
-        with(|v| v["policy_source"]["refresh_interval"] = json!(0)).unwrap_err();
+        with(|v| v["policy_source"]["refresh_interval"] = json!(0)).unwrap();
         with(|v| v["policy_source"]["provenance"]["repo"] = json!("integritee")).unwrap_err();
     }
 

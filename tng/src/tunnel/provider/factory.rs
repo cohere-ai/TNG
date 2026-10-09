@@ -27,6 +27,7 @@ use super::converter::TngConverter;
 #[cfg(feature = "__coco-builtin-as")]
 use super::policy_source::PolicySource;
 use super::verifier::TngVerifier;
+use crate::tunnel::utils::runtime::TokioRuntime;
 
 /// Instantiate a `TngAttester` from config. Dispatches on provider, then sub-type.
 #[cfg(unix)]
@@ -42,7 +43,11 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
 }
 
 /// Instantiate a `TngConverter` from config. Dispatches on provider, then sub-type.
-pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
+#[cfg_attr(not(feature = "__coco-builtin-as"), allow(unused_variables))]
+pub async fn create_converter(
+    config: &ConverterArgs,
+    runtime: &TokioRuntime,
+) -> Result<TngConverter> {
     match config {
         #[cfg(feature = "__coco-builtin-as")]
         ConverterArgs::CocoBuiltin {
@@ -62,8 +67,8 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
             let (policies, source) = match policy_source {
                 Some(args) => {
                     let source = PolicySource::new(args, policy_id)?;
-                    let (policies, installed) = source.fetch_initial().await?;
-                    (policies, Some((source, installed)))
+                    let (policies, current) = source.fetch_initial().await?;
+                    (policies, Some((source, current)))
                 }
                 None => {
                     let policy_dir = policy_dir.as_deref().unwrap_or(DEFAULT_POLICY_DIR);
@@ -85,8 +90,8 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
                 )
                 .await?,
             );
-            if let Some((source, installed)) = source {
-                source.keep_current(installed, &converter);
+            if let Some((source, current)) = source {
+                source.keep_current(current, &converter, runtime);
             }
             Ok(TngConverter::CocoBuiltin(converter))
         }
