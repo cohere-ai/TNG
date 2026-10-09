@@ -10,8 +10,8 @@ use sigstore_trust_root::TrustedRoot;
 use sigstore_types::{Bundle, SignatureContent, Statement};
 use sigstore_verify::{crypto::sha256, IdentityMatcher, VerificationPolicy, Verifier};
 
-use super::policy::{TeeClassPolicies, CPU_TEE_CLASS, TEE_CLASSES};
 use crate::errors::*;
+use crate::tee::coco::converter::builtin::policy::{TeeClassPolicies, CPU_TEE_CLASS, TEE_CLASSES};
 
 const GITHUB_ACTIONS_ISSUER: &str = "https://token.actions.githubusercontent.com";
 
@@ -58,7 +58,7 @@ pub fn bundle_digest(bundle_json: &[u8]) -> String {
 pub fn policy_files(bundle_json: &[u8], policy_id: &str) -> Result<Vec<(String, String)>> {
     parse(bundle_json)
         .and_then(|(_, statement)| named_policies(&statement, policy_id))
-        .map_err(|e| Error::CocoBuiltinAsPolicyProvenanceFailed(Arc::new(e)))
+        .map_err(|e| Error::PolicyProvenanceFailed(Arc::new(e)))
 }
 
 /// Verifies every file against the bundle and returns them as policies. `files` must be exactly
@@ -71,7 +71,7 @@ pub fn verify_release(
     provenance: &Provenance,
 ) -> Result<VerifiedRelease> {
     verify(trusted_root, bundle_json, policy_id, files, provenance)
-        .map_err(|e| Error::CocoBuiltinAsPolicyProvenanceFailed(Arc::new(e)))
+        .map_err(|e| Error::PolicyProvenanceFailed(Arc::new(e)))
 }
 
 fn parse(bundle_json: &[u8]) -> anyhow::Result<(Bundle, Statement)> {

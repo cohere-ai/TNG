@@ -6,6 +6,8 @@ use std::sync::Arc;
 #[cfg(feature = "__coco-builtin-as")]
 use anyhow::Context as _;
 use anyhow::Result;
+#[cfg(feature = "__coco-builtin-as")]
+use rats_cert::policy_source::PolicySource;
 #[cfg(unix)]
 use rats_cert::tee::coco::attester::CocoAttester;
 #[cfg(feature = "__coco-builtin-as")]
@@ -24,8 +26,6 @@ use crate::config::ra::{CocoConverterArgs, CocoVerifierArgs, ConverterArgs, Veri
 #[cfg(unix)]
 use super::attester::TngAttester;
 use super::converter::TngConverter;
-#[cfg(feature = "__coco-builtin-as")]
-use super::policy_source::PolicySource;
 use super::verifier::TngVerifier;
 use crate::tunnel::utils::runtime::TokioRuntime;
 
@@ -90,8 +90,10 @@ pub async fn create_converter(
                 )
                 .await?,
             );
-            if let Some((source, current)) = source {
-                source.keep_current(current, &converter, runtime);
+            if let Some(task) = source.and_then(|(source, current)| {
+                source.keep_current(current, Arc::downgrade(&converter))
+            }) {
+                runtime.spawn_supervised_task_current_span(task);
             }
             Ok(TngConverter::CocoBuiltin(converter))
         }

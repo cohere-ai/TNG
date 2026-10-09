@@ -49,6 +49,7 @@ thiserror = {workspace = true}
 tonic-prost = {workspace = true, optional = true}
 tracing = {workspace = true}
 ttrpc = {workspace = true, optional = true, features = ["async"]}
+webpki-root-certs = {workspace = true, optional = true}
 x509-cert = {workspace = true, optional = true}
 zeroize = {workspace = true}
 
@@ -122,6 +123,10 @@ __coco-builtin-as = [
   "dep:sigstore-trust-root",
   "dep:sigstore-types",
   "dep:sigstore-verify",
+  "dep:webpki-root-certs",
+  "sigstore-trust-root/rustls",
+  "sigstore-trust-root/tuf",
+  "tokio/time",
 ]
 coco-builtin-as-azsnp = ["__coco-builtin-as", "attestation-service/az-snp-vtpm-verifier"]
 coco-builtin-as-aztdx = ["__coco-builtin-as", "attestation-service/az-tdx-vtpm-verifier"]
