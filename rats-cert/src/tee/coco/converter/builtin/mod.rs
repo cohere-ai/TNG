@@ -562,7 +562,7 @@ configuration := 2 if input.nvidia"#,
 
         assert_eq!(
             payload_of(&token)["ear.verifier-id"]["build"],
-            format!("cohere tng {}", env!("CARGO_PKG_VERSION"))
+            format!("cohere-tng {}", env!("CARGO_PKG_VERSION"))
         );
     }
 
