@@ -753,9 +753,8 @@ Each policy declares `package policy` and defines a `trust_claims` rule whose re
 With `policy_source`, TNG downloads `attestation-bundle.sigstore.json` and the policy files it signs, named as above, from `url` over https. It verifies them the way `gh attestation verify` does, against Sigstore's trusted root fetched through TUF, and only installs them if they were signed by the configured GitHub Actions workflow. If the first fetch or verification fails, startup fails. Afterwards TNG checks for a new release every `refresh_interval` seconds and only installs one that was signed later than the installed one; on any failure the installed policies stay in force. A release cannot drop a policy class that is installed; restart TNG to apply such a release.
 
 - **`url`** (string, required): https prefix the release files are fetched from.
-- **`refresh_interval`** (integer, optional, default is `300`): Seconds between checks for a new release.
-- **`version`** (string, optional): `version` the signed release must declare. Set it when `url` names one release; that release is then never refreshed.
-- **`provenance`** (object, required): The signer. `repo` (`owner/name`), `signer_workflow` (path in `repo`), `source_ref` (git ref the workflow ran on) and `predicate_type` (in-toto predicate type) are required; `environment` (GitHub deployment environment of the signing job) is optional. Releases from self-hosted runners are rejected.
+- **`refresh_interval`** (integer, optional, default is `300`): Seconds between checks for a new release. `0` means fetch once at startup and never refresh.
+- **`provenance`** (object, required): The signer. `repo` (`owner/name`), `signer_workflow` (path in `repo`), `source_ref` (git ref the workflow ran on) and `predicate_type` (in-toto predicate type) are required; `predicate_claims` (top-level string fields the predicate must declare with exactly these values, e.g. `{"version": "v0.0.1a74"}` to pin one Integritee release) and `environment` (GitHub deployment environment of the signing job) are optional. Releases from self-hosted runners are rejected.
 
 ```json
 "verify": {

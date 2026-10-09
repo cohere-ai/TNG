@@ -1,6 +1,7 @@
 //! Checks a policy release's Sigstore bundle offline, the way `gh attestation verify` does for a
 //! GitHub Actions signer.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{bail, ensure, Context as _};
@@ -25,6 +26,9 @@ pub struct Provenance {
     pub source_ref: String,
     /// in-toto predicate type of the signed statement
     pub predicate_type: String,
+    /// Top-level string fields the predicate must declare with exactly these values
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub predicate_claims: BTreeMap<String, String>,
     /// GitHub environment the signing job ran in
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
@@ -61,25 +65,15 @@ pub fn policy_files(bundle_json: &[u8], policy_id: &str) -> Result<Vec<(String, 
 
 /// Verifies every file against the bundle and returns them as policies. `files` must be exactly
 /// the ones [`policy_files`] lists.
-///
-/// With `pinned_version`, the predicate must declare exactly that `version`.
 pub fn verify_release(
     trusted_root: &TrustedRoot,
     bundle_json: &[u8],
     policy_id: &str,
     files: &[ReleaseFile<'_>],
     provenance: &Provenance,
-    pinned_version: Option<&str>,
 ) -> Result<VerifiedRelease> {
-    verify(
-        trusted_root,
-        bundle_json,
-        policy_id,
-        files,
-        provenance,
-        pinned_version,
-    )
-    .map_err(|e| Error::CocoBuiltinAsPolicyProvenanceFailed(Arc::new(e)))
+    verify(trusted_root, bundle_json, policy_id, files, provenance)
+        .map_err(|e| Error::CocoBuiltinAsPolicyProvenanceFailed(Arc::new(e)))
 }
 
 fn parse(bundle_json: &[u8]) -> anyhow::Result<(Bundle, Statement)> {
@@ -118,7 +112,6 @@ fn verify(
     policy_id: &str,
     files: &[ReleaseFile<'_>],
     provenance: &Provenance,
-    pinned_version: Option<&str>,
 ) -> anyhow::Result<VerifiedRelease> {
     let (bundle, statement) = parse(bundle_json)?;
     // Otherwise whoever serves the files could leave out a class the release signed.
@@ -135,13 +128,14 @@ fn verify(
         statement.predicate_type
     );
 
-    let version = statement.predicate["version"].as_str().map(str::to_owned);
-    if let Some(pinned) = pinned_version {
+    for (field, want) in &provenance.predicate_claims {
+        let got = statement.predicate[field].as_str();
         ensure!(
-            version.as_deref() == Some(pinned),
-            "release declares version {version:?}, not {pinned:?}"
+            got == Some(want.as_str()),
+            "predicate declares {field} {got:?}, not {want:?}"
         );
     }
+    let version = statement.predicate["version"].as_str().map(str::to_owned);
 
     let verifier = Verifier::new(trusted_root)?;
     let identity = format!(
@@ -277,6 +271,7 @@ pub(crate) mod tests {
             signer_workflow: ".github/workflows/release-policy.yaml".to_owned(),
             source_ref: "refs/heads/main".to_owned(),
             predicate_type: "https://cohere.com/attestation-policy/v1".to_owned(),
+            predicate_claims: BTreeMap::new(),
             environment: Some("release".to_owned()),
         }
     }
@@ -316,8 +311,10 @@ pub(crate) mod tests {
             A71.bundle,
             POLICY_ID,
             &files(A71.cpu, A71.gpu),
-            &integritee(),
-            Some("v0.0.1a71"),
+            &Provenance {
+                predicate_claims: BTreeMap::from([("version".into(), "v0.0.1a71".into())]),
+                ..integritee()
+            },
         )
         .unwrap();
         assert_eq!(a71.version.as_deref(), Some("v0.0.1a71"));
@@ -330,7 +327,6 @@ pub(crate) mod tests {
             POLICY_ID,
             &files(A70.cpu, A70.gpu),
             &integritee(),
-            None,
         )
         .unwrap();
         assert!(a70.signed_at < a71.signed_at);
@@ -353,67 +349,60 @@ pub(crate) mod tests {
             bytes: A71.cpu,
         }];
 
-        let cases: [(&str, &[ReleaseFile], Provenance, Option<&str>); 11] = [
+        let cases: [(&str, &[ReleaseFile], Provenance); 12] = [
+            ("tampered file", &files(&tampered, A71.gpu), integritee()),
+            ("swapped files", &files(A71.gpu, A71.cpu), integritee()),
+            ("omitted class", &[cpu_only], integritee()),
+            ("unsigned file", &unsigned, integritee()),
             (
-                "tampered file",
-                &files(&tampered, A71.gpu),
-                integritee(),
-                None,
-            ),
-            (
-                "swapped files",
-                &files(A71.gpu, A71.cpu),
-                integritee(),
-                None,
-            ),
-            ("omitted class", &[cpu_only], integritee(), None),
-            ("unsigned file", &unsigned, integritee(), None),
-            (
-                "wrong pin",
+                "wrong predicate claim",
                 &files(A71.cpu, A71.gpu),
-                integritee(),
-                Some("v0.0.1a70"),
+                with(|p| {
+                    p.predicate_claims
+                        .insert("version".into(), "v0.0.1a70".into());
+                }),
+            ),
+            (
+                "missing predicate claim",
+                &files(A71.cpu, A71.gpu),
+                with(|p| {
+                    p.predicate_claims.insert("channel".into(), "stable".into());
+                }),
             ),
             (
                 "wrong repo",
                 &files(A71.cpu, A71.gpu),
                 with(|p| p.repo = "cohere-ai/other".into()),
-                None,
             ),
             (
                 "wrong workflow",
                 &files(A71.cpu, A71.gpu),
                 with(|p| p.signer_workflow = ".github/workflows/other.yaml".into()),
-                None,
             ),
             (
                 "wrong ref",
                 &files(A71.cpu, A71.gpu),
                 with(|p| p.source_ref = "refs/heads/dev".into()),
-                None,
             ),
             (
                 "wrong predicate",
                 &files(A71.cpu, A71.gpu),
                 with(|p| p.predicate_type = "https://example.com/v1".into()),
-                None,
             ),
             (
                 "wrong environment",
                 &files(A71.cpu, A71.gpu),
                 with(|p| p.environment = Some("staging".into())),
-                None,
             ),
             (
                 "other release's files",
                 &files(A70.cpu, A70.gpu),
                 integritee(),
-                None,
             ),
         ];
-        for (case, files, provenance, pin) in cases {
+        for (case, files, provenance) in cases {
             assert!(
-                verify(&root, A71.bundle, POLICY_ID, files, &provenance, pin).is_err(),
+                verify(&root, A71.bundle, POLICY_ID, files, &provenance).is_err(),
                 "{case} should be rejected"
             );
         }
