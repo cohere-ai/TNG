@@ -483,13 +483,9 @@ pub const DEFAULT_POLICY_DIR: &str = "/etc/tng/policies";
 pub struct PolicySourceArgs {
     /// https prefix the release files are fetched from, e.g. `.../releases/latest/download`
     pub url: String,
-    /// Seconds between checks for a newer release
+    /// Seconds between checks for a newer release. 0 to fetch once at startup only.
     #[serde(default = "default_refresh_interval")]
     pub refresh_interval: u64,
-    /// `version` the release must declare. Set for a URL naming one release, which is then
-    /// fetched once and never refreshed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub version: Option<String>,
     pub provenance: rats_cert::tee::coco::converter::builtin::provenance::Provenance,
 }
 
@@ -507,8 +503,6 @@ impl PolicySourceArgs {
         let p = &self.provenance;
         let problem = if url.scheme() != "https" {
             "'url' must be https"
-        } else if self.refresh_interval == 0 {
-            "'refresh_interval' must be positive"
         } else if [
             &p.repo,
             &p.signer_workflow,

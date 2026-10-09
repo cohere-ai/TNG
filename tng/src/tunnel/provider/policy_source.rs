@@ -62,10 +62,10 @@ impl PolicySource {
         Ok((release.policies, installed))
     }
 
-    /// Checks for a newer release every `refresh_interval` until `converter` is dropped. A pinned
-    /// `version` names one release, so there is nothing to check for.
+    /// Checks for a newer release every `refresh_interval` until `converter` is dropped, or never
+    /// if it is 0.
     pub fn keep_current(self, mut installed: Installed, converter: &Arc<CocoBuiltinConverter>) {
-        if self.args.version.is_some() {
+        if self.args.refresh_interval == 0 {
             return;
         }
         let converter: Weak<_> = Arc::downgrade(converter);
@@ -144,7 +144,6 @@ impl PolicySource {
             &self.policy_id,
             &files,
             &self.args.provenance,
-            self.args.version.as_deref(),
         )?;
         Ok(Some((digest, release)))
     }
