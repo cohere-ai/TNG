@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 
 #[cfg(unix)]
 use crate::config::ra::AttestArgs;
@@ -14,11 +14,23 @@ use crate::config::ra::AttestArgs;
 use crate::config::ra::VerifierArgs;
 use crate::config::ra::{RaArgs, VerifyArgs};
 #[cfg(unix)]
-use crate::tunnel::attestation_exchange::PassportEvidenceCache;
-#[cfg(unix)]
 use crate::tunnel::attestation_metrics::AttestationMetrics;
+use rats_cert::tee::claims::Claims;
 #[cfg(unix)]
-use crate::tunnel::utils::maybe_cached::RefreshStrategy;
+use rats_cert::tee::{AttesterPipeline, GenericAttester};
+use rats_cert::tee::{GenericConverter, GenericVerifier, ReportData};
+
+#[cfg(unix)]
+use crate::tunnel::attest::{with_retry, Attester, Prepared};
+use crate::tunnel::attest::{ChallengeSource, Model, Proposer, Verifier};
+use crate::tunnel::attestation_result::AttestationResult;
+use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
+#[cfg(unix)]
+use crate::tunnel::utils::maybe_cached::{Expire, RefreshStrategy};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+#[cfg(unix)]
+use std::time::{Duration, SystemTime};
 
 #[cfg(unix)]
 use crate::tunnel::provider::{create_attester, TngAttester};
@@ -34,13 +46,13 @@ pub enum RaContext {
     AttestOnly(Arc<AttestContext>),
 
     /// Verify only mode - server verifies client
-    VerifyOnly(Arc<VerifyContext>),
+    VerifyOnly(Arc<VerifyContextSet>),
 
     /// Both attest and verify
     #[cfg(unix)]
     AttestAndVerify {
         attest: Arc<AttestContext>,
-        verify: Arc<VerifyContext>,
+        verify: Arc<VerifyContextSet>,
     },
 
     /// No remote attestation
@@ -79,22 +91,21 @@ impl RaContext {
     ) -> Result<Self> {
         match ra_args {
             RaArgs::NoRa => Ok(Self::NoRa),
-            RaArgs::VerifyOnly(verify_args) => {
-                #[cfg(unix)]
-                let verify =
-                    VerifyContext::from_verify_args_with_metrics(verify_args, attestation_metrics)
-                        .await?;
-                #[cfg(not(unix))]
-                let verify = VerifyContext::from_verify_args(verify_args).await?;
-                Ok(Self::VerifyOnly(Arc::new(verify)))
-            }
+            RaArgs::VerifyOnly(verify_list) => Ok(Self::VerifyOnly(Arc::new(
+                VerifyContextSet::new(
+                    verify_list,
+                    #[cfg(unix)]
+                    attestation_metrics,
+                )
+                .await?,
+            ))),
             #[cfg(unix)]
             RaArgs::AttestOnly(attest_args) => Ok(Self::AttestOnly(Arc::new(
                 AttestContext::from_attest_args_with_metrics(attest_args, attestation_metrics)
                     .await?,
             ))),
             #[cfg(unix)]
-            RaArgs::AttestAndVerify(attest_args, verify_args) => Ok(Self::AttestAndVerify {
+            RaArgs::AttestAndVerify(attest_args, verify_list) => Ok(Self::AttestAndVerify {
                 attest: Arc::new(
                     AttestContext::from_attest_args_with_metrics(
                         attest_args,
@@ -102,26 +113,23 @@ impl RaContext {
                     )
                     .await?,
                 ),
-                verify: Arc::new(
-                    VerifyContext::from_verify_args_with_metrics(verify_args, attestation_metrics)
-                        .await?,
-                ),
+                verify: Arc::new(VerifyContextSet::new(verify_list, attestation_metrics).await?),
             }),
         }
     }
 
     #[cfg(unix)]
     pub fn attestation_metrics(&self) -> Option<&AttestationMetrics> {
-        self.verify_context()
-            .map(VerifyContext::attestation_metrics)
+        self.verify_ctx_set()
+            .map(VerifyContextSet::attestation_metrics)
             .or_else(|| {
                 self.attest_context()
                     .map(AttestContext::attestation_metrics)
             })
     }
 
-    /// Get verify context if available
-    pub fn verify_context(&self) -> Option<&VerifyContext> {
+    /// Get the verifiers if this side verifies its peer
+    pub fn verify_ctx_set(&self) -> Option<&VerifyContextSet> {
         match self {
             Self::VerifyOnly(verify) => Some(verify),
             #[cfg(unix)]
@@ -141,6 +149,159 @@ impl RaContext {
     }
 }
 
+/// The configured `VerifyContext`s, keyed by the `(model, provider)` a peer answers with.
+pub struct VerifyContextSet {
+    entries: Vec<VerifyContext>,
+    #[cfg(unix)]
+    metrics: AttestationMetrics,
+}
+
+impl std::fmt::Debug for VerifyContextSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(self.entries.iter().map(VerifyContext::key))
+            .finish()
+    }
+}
+
+impl VerifyContextSet {
+    pub async fn new(
+        verify_list: &[VerifyArgs],
+        #[cfg(unix)] metrics: AttestationMetrics,
+    ) -> Result<Self> {
+        let mut entries = Vec::with_capacity(verify_list.len());
+        for verify_args in verify_list {
+            entries.push(VerifyContext::from_verify_args(verify_args).await?);
+        }
+        check_keys_unique(&entries)?;
+        Ok(Self {
+            entries,
+            #[cfg(unix)]
+            metrics,
+        })
+    }
+
+    #[cfg(unix)]
+    pub fn attestation_metrics(&self) -> &AttestationMetrics {
+        &self.metrics
+    }
+
+    pub fn verifiers(&self) -> Vec<&dyn Verifier> {
+        self.entries
+            .iter()
+            .map(|entry| entry as &dyn Verifier)
+            .collect()
+    }
+
+    /// Each verifier's provider, with the nonce source a background check proposes from.
+    pub fn proposers(&self) -> Vec<Proposer<'_>> {
+        self.entries
+            .iter()
+            .map(|entry| match entry {
+                VerifyContext::Passport { verifier } => (verifier.provider_type(), None),
+                VerifyContext::BackgroundCheck { converter, .. } => (
+                    converter.provider_type(),
+                    Some(converter as &dyn ChallengeSource),
+                ),
+            })
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl Verifier for VerifyContext {
+    fn key(&self) -> (Model, ProviderType) {
+        VerifyContext::key(self)
+    }
+
+    async fn verify_evidence(
+        &self,
+        evidence: &serde_json::Value,
+        expected: Claims,
+    ) -> Result<AttestationResult> {
+        tracing::debug!("Verifying attestation evidence");
+
+        let Self::BackgroundCheck {
+            converter,
+            verifier,
+        } = self
+        else {
+            anyhow::bail!("a passport verifier cannot check evidence");
+        };
+        let evidence =
+            TngEvidence::deserialize_from_json(converter.provider_type(), evidence.clone())
+                .context("failed to parse evidence JSON")?;
+        let token = converter
+            .convert(&evidence)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to convert evidence to token: {:?}", e))?;
+        verifier
+            .verify_evidence(&token, &ReportData::Claims(expected))
+            .await
+            .map_err(|e| anyhow::anyhow!("Token verification failed: {:?}", e))?;
+
+        tracing::debug!("attestation evidence verify finished successfully");
+        Ok(AttestationResult::from_token(Model::BackgroundCheck, token))
+    }
+
+    async fn verify_token(&self, jwt: &str, expected: Claims) -> Result<AttestationResult> {
+        tracing::debug!("Verifying attestation token");
+
+        let Self::Passport { verifier } = self else {
+            anyhow::bail!("a background-check verifier cannot check a token");
+        };
+        let token = TngToken::from_wire(verifier.provider_type(), jwt.to_owned())
+            .context("failed to parse attestation token")?;
+        verifier
+            .verify_evidence(&token, &ReportData::Claims(expected))
+            .await
+            .map_err(|e| anyhow::anyhow!("Token verification failed: {:?}", e))?;
+
+        tracing::debug!("attestation token verify finished successfully");
+        Ok(AttestationResult::from_token(Model::Passport, token))
+    }
+}
+
+fn check_keys_unique(entries: &[VerifyContext]) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for (model, provider) in entries.iter().map(VerifyContext::key) {
+        if !seen.insert((model, provider)) {
+            let builtin_note = if provider == ProviderType::Coco {
+                " Note that 'coco_builtin' counts as provider 'coco', because the peer's evidence comes from a CoCo attestation agent either way."
+            } else {
+                ""
+            };
+            bail!(
+                "Two 'verify' entries accept '{model}' attestation from provider '{provider}'. A peer only names the model and provider it used, so at most one entry may accept each pair; put several policies or trust anchors in one entry instead.{builtin_note}"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Delay before minting again after a failed passport mint: 1s, doubling up to `cap`, and reset by
+/// a successful mint.
+#[cfg(unix)]
+#[derive(Debug, Default)]
+pub struct MintBackoff(AtomicU64);
+
+#[cfg(unix)]
+impl MintBackoff {
+    fn succeeded(&self) {
+        self.0.store(0, AtomicOrdering::Relaxed);
+    }
+
+    fn failed(&self, cap_secs: u64) -> Duration {
+        let delay = self
+            .0
+            .load(AtomicOrdering::Relaxed)
+            .clamp(1, cap_secs.max(1));
+        self.0
+            .store(delay.saturating_mul(2), AtomicOrdering::Relaxed);
+        Duration::from_secs(delay)
+    }
+}
+
 /// Pre-instantiated attestation context
 ///
 /// Holds attester and converter instances for server attestation.
@@ -154,7 +315,7 @@ pub enum AttestContext {
         refresh_strategy: RefreshStrategy,
         max_retries: usize,
         metrics: AttestationMetrics,
-        passport_cache: PassportEvidenceCache,
+        mint_backoff: MintBackoff,
     },
 
     /// Background check mode - just attest via AA (client verifies)
@@ -191,7 +352,7 @@ impl AttestContext {
                     refresh_strategy: attest_args.refresh_strategy(),
                     max_retries: attest_args.max_retries(),
                     metrics,
-                    passport_cache: PassportEvidenceCache::new(),
+                    mint_backoff: MintBackoff::default(),
                 })
             }
             AttestArgs::BackgroundCheck {
@@ -222,6 +383,67 @@ impl AttestContext {
         }
     }
 
+    /// Attest ahead of requests to the key `passport_claims` binds. Called by the transport
+    /// whenever it rebuilds its key snapshot; background check has nothing to prepare.
+    ///
+    /// Returns the prepared value and when the snapshot should be rebuilt. A failed mint still
+    /// returns, so the key is published without a token and rebuilt after a [`MintBackoff`].
+    pub async fn prepare(
+        &self,
+        passport_claims: impl Fn(&str) -> Result<Claims>,
+    ) -> (Prepared, Expire) {
+        match self {
+            Self::BackgroundCheck { .. } => (Prepared::default(), Expire::NoExpire),
+            Self::Passport {
+                attester,
+                converter,
+                refresh_strategy,
+                max_retries,
+                mint_backoff,
+                ..
+            } => {
+                // A fresh nonce from this side's own attestation service on every attempt.
+                let pipeline = AttesterPipeline::new(attester, converter);
+                let minted = with_retry(*max_retries, || async {
+                    let nonce = ChallengeSource::get_nonce(converter).await?;
+                    pipeline
+                        .get_evidence(&ReportData::Claims(passport_claims(&nonce)?))
+                        .await
+                        .map_err(|error| anyhow::anyhow!("attester failed: {error}"))
+                })
+                .await
+                .and_then(|token| {
+                    let prepared = Prepared::new(token);
+                    let expire = prepared.expire()?;
+                    Ok((prepared, expire))
+                });
+                match minted {
+                    Ok(minted) => {
+                        mint_backoff.succeeded();
+                        minted
+                    }
+                    Err(error) => {
+                        let delay = match refresh_strategy {
+                            RefreshStrategy::Periodically { interval } => {
+                                Some(mint_backoff.failed(*interval))
+                            }
+                            RefreshStrategy::Always => None,
+                        };
+                        tracing::error!(
+                            ?error,
+                            ?delay,
+                            "Failed to mint the passport token, publishing the key without it"
+                        );
+                        let retry = delay
+                            .and_then(|delay| SystemTime::now().checked_add(delay))
+                            .map_or(Expire::NoExpire, Expire::ExpireAt);
+                        (Prepared::default(), retry)
+                    }
+                }
+            }
+        }
+    }
+
     /// Get refresh strategy for caching
     pub fn refresh_strategy(&self) -> RefreshStrategy {
         match self {
@@ -243,22 +465,48 @@ impl AttestContext {
     }
 }
 
+#[cfg(unix)]
+#[async_trait::async_trait]
+impl Attester for AttestContext {
+    fn key(&self) -> (Model, ProviderType) {
+        match self {
+            Self::Passport { converter, .. } => (Model::Passport, converter.provider_type()),
+            Self::BackgroundCheck { attester, .. } => {
+                (Model::BackgroundCheck, attester.provider_type())
+            }
+        }
+    }
+
+    async fn produce_evidence(&self, claims: Claims) -> Result<serde_json::Value> {
+        let Self::BackgroundCheck {
+            attester,
+            max_retries,
+            ..
+        } = self
+        else {
+            bail!("a passport attester produces no evidence per request");
+        };
+        with_retry(*max_retries, || async {
+            let evidence = attester
+                .get_evidence(&ReportData::Claims(claims.clone()))
+                .await
+                .map_err(|error| anyhow::anyhow!("attester failed: {error}"))?;
+            Ok(evidence.serialize_to_json()?)
+        })
+        .await
+    }
+}
+
 /// Pre-instantiated verification context
 ///
 /// Holds components needed for verifying client attestation.
 pub enum VerifyContext {
     /// Passport mode - verify token from remote AS
-    Passport {
-        verifier: TngVerifier,
-        #[cfg(unix)]
-        metrics: AttestationMetrics,
-    },
+    Passport { verifier: TngVerifier },
     /// Background check - convert evidence via remote AS, then verify
     BackgroundCheck {
         converter: TngConverter,
         verifier: TngVerifier,
-        #[cfg(unix)]
-        metrics: AttestationMetrics,
     },
 }
 
@@ -278,39 +526,12 @@ impl std::fmt::Debug for VerifyContext {
 impl VerifyContext {
     /// Create verification context from VerifyArgs configuration
     pub async fn from_verify_args(verify_args: &VerifyArgs) -> Result<Self> {
-        #[cfg(unix)]
-        {
-            Self::from_verify_args_with_metrics(verify_args, AttestationMetrics::noop()).await
-        }
-        #[cfg(not(unix))]
-        {
-            Self::from_verify_args_inner(verify_args).await
-        }
-    }
-
-    #[cfg(unix)]
-    pub async fn from_verify_args_with_metrics(
-        verify_args: &VerifyArgs,
-        metrics: AttestationMetrics,
-    ) -> Result<Self> {
-        Self::from_verify_args_inner(verify_args, metrics).await
-    }
-
-    async fn from_verify_args_inner(
-        verify_args: &VerifyArgs,
-        #[cfg(unix)] metrics: AttestationMetrics,
-    ) -> Result<Self> {
         match verify_args {
             VerifyArgs::Passport {
                 verifier: verifier_args,
-            } => {
-                let verifier = create_verifier(verifier_args).await?;
-                Ok(Self::Passport {
-                    verifier,
-                    #[cfg(unix)]
-                    metrics,
-                })
-            }
+            } => Ok(Self::Passport {
+                verifier: create_verifier(verifier_args).await?,
+            }),
             VerifyArgs::BackgroundCheck {
                 converter: converter_args,
                 verifier: verifier_args,
@@ -331,8 +552,6 @@ impl VerifyContext {
                     return Ok(Self::BackgroundCheck {
                         verifier: TngVerifier::CocoBuiltin(builtin.new_verifier().await?),
                         converter,
-                        #[cfg(unix)]
-                        metrics,
                     });
                 }
 
@@ -340,17 +559,17 @@ impl VerifyContext {
                 Ok(Self::BackgroundCheck {
                     converter,
                     verifier,
-                    #[cfg(unix)]
-                    metrics,
                 })
             }
         }
     }
 
-    #[cfg(unix)]
-    pub fn attestation_metrics(&self) -> &AttestationMetrics {
+    pub fn key(&self) -> (Model, ProviderType) {
         match self {
-            Self::Passport { metrics, .. } | Self::BackgroundCheck { metrics, .. } => metrics,
+            Self::Passport { verifier } => (Model::Passport, verifier.provider_type()),
+            Self::BackgroundCheck { converter, .. } => {
+                (Model::BackgroundCheck, converter.provider_type())
+            }
         }
     }
 }
@@ -363,6 +582,16 @@ mod tests {
         VerifierArgs,
     };
     use std::collections::HashMap;
+
+    #[cfg(unix)]
+    #[test]
+    fn mint_backoff_doubles_up_to_the_cap_and_resets() {
+        let backoff = MintBackoff::default();
+        let delays: Vec<u64> = (0..5).map(|_| backoff.failed(5).as_secs()).collect();
+        assert_eq!(delays, [1, 2, 4, 5, 5]);
+        backoff.succeeded();
+        assert_eq!(backoff.failed(5).as_secs(), 1);
+    }
 
     // =========================================================================
     // Test Constants
@@ -410,7 +639,6 @@ mod tests {
         })
     }
 
-    #[allow(dead_code)]
     fn make_verify_passport_args() -> VerifyArgs {
         VerifyArgs::Passport {
             verifier: make_verifier_args_with_addr(),
@@ -436,7 +664,7 @@ mod tests {
             std::mem::discriminant(&ctx)
         );
         assert!(
-            ctx.verify_context().is_none(),
+            ctx.verify_ctx_set().is_none(),
             "NoRa should have no verify context"
         );
     }
@@ -448,7 +676,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_ra_context_verify_only_passport() {
         let verify_args = make_verify_passport_args();
-        let ra_args = RaArgs::VerifyOnly(verify_args);
+        let ra_args = RaArgs::VerifyOnly(vec![verify_args]);
         let result = RaContext::from_ra_args(&ra_args).await;
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let ctx = result.unwrap();
@@ -457,7 +685,7 @@ mod tests {
             "Expected VerifyOnly variant"
         );
         assert!(
-            ctx.verify_context().is_some(),
+            ctx.verify_ctx_set().is_some(),
             "VerifyOnly should have verify context"
         );
     }
@@ -465,7 +693,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_ra_context_verify_only_background_check() {
         let verify_args = make_verify_bgcheck_args();
-        let ra_args = RaArgs::VerifyOnly(verify_args);
+        let ra_args = RaArgs::VerifyOnly(vec![verify_args]);
         let result = RaContext::from_ra_args(&ra_args).await;
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let ctx = result.unwrap();
@@ -474,9 +702,29 @@ mod tests {
             "Expected VerifyOnly variant"
         );
         assert!(
-            ctx.verify_context().is_some(),
+            ctx.verify_ctx_set().is_some(),
             "VerifyOnly should have verify context"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn duplicate_verify_keys_are_rejected() {
+        let result = RaContext::from_ra_args(&RaArgs::VerifyOnly(vec![
+            make_verify_bgcheck_args(),
+            make_verify_bgcheck_args(),
+        ]))
+        .await;
+        let message = result
+            .err()
+            .expect("duplicate verify keys should be rejected")
+            .to_string();
+        assert!(
+            message.contains(
+                "Two 'verify' entries accept 'background_check' attestation from provider 'coco'"
+            ),
+            "{message}"
+        );
+        assert!(message.contains("coco_builtin"), "{message}");
     }
 
     // =========================================================================
@@ -486,12 +734,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_accessor_verify_only() {
         let verify_args = make_verify_bgcheck_args();
-        let ra_args = RaArgs::VerifyOnly(verify_args);
+        let ra_args = RaArgs::VerifyOnly(vec![verify_args]);
         let result = RaContext::from_ra_args(&ra_args).await;
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let ctx = result.unwrap();
         assert!(
-            ctx.verify_context().is_some(),
+            ctx.verify_ctx_set().is_some(),
             "VerifyOnly should have verify context"
         );
     }
@@ -597,7 +845,7 @@ mod tests {
         async fn test_ra_context_two_way_passport_passport() {
             let attest_args = make_attest_passport_args();
             let verify_args = make_verify_passport_args();
-            let ra_args = RaArgs::AttestAndVerify(attest_args, verify_args);
+            let ra_args = RaArgs::AttestAndVerify(attest_args, vec![verify_args]);
             let result = RaContext::from_ra_args(&ra_args).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
@@ -606,7 +854,7 @@ mod tests {
                 "Expected AttestAndVerify variant"
             );
             assert!(
-                ctx.verify_context().is_some(),
+                ctx.verify_ctx_set().is_some(),
                 "AttestAndVerify should have verify context"
             );
             assert!(
@@ -619,7 +867,7 @@ mod tests {
         async fn test_ra_context_two_way_bgcheck_bgcheck() {
             let attest_args = make_attest_bgcheck_args();
             let verify_args = make_verify_bgcheck_args();
-            let ra_args = RaArgs::AttestAndVerify(attest_args, verify_args);
+            let ra_args = RaArgs::AttestAndVerify(attest_args, vec![verify_args]);
             let result = RaContext::from_ra_args(&ra_args).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
@@ -628,7 +876,7 @@ mod tests {
                 "Expected AttestAndVerify variant"
             );
             assert!(
-                ctx.verify_context().is_some(),
+                ctx.verify_ctx_set().is_some(),
                 "AttestAndVerify should have verify context"
             );
             assert!(
@@ -641,7 +889,7 @@ mod tests {
         async fn test_ra_context_two_way_bgcheck_passport() {
             let attest_args = make_attest_bgcheck_args();
             let verify_args = make_verify_passport_args();
-            let ra_args = RaArgs::AttestAndVerify(attest_args, verify_args);
+            let ra_args = RaArgs::AttestAndVerify(attest_args, vec![verify_args]);
             let result = RaContext::from_ra_args(&ra_args).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
@@ -650,7 +898,7 @@ mod tests {
                 "Expected AttestAndVerify variant"
             );
             assert!(
-                ctx.verify_context().is_some(),
+                ctx.verify_ctx_set().is_some(),
                 "AttestAndVerify should have verify context"
             );
             assert!(
@@ -671,7 +919,7 @@ mod tests {
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
-                ctx.verify_context().is_none(),
+                ctx.verify_ctx_set().is_none(),
                 "AttestOnly should have no verify context"
             );
             assert!(
@@ -684,12 +932,12 @@ mod tests {
         async fn test_accessor_attest_and_verify() {
             let attest_args = make_attest_bgcheck_args();
             let verify_args = make_verify_bgcheck_args();
-            let ra_args = RaArgs::AttestAndVerify(attest_args, verify_args);
+            let ra_args = RaArgs::AttestAndVerify(attest_args, vec![verify_args]);
             let result = RaContext::from_ra_args(&ra_args).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
-                ctx.verify_context().is_some(),
+                ctx.verify_ctx_set().is_some(),
                 "AttestAndVerify should have verify context"
             );
             assert!(

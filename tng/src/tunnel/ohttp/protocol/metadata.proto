@@ -2,18 +2,9 @@ syntax = "proto3";
 
 package tng.ohttp.metadata;
 
-// Metadata for encrypted requests, including client authentication method
-// and optional hints for server key selection.
+// Prefix of an encrypted OHTTP request. The ciphertext follows this message.
 message Metadata {
-  // Specifies the client authentication method used in this request.
-  oneof client_auth {
-    // No client authentication; the client is treated as anonymous.
-    NoAuth no_auth = 1;
-
-    // Client authenticates using a public key that has been attested by a
-    // trusted service.
-    AttestedPublicKey attested_public_key = 2;
-  }
+  reserved 1, 2;
 
   // Optional hint: provides a cryptographic identifier to help the server
   // locate the correct key configuration for decryption.
@@ -27,34 +18,6 @@ message Metadata {
   // matching one exists. If not present, the server may fall back to other
   // mechanisms (e.g., default key, ID-based lookup).
   ServerKeyConfigHint key_config_hint = 3;
-}
-
-// Indicates that no client authentication is performed.
-// The client is considered anonymous.
-message NoAuth {
-  // Empty message as there are no additional fields
-}
-
-// Represents client authentication via a public key that has been attested
-// (e.g., via Intel SGX, AMD SEV, etc.)
-//
-// This includes:
-// - The attestation evidence (e.g., JWT token from attestation service)
-// - The client's public key, used for key exchange or signing
-message AttestedPublicKey {
-  // The attestation result of the client, typically a JWT or CBOR token issued
-  // by an attestation service. This proves that the client is running in a
-  // trusted execution environment (TEE).
-  string attestation_result = 1;
-
-  // The client(sender)'s public key, encoded in binary format
-  // Used by the server to establish secure channel only.
-  bytes pk_s = 2;
-
-  // Which attestation-service / token provider produced `attestation_result`
-  // (same string values as OHTTP `as_provider`, e.g. "coco").
-  // Unset or empty means legacy clients that predate this field (CoCo only).
-  string as_provider = 3;
 }
 
 // Hint for the server to identify the key configuration needed to decrypt the

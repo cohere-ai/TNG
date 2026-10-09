@@ -38,6 +38,9 @@ impl TrustedStreamManager {
             bail!("The `web_page_inject` field is not supported")
         }
 
+        if common_args.ohttp.is_some() && common_args.ra_args.attest.is_some() {
+            bail!("'attest' is not supported with 'ohttp' on an ingress: client attestation over OHTTP is disabled, use 'rats_tls' instead (see the OHTTP section of docs/configuration.md)");
+        }
         let ra_args = common_args.ra_args.clone().into_checked()?;
         let ra_context =
             Arc::new(RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics).await?);
@@ -95,5 +98,40 @@ impl StreamManager for TrustedStreamManager {
         self.stream_forwarder
             .forward_stream(endpoint, downstream)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::tests::run_test_with_tokio_runtime;
+
+    #[tokio::test]
+    async fn attest_with_ohttp_is_rejected() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let common_args: CommonArgs = serde_json::from_value(json!({
+                "ohttp": {},
+                "attest": {"aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"}
+            }))?;
+            let Err(error) = TrustedStreamManager::new(
+                &common_args,
+                AttestationMetrics::noop(),
+                #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+                None,
+                runtime,
+            )
+            .await
+            else {
+                bail!("ingress started with 'attest' and 'ohttp'");
+            };
+            assert!(
+                error.to_string().contains("not supported with 'ohttp'"),
+                "{error:#}"
+            );
+            Ok(())
+        })
+        .await
     }
 }

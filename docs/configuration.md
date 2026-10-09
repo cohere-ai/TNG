@@ -19,7 +19,7 @@ The `Ingress` object is used to configure the ingress endpoints of the tng tunne
 - **`ohttp`** (OHttp, optional): OHTTP configuration.
 - **`no_ra`** (boolean, optional, default is `false`): Whether to disable remote attestation. Setting this option to `true` indicates that the tng uses a standard X.509 certificate for communication at this tunnel endpoint without triggering the remote attestation process. Please note that this certificate is a fixed, embedded P256 X509 self-signed certificate within the tng code and does not provide confidentiality, hence **this option is for debugging purposes only and should not be used in production environments**. This option cannot coexist with `attest` or `verify`. `NoRa` endpoints still exchange post-handshake role declarations with `rats_tls` peers.
 - **`attest`** (Attest, optional): If this field is specified, it indicates that the tng acts as an Attester at this tunnel endpoint.
-- **`verify`** (Verify, optional): If this field is specified, it indicates that the tng acts as a Verifier at this tunnel endpoint.
+- **`verify`** (Verify or array [Verify], optional): If this field is specified, it indicates that the tng acts as a Verifier at this tunnel endpoint. See [Multiple Verifiers](#multiple-verifiers) for the array form.
 
 ## IngressMode
 
@@ -348,7 +348,7 @@ Add egress endpoints of the tng tunnel in the `add_egress` array. Depending on t
 - **`ohttp`** (OHttp, optional): OHTTP configuration.
 - **`no_ra`** (boolean, optional, default is `false`): Whether to disable remote attestation. Setting this option to `true` indicates that the tng uses a standard X.509 certificate for communication at this tunnel endpoint without triggering the remote attestation process. Please note that this certificate is a fixed, embedded P256 X509 self-signed certificate within the tng code and does not provide confidentiality, hence **this option is for debugging purposes only and should not be used in production environments**. This option cannot coexist with `attest` or `verify`.
 - **`attest`** (Attest, optional): If this field is specified, it indicates that the tng acts as an Attester at this tunnel endpoint.
-- **`verify`** (Verify, optional): If this field is specified, it indicates that the tng acts as a Verifier at this tunnel endpoint.
+- **`verify`** (Verify or array [Verify], optional): If this field is specified, it indicates that the tng acts as a Verifier at this tunnel endpoint. See [Multiple Verifiers](#multiple-verifiers) for the array form.
 
 
 ### DirectForwardRule
@@ -500,6 +500,30 @@ In the TNG architecture, the Verifier can be part of the control plane or servic
 > **Current Implementation Notes**:  
 > For the **CoCo** provider, the Verifier relies on the [CoCo Attestation Service](https://github.com/confidential-containers/trustee/tree/main/attestation-service) to verify received Evidence. It provides a unified interface for parsing and verifying attestation data of different TEE types, and supports integration with the Trustee Server to achieve centralized policy management and root of trust distribution.  
 > For the **ITA** provider, the Verifier relies on the Intel Trust Authority attestation service (https://www.intel.com/content/www/us/en/security/trust-authority.html) to verify received Evidence. It can parse and verify attestation data for TDX Confidential VMs and Nvidia GPUs, and supports policy management and enforcement.
+
+#### Multiple Verifiers
+
+`verify` also accepts a list of verifier objects, so one endpoint can accept peers that attest in different ways. The verifier sends one attest proposal per configured `(model, provider)` pair. A proposal names that scheme and, for background check, carries a fresh nonce. The peer answers the one proposal that matches its own `attest` configuration, and that answer is checked by that entry only, so it must satisfy that entry's policies:
+
+```json
+"verify": [
+    {
+        "model": "background_check",
+        "as_provider": "coco_builtin",
+        "policy_ids": ["default"]
+    },
+    {
+        "model": "passport",
+        "as_provider": "ita",
+        "ita_jwks_addr": "https://portal.trustauthority.intel.com",
+        "policy_ids": ["<ita-policy-id>"]
+    }
+]
+```
+
+- Each `(model, provider)` pair may appear at most once, where `coco_builtin` counts as `coco`. An empty list is rejected.
+- A peer is accepted if it satisfies **any** entry, so the endpoint is only as strict as its weakest entry.
+- A peer with no matching entry fails with `no compatible attestation proposal`, and the peer's configuration is not disclosed.
 
 
 ## Attester and Verifier Combinations and Bidirectional Remote Attestation
@@ -748,7 +772,7 @@ In the Passport model, the [Attest](#attest) configuration should include the fo
 - **`model`** (string): Set to "passport" to enable the Passport model
 - **`aa_type`** (string, optional, defaults to "uds"): Attestation Agent type. Possible values: "uds"
 - **`aa_addr`** (string, required for "uds"): Attestation Agent unix socket address (e.g., "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock")
-- **`refresh_interval`** (int, optional, default value is 600): Specifies the frequency of obtaining attestation credentials (Attestation Token) from the Attestation Agent and Attestation Service (in seconds). If set to 0, it requests the latest Attestation Token each time a secure session is established. In Passport mode, on the `rats_tls` path this option now only affects TLS key-carrier certificate rotation, not evidence freshness. If communicating using the OHTTP protocol, this option affects the internal Attestation Token cache update frequency, but does not affect the OHTTP key rotation frequency.
+- **`refresh_interval`** (int, optional, default value is 600): Specifies the frequency of obtaining attestation credentials (Attestation Token) from the Attestation Agent and Attestation Service (in seconds). If set to 0, it requests the latest Attestation Token each time a secure session is established. On the `rats_tls` path this option sets the TLS key-carrier certificate rotation frequency, and a new Attestation Token is minted with each certificate. With OHTTP, it sets how often the cached Attestation Token is refreshed but not the OHTTP key rotation frequency; the token is also re-minted whenever a new OHTTP key becomes active. A cached token is always refreshed 30 seconds before it expires, even if this interval is longer. If minting fails, the key is published without a token and minting is retried with a backoff from 1 second up to this interval; until it succeeds, peers that verify are refused.
 - **`max_retries`** (int, optional, default value is 3): Maximum number of attestation retry attempts. In Passport mode this controls how many times the full attestation flow (evidence generation and passport conversion) is retried on failure before giving up. Set to 0 to disable retries.
 - **`as_type`** (string, optional, defaults to "restful"): Attestation Service type. Possible values: "restful", "grpc"
 - **`as_addr`** (string): Address of the Attestation Service
@@ -862,6 +886,9 @@ By default, TNG uses the rats-tls protocol to provide TCP stream-level encryptio
 
 > [!WARNING]  
 > If the OHTTP feature is enabled, the inner protected business must be HTTP traffic, not ordinary TCP traffic.
+
+> [!NOTE]
+> **OHTTP attestation is one way.** With `ohttp`, the ingress can `verify` the egress, and the egress can `attest`. An ingress `attest` or an egress `verify` is refused at startup. There is no client-attestation exchange on this protocol. Use `rats_tls` when the server must verify its clients. The `attest` and `verify` fields of `peer_shared` key distribution are unaffected.
 
 ### OHttp: Ingress Configuration
 
@@ -1228,7 +1255,7 @@ If you wish to enable this mode, simply specify `key.source = "peer_shared"` in 
     - **`join_retry_interval`** (`integer`, optional, default `5`): Fixed interval in seconds between retry-join attempts. Only used when `join_max_attempts` is not `1`. Must be greater than `0` when retries are enabled.
     - **`rats_tls_pool_ttl`** (`integer`, optional, default `600`): How long a pooled rats-tls session to a serf peer may be reused, in seconds. `0` disables reuse.
     - **`attest`** (object, optional): Defines how this node proves its identity when connecting to other nodes. See [Attest Configuration](#attest) section for detailed configuration.
-    - **`verify`** (object, optional): Defines how this node verifies the identity of remote peer nodes. See [Verify Configuration](#verify) section for detailed configuration.
+    - **`verify`** (object or array, optional): Defines how this node verifies the identity of remote peer nodes. See [Verify Configuration](#verify) section for detailed configuration.
     - **`no_ra`** (boolean, optional, default `false`): Whether to disable remote attestation functionality. When set to `true`, inter-node communication will not perform remote attestation verification.
 
 Example configuration:

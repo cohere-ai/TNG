@@ -22,6 +22,15 @@ class TestBuildConfig:
         assert cfg["verify"] is v
         assert "no_ra" not in cfg
 
+    def test_verify_list_passed_through(self):
+        v = [
+            {"model": "passport", "as_provider": "ita", "as_addr": "https://example.com"},
+            {"model": "passport", "as_addr": "https://coco.example.com"},
+        ]
+        cfg = _build_config(verify=v, ohttp=None)
+        assert cfg["verify"] is v
+        assert "no_ra" not in cfg
+
     def test_ohttp_defaults_to_empty(self):
         cfg = _build_config(verify=None, ohttp=None)
         assert cfg["ohttp"] == {}

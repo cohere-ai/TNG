@@ -19,35 +19,6 @@ impl ProviderType {
             Self::Ita => "ita",
         }
     }
-
-    /// Resolve optional `as_provider` / `aa_provider` from OHTTP JSON.
-    ///
-    /// `None` means payloads from before those additive fields existed; behavior matches
-    /// legacy CoCo-only clients.
-    pub fn from_optional_wire(opt: Option<Self>) -> Self {
-        opt.unwrap_or(Self::Coco)
-    }
-
-    /// Resolve optional provider from a protobuf string field (or similar).
-    ///
-    /// Empty or whitespace-only strings are treated like a missing field (legacy CoCo).
-    pub fn from_optional_wire_str(s: &str) -> anyhow::Result<Self> {
-        let s = s.trim();
-        if s.is_empty() {
-            Ok(Self::from_optional_wire(None))
-        } else {
-            s.parse()
-        }
-    }
-
-    /// RA-TLS exchange: empty or unknown provider is an error (no CoCo default).
-    pub fn from_required_wire_str(s: &str) -> anyhow::Result<Self> {
-        let s = s.trim();
-        if s.is_empty() {
-            anyhow::bail!("empty provider");
-        }
-        s.parse()
-    }
 }
 
 impl fmt::Display for ProviderType {
@@ -84,42 +55,6 @@ impl<'de> Deserialize<'de> for ProviderType {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn from_optional_wire_str_empty_is_legacy_coco() {
-        assert_eq!(
-            ProviderType::from_optional_wire_str("").unwrap(),
-            ProviderType::Coco
-        );
-    }
-
-    #[test]
-    fn from_optional_wire_str_parses_known() {
-        assert_eq!(
-            ProviderType::from_optional_wire_str("coco").unwrap(),
-            ProviderType::Coco
-        );
-        assert_eq!(
-            ProviderType::from_optional_wire_str("ita").unwrap(),
-            ProviderType::Ita
-        );
-    }
-
-    #[test]
-    fn from_optional_wire_str_rejects_unknown() {
-        assert!(ProviderType::from_optional_wire_str("notaprovider").is_err());
-    }
-
-    #[test]
-    fn from_required_wire_str_rejects_empty_and_unknown() {
-        assert!(ProviderType::from_required_wire_str("").is_err());
-        assert!(ProviderType::from_required_wire_str("   ").is_err());
-        assert!(ProviderType::from_required_wire_str("notaprovider").is_err());
-        assert_eq!(
-            ProviderType::from_required_wire_str("ita").unwrap(),
-            ProviderType::Ita
-        );
-    }
 
     #[test]
     fn serde_json_round_trip() {

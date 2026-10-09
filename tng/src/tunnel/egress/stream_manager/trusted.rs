@@ -19,7 +19,7 @@ use crate::{
     },
 };
 use anyhow::Context;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use async_stream::stream;
 use async_trait::async_trait;
 use futures::stream::BoxStream;
@@ -52,6 +52,9 @@ impl TrustedStreamManager {
         attestation_metrics: AttestationMetrics,
         runtime: TokioRuntime,
     ) -> Result<Self> {
+        if common_args.ohttp.is_some() && common_args.ra_args.verify.is_some() {
+            bail!("'verify' is not supported with 'ohttp' on an egress: verifying clients over OHTTP is disabled, use 'rats_tls' instead (see the OHTTP section of docs/configuration.md)");
+        }
         let ra_args = common_args.ra_args.clone().into_checked()?;
         let ra_context =
             Arc::new(RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics).await?);
@@ -103,5 +106,34 @@ impl StreamManager for TrustedStreamManager {
             }
             .boxed()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::tests::run_test_with_tokio_runtime;
+
+    #[tokio::test]
+    async fn verify_with_ohttp_is_rejected() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let common_args: CommonArgs = serde_json::from_value(json!({
+                "ohttp": {},
+                "verify": {"as_addr": "http://127.0.0.1:8080/", "policy_ids": ["default"]}
+            }))?;
+            let Err(error) =
+                TrustedStreamManager::new(&common_args, AttestationMetrics::noop(), runtime).await
+            else {
+                bail!("egress started with 'verify' and 'ohttp'");
+            };
+            assert!(
+                error.to_string().contains("not supported with 'ohttp'"),
+                "{error:#}"
+            );
+            Ok(())
+        })
+        .await
     }
 }

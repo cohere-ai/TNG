@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::tunnel::ra_context::{RaContext, VerifyContext};
+use crate::tunnel::ra_context::{RaContext, VerifyContextSet};
 use crate::tunnel::utils::{cert_manager::CertManager, runtime::TokioRuntime};
 use anyhow::{Context as _, Result};
 
@@ -30,9 +30,9 @@ impl RustlsDummyCert {
 
 pub enum TlsConfigGenerator {
     NoRa,
-    Verify(Arc<VerifyContext>),
+    Verify(Arc<VerifyContextSet>),
     Attest(Arc<super::cert_manager::CertManager>),
-    AttestAndVerify(Arc<super::cert_manager::CertManager>, Arc<VerifyContext>),
+    AttestAndVerify(Arc<super::cert_manager::CertManager>, Arc<VerifyContextSet>),
 }
 
 impl TlsConfigGenerator {

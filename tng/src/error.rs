@@ -10,7 +10,46 @@ use serde::{Deserialize, Serialize};
 use strum_macros::AsRefStr;
 use thiserror::Error;
 
+use crate::tunnel::attest::Model;
 use crate::tunnel::ohttp::key_config::PublicKeyData;
+use crate::tunnel::provider::ProviderType;
+
+/// Failure while answering an attestation request.
+///
+/// This is the `Err` arm of an [`crate::tunnel::attest::AttestResponse`], so a peer can match
+/// the variant. [`Self::Unavailable`] is an attester or claims failure. Every other variant is
+/// a request this side will not answer. Display text is for logs and HTTP bodies. It does not
+/// include the local configuration or the local error chain. OHTTP maps [`Self::Unavailable`]
+/// to HTTP 500 and the rest to HTTP 400.
+#[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttestError {
+    #[error("not configured to attest")]
+    NotConfigured,
+    #[error("no compatible attestation proposal")]
+    NoCompatibleProposal,
+    #[error("duplicate proposal for ({model}, {provider})")]
+    DuplicateProposal {
+        model: Model,
+        provider: ProviderType,
+    },
+    #[error("missing nonce")]
+    MissingNonce,
+    #[error("attestation unavailable")]
+    Unavailable,
+    #[error("malformed attestation proposal")]
+    Malformed,
+}
+
+impl From<AttestError> for TngError {
+    fn from(error: AttestError) -> Self {
+        let message = error.to_string();
+        match error {
+            AttestError::Unavailable => TngError::AttestationUnavailable(message),
+            _ => TngError::UnacceptableAttestRequest(message),
+        }
+    }
+}
 
 /// Custom error type
 #[derive(Error, Debug, AsRefStr)]
@@ -39,9 +78,6 @@ pub enum TngError {
     #[error("Failed to encode metadata")]
     MetadataEncodeError(#[source] prost::EncodeError),
 
-    #[error("Failed to validate metadata")]
-    MetadataValidateError(#[source] anyhow::Error),
-
     #[error("Not a valid http request")]
     InvalidHttpRequest,
 
@@ -57,20 +93,16 @@ pub enum TngError {
     #[error("Got bad response during forwarding HTTP cipher text to upstream")]
     HttpCipherTextBadResponse(#[source] anyhow::Error),
 
-    #[error("Failed to get attestation challenge from server")]
-    ClientGetAttestationChallengeFaild(#[source] anyhow::Error),
-
-    #[error("Failed to get client background check result from server")]
-    ClientGetBackgroundCheckResultFaild(#[source] anyhow::Error),
-
-    #[error("Failed to get challenge token for client")]
-    ServerVerifyClientGetChallengeTokenFailed(#[source] anyhow::Error),
-
-    #[error("Failed to verify client evidence")]
-    ServerVerifyClientEvidenceFailed(#[source] anyhow::Error),
-
     #[error("Failed to request key config from ohttp server")]
     RequestKeyConfigFailed(#[source] anyhow::Error),
+
+    /// The key-config `attest_request` cannot be answered.
+    #[error("{0}")]
+    UnacceptableAttestRequest(String),
+
+    /// The key-config request was acceptable and producing attestation failed.
+    #[error("{0}")]
+    AttestationUnavailable(String),
 
     #[error("Failed to connect to upstream")]
     ConnectUpstreamFailed,
@@ -157,6 +189,7 @@ impl IntoResponse for TngError {
             TngError::InvalidHttpResponse => StatusCode::BAD_REQUEST,
             TngError::InvalidOHttpRequest(..) => StatusCode::BAD_REQUEST,
             TngError::InvalidOHttpResponse(..) => StatusCode::BAD_REQUEST,
+            TngError::UnacceptableAttestRequest(..) => StatusCode::BAD_REQUEST,
 
             // Validation / Decode errors → 400 Bad Request
             TngError::Base64DecodeError(..) => StatusCode::BAD_REQUEST,
@@ -199,12 +232,8 @@ impl IntoResponse for TngError {
             TngError::SystemTimeError(..)
             | TngError::OhttpError(..)
             | TngError::BhttpError(..)
-            | TngError::MetadataValidateError(..)
-            | TngError::ClientGetAttestationChallengeFaild(..)
-            | TngError::ClientGetBackgroundCheckResultFaild(..)
-            | TngError::ServerVerifyClientGetChallengeTokenFailed(..)
-            | TngError::ServerVerifyClientEvidenceFailed(..)
             | TngError::RequestKeyConfigFailed(..)
+            | TngError::AttestationUnavailable(..)
             | TngError::ClientSelectHpkeConfigurationFailed(..)
             | TngError::GenServerHpkeConfigurationResponseFailed(..)
             | TngError::CreateOHttpClientFailed(..)
@@ -275,5 +304,24 @@ async fn check_error_response(
         }
     } else {
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    use super::*;
+
+    #[test]
+    fn key_config_attest_failures_use_http_status() {
+        let unacceptable =
+            TngError::UnacceptableAttestRequest("missing nonce".into()).into_response();
+        assert_eq!(unacceptable.status(), StatusCode::BAD_REQUEST);
+
+        let unavailable =
+            TngError::AttestationUnavailable("attestation unavailable".into()).into_response();
+        assert_eq!(unavailable.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

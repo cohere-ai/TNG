@@ -1,12 +1,13 @@
-use again::RetryPolicy;
 use anyhow::{Context as _, Result};
 use rats_cert::{
     cert::create::generate_key_carrier_cert,
     crypto::{AsymmetricAlgo, HashAlgo},
 };
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{pin::Pin, sync::Arc};
 
 use crate::{
+    tunnel::attest::Prepared,
+    tunnel::attestation_exchange::{exporter::spki_from_certified_key, passport_attester_claims},
     tunnel::ra_context::AttestContext,
     tunnel::utils::{
         maybe_cached::{Expire, MaybeCached},
@@ -14,8 +15,14 @@ use crate::{
     },
 };
 
+/// A certificate and what this side attests with for it, rotated together.
+pub struct AttestedKey {
+    pub cert: rustls::sign::CertifiedKey,
+    pub prepared: Prepared,
+}
+
 pub struct CertManager {
-    cert: MaybeCached<rustls::sign::CertifiedKey, anyhow::Error>,
+    cert: MaybeCached<AttestedKey, anyhow::Error>,
 }
 
 impl CertManager {
@@ -24,30 +31,18 @@ impl CertManager {
 
         let cert = MaybeCached::new(runtime, refresh_strategy, move || {
             let attest_ctx = attest_ctx.clone();
-            Box::pin(async move { Self::fetch_new_cert(&attest_ctx).await }) as Pin<Box<_>>
+            Box::pin(async move {
+                Self::fetch_new_cert(&attest_ctx)
+                    .await
+                    .context("Failed to generate new cert")
+            }) as Pin<Box<_>>
         })
         .await?;
 
         Ok(Self { cert })
     }
 
-    async fn fetch_new_cert(
-        attest_ctx: &AttestContext,
-    ) -> Result<(rustls::sign::CertifiedKey, Expire)> {
-        let retry_policy =
-            RetryPolicy::fixed(Duration::from_secs(1)).with_max_retries(attest_ctx.max_retries());
-        retry_policy
-            .retry(|| async {
-                Self::fetch_new_cert_inner(attest_ctx)
-                    .await
-                    .context("Failed to generate new cert")
-            })
-            .await
-    }
-
-    async fn fetch_new_cert_inner(
-        _attest_ctx: &AttestContext,
-    ) -> Result<(rustls::sign::CertifiedKey, Expire)> {
+    async fn fetch_new_cert(attest_ctx: &AttestContext) -> Result<(AttestedKey, Expire)> {
         tracing::debug!("Generate new rats-tls key-carrier certificate");
 
         let (der_cert, privkey, not_after) = generate_key_carrier_cert(
@@ -55,7 +50,6 @@ impl CertManager {
             HashAlgo::Sha256,
             AsymmetricAlgo::P256,
         )?;
-        let expired = Expire::ExpireAt(not_after);
 
         let crypto_provider = rustls::crypto::CryptoProvider::get_default()
             .context("rustls crypto provider not installed")?;
@@ -66,16 +60,28 @@ impl CertManager {
                     .context("No private key found")?,
             )?,
         );
-        Ok((certified_key, expired))
+
+        let spki = spki_from_certified_key(&certified_key)?;
+        let (prepared, prepared_expire) = attest_ctx
+            .prepare(|nonce| passport_attester_claims(&spki, nonce))
+            .await;
+        let expire = std::cmp::min(Expire::ExpireAt(not_after), prepared_expire);
+        Ok((
+            AttestedKey {
+                cert: certified_key,
+                prepared,
+            },
+            expire,
+        ))
     }
 
-    pub async fn get_latest_cert(&self) -> Result<Arc<rustls::sign::CertifiedKey>> {
+    pub async fn get_latest_cert(&self) -> Result<Arc<AttestedKey>> {
         self.cert.get_latest().await
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use anyhow::bail;
 
     use crate::{
@@ -85,7 +91,7 @@ mod tests {
 
     use super::*;
 
-    fn dummy_aa() -> (String, std::os::unix::net::UnixListener) {
+    pub(crate) fn dummy_aa() -> (String, std::os::unix::net::UnixListener) {
         let path = std::env::temp_dir().join(format!(
             "tng-aa-{}-{}.sock",
             std::process::id(),
@@ -194,8 +200,8 @@ mod tests {
             .await?;
             let cert_manager = CertManager::new(Arc::new(attest_ctx), runtime).await?;
 
-            let certified_key = cert_manager.get_latest_cert().await?;
-            let cert_der = certified_key.cert.first().expect("cert chain is empty");
+            let attested_key = cert_manager.get_latest_cert().await?;
+            let cert_der = attested_key.cert.cert.first().expect("cert chain is empty");
             assert!(
                 cert_der.len() < 2048,
                 "key-carrier cert should be a few hundred bytes, got {}",
