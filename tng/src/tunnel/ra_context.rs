@@ -423,17 +423,19 @@ impl AttestContext {
                         minted
                     }
                     Err(error) => {
-                        let delay = mint_backoff.failed(match refresh_strategy {
-                            RefreshStrategy::Periodically { interval } => *interval,
-                            RefreshStrategy::Always => 0,
-                        });
+                        let delay = match refresh_strategy {
+                            RefreshStrategy::Periodically { interval } => {
+                                Some(mint_backoff.failed(*interval))
+                            }
+                            RefreshStrategy::Always => None,
+                        };
                         tracing::error!(
                             ?error,
                             ?delay,
                             "Failed to mint the passport token, publishing the key without it"
                         );
-                        let retry = SystemTime::now()
-                            .checked_add(delay)
+                        let retry = delay
+                            .and_then(|delay| SystemTime::now().checked_add(delay))
                             .map_or(Expire::NoExpire, Expire::ExpireAt);
                         (Prepared::default(), retry)
                     }
