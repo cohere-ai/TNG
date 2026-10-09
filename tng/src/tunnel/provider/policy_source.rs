@@ -12,6 +12,7 @@ use sigstore_trust_root::reqwest::{Certificate, Client};
 use sigstore_trust_root::{TrustedRoot, TufConfig};
 
 use crate::config::ra::PolicySourceArgs;
+use crate::tunnel::utils::runtime::TokioRuntime;
 
 const BUNDLE_FILE: &str = "attestation-bundle.sigstore.json";
 const MAX_DOWNLOAD_BYTES: usize = 1 << 20;
@@ -25,8 +26,8 @@ pub struct PolicySource {
     trusted_root: Option<Arc<TrustedRoot>>,
 }
 
-/// The release whose policies are installed.
-pub struct Installed {
+/// Identifies the release whose policies are in use.
+pub struct ReleaseInfo {
     digest: String,
     signed_at: i64,
 }
@@ -53,27 +54,30 @@ impl PolicySource {
     }
 
     /// Fetches the release to start with. There is no fallback, so failing here fails startup.
-    pub async fn fetch_initial(&self) -> Result<(TeeClassPolicies, Installed)> {
+    pub async fn fetch_initial(&self) -> Result<(TeeClassPolicies, ReleaseInfo)> {
         let (digest, release) = self
             .fetch(None)
             .await?
             .context("No policy release fetched")?;
-        let installed = self.log_install(digest, &release);
-        Ok((release.policies, installed))
+        let current = self.record_current(digest, &release);
+        Ok((release.policies, current))
     }
 
-    /// Checks for a newer release every `refresh_interval` until `converter` is dropped, or never
-    /// if it is 0.
-    pub fn keep_current(self, mut installed: Installed, converter: &Arc<CocoBuiltinConverter>) {
+    /// Checks for a newer release every `refresh_interval` until `converter` is dropped or `runtime`
+    /// shuts down, or never if it is 0.
+    pub fn keep_current(
+        self,
+        mut current: ReleaseInfo,
+        converter: &Arc<CocoBuiltinConverter>,
+        runtime: &TokioRuntime,
+    ) {
         if self.args.refresh_interval == 0 {
             return;
         }
         let converter: Weak<_> = Arc::downgrade(converter);
         let period = Duration::from_secs(self.args.refresh_interval);
 
-        // No `TokioRuntime` reaches converter construction; the loop ends with the converter.
-        #[allow(clippy::disallowed_methods)]
-        tokio::spawn(async move {
+        runtime.spawn_supervised_task_current_span(async move {
             let mut interval =
                 tokio::time::interval_at(tokio::time::Instant::now() + period, period);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -82,10 +86,10 @@ impl PolicySource {
                 let Some(converter) = converter.upgrade() else {
                     break;
                 };
-                if let Err(error) = self.refresh(&mut installed, &converter).await {
+                if let Err(error) = self.refresh(&mut current, &converter).await {
                     tracing::warn!(
                         ?error,
-                        "Policy refresh failed, keeping the installed policies"
+                        "Policy refresh failed, keeping the current policies"
                     );
                 }
             }
@@ -94,23 +98,22 @@ impl PolicySource {
 
     async fn refresh(
         &self,
-        installed: &mut Installed,
+        current: &mut ReleaseInfo,
         converter: &CocoBuiltinConverter,
     ) -> Result<()> {
-        let Some((digest, release)) = self.fetch(Some(&installed.digest)).await? else {
+        let Some((digest, release)) = self.fetch(Some(&current.digest)).await? else {
             return Ok(());
         };
         // Otherwise whoever serves the files could roll back to an older signed release.
-        if release.signed_at <= installed.signed_at {
+        if release.signed_at <= current.signed_at {
             tracing::warn!(
                 bundle_sha256 = digest,
-                version = ?release.version,
-                "Ignoring a policy release signed no later than the installed one"
+                "Ignoring a policy release signed no later than the current one"
             );
             return Ok(());
         }
         converter.replace_policies(&release.policies).await?;
-        *installed = self.log_install(digest, &release);
+        *current = self.record_current(digest, &release);
         Ok(())
     }
 
@@ -183,15 +186,14 @@ impl PolicySource {
         Ok(body)
     }
 
-    fn log_install(&self, digest: String, release: &VerifiedRelease) -> Installed {
+    fn record_current(&self, digest: String, release: &VerifiedRelease) -> ReleaseInfo {
         tracing::info!(
             url = self.args.url,
             bundle_sha256 = digest,
-            version = ?release.version,
             signed_at = release.signed_at,
             "Verified policy release"
         );
-        Installed {
+        ReleaseInfo {
             digest,
             signed_at: release.signed_at,
         }
@@ -286,22 +288,22 @@ mod tests {
         }
     }
 
-    /// Only a newer, verified release replaces the installed one; anything else keeps it.
+    /// Only a newer, verified release replaces the current one; anything else keeps it.
     #[tokio::test]
     async fn refresh_installs_only_newer_verified_releases() {
         let files: Files = Arc::new(Mutex::new(release!("v0.0.1a70")));
         let source = source(serve(files.clone()).await);
         let set = |release| *files.lock().unwrap() = release;
 
-        let (policies, mut installed) = source.fetch_initial().await.unwrap();
+        let (policies, mut current) = source.fetch_initial().await.unwrap();
         let converter = CocoBuiltinConverter::new("trustee_policy", &policies, None, &[])
             .await
             .unwrap();
-        let a70 = installed.digest.clone();
+        let a70 = current.digest.clone();
 
         set(release!("v0.0.1a71"));
-        source.refresh(&mut installed, &converter).await.unwrap();
-        let a71 = installed.digest.clone();
+        source.refresh(&mut current, &converter).await.unwrap();
+        let a71 = current.digest.clone();
         assert_ne!(a71, a70);
 
         let mut tampered = release!("v0.0.1a70");
@@ -310,22 +312,16 @@ mod tests {
             .unwrap()
             .push(b'\n');
         set(tampered);
-        source
-            .refresh(&mut installed, &converter)
-            .await
-            .unwrap_err();
+        source.refresh(&mut current, &converter).await.unwrap_err();
 
         set(release!("v0.0.1a70"));
-        source.refresh(&mut installed, &converter).await.unwrap();
-        assert_eq!(installed.digest, a71);
+        source.refresh(&mut current, &converter).await.unwrap();
+        assert_eq!(current.digest, a71);
 
         let mut oversized = release!("v0.0.1a71");
         oversized.insert(BUNDLE_FILE.to_owned(), vec![b' '; MAX_DOWNLOAD_BYTES + 1]);
         set(oversized);
-        source
-            .refresh(&mut installed, &converter)
-            .await
-            .unwrap_err();
-        assert_eq!(installed.digest, a71);
+        source.refresh(&mut current, &converter).await.unwrap_err();
+        assert_eq!(current.digest, a71);
     }
 }

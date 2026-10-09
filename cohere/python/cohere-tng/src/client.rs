@@ -98,7 +98,7 @@ impl TngClient {
                 .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
             let ra_context = Arc::new(
-                RaContext::from_ra_args(&ra_args)
+                RaContext::from_ra_args(&ra_args, &tng_runtime)
                     .await
                     .map_err(|e| PyRuntimeError::new_err(format!("{e:?}")))?,
             );

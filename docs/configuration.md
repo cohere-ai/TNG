@@ -754,7 +754,13 @@ With `policy_source`, TNG downloads `attestation-bundle.sigstore.json` and the p
 
 - **`url`** (string, required): https prefix the release files are fetched from.
 - **`refresh_interval`** (integer, optional, default is `300`): Seconds between checks for a new release. `0` means fetch once at startup and never refresh.
-- **`provenance`** (object, required): The signer. `repo` (`owner/name`), `signer_workflow` (path in `repo`), `source_ref` (git ref the workflow ran on) and `predicate_type` (in-toto predicate type) are required; `predicate_claims` (top-level string fields the predicate must declare with exactly these values, e.g. `{"version": "v0.0.1a74"}` to pin one Integritee release) and `environment` (GitHub deployment environment of the signing job) are optional. Releases from self-hosted runners are rejected.
+- **`provenance`** (object, required): The signer. Releases from self-hosted runners are rejected.
+  - **`repo`** (string, required): `owner/name` of the repository the release is built from.
+  - **`signer_workflow`** (string, required): Path of the signing workflow in `repo`.
+  - **`source_ref`** (string, required): Git ref the workflow ran on, e.g. `refs/heads/main`.
+  - **`predicate_type`** (string, required): in-toto predicate type of the signed statement.
+  - **`predicate_claims`** (object, optional): Top-level string fields the predicate must declare with exactly these values, e.g. `{"version": "v0.0.1a74"}` to pin one Integritee release.
+  - **`environment`** (string, optional): GitHub deployment environment of the signing job.
 
 ```json
 "verify": {

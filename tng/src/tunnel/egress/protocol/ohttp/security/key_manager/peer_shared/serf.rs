@@ -121,7 +121,7 @@ impl PeerSharedKeyManager {
         );
         let ra_args = peer_shared.ra_args.clone().into_checked()?;
         let ra_context = Arc::new(
-            RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics.clone())
+            RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics.clone(), runtime)
                 .await
                 .map_err(TngError::InvalidParameter)?,
         );
