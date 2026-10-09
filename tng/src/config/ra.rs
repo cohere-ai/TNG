@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{anyhow, Context as _, Result};
+#[cfg(feature = "__coco-builtin-as")]
+use rats_cert::policy_source::PolicySourceArgs;
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -325,7 +327,9 @@ impl RaArgsUnchecked {
                                     "'policy_dir' and 'policy_source' are mutually exclusive"
                                 )));
                             }
-                            (_, Some(source)) => source.validate()?,
+                            (_, Some(source)) => source
+                                .validate()
+                                .map_err(|e| TngError::InvalidParameter(e.into()))?,
                             (policy_dir, None) => {
                                 let policy_dir =
                                     policy_dir.as_deref().unwrap_or(DEFAULT_POLICY_DIR);
@@ -476,52 +480,6 @@ fn default_ita_portal_url() -> String {
 /// before an ingress using the builtin service will start.
 #[cfg(feature = "__coco-builtin-as")]
 pub const DEFAULT_POLICY_DIR: &str = "/etc/tng/policies";
-
-/// A signed policy release, as published by a GitHub Actions workflow.
-#[cfg(feature = "__coco-builtin-as")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PolicySourceArgs {
-    /// https prefix the release files are fetched from, e.g. `.../releases/latest/download`
-    pub url: String,
-    /// Seconds between checks for a newer release. 0 to fetch once at startup only.
-    #[serde(default = "default_refresh_interval")]
-    pub refresh_interval: u64,
-    pub provenance: rats_cert::tee::coco::converter::builtin::provenance::Provenance,
-}
-
-#[cfg(feature = "__coco-builtin-as")]
-fn default_refresh_interval() -> u64 {
-    300
-}
-
-#[cfg(feature = "__coco-builtin-as")]
-impl PolicySourceArgs {
-    fn validate(&self) -> Result<(), TngError> {
-        let url = Url::parse(&self.url)
-            .with_context(|| format!("Invalid policy source url: {}", self.url))
-            .map_err(TngError::InvalidParameter)?;
-        let p = &self.provenance;
-        let problem = if url.scheme() != "https" {
-            "'url' must be https"
-        } else if [
-            &p.repo,
-            &p.signer_workflow,
-            &p.source_ref,
-            &p.predicate_type,
-        ]
-        .iter()
-        .any(|field| field.is_empty())
-            || p.repo.split('/').count() != 2
-        {
-            "'provenance' needs 'repo' as owner/name, 'signer_workflow', 'source_ref' and 'predicate_type'"
-        } else {
-            return Ok(());
-        };
-        Err(TngError::InvalidParameter(anyhow!(
-            "Invalid 'policy_source': {problem}"
-        )))
-    }
-}
 
 #[cfg(feature = "__coco-builtin-as")]
 fn default_required_tee_classes() -> Vec<String> {

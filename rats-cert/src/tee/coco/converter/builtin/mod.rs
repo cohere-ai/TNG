@@ -18,7 +18,6 @@ use crate::tee::GenericConverter;
 
 /// Policies for the in-process service, which reads them from disk rather than from a remote one.
 pub mod policy;
-pub mod provenance;
 
 /// Length of the locally generated nonce, in bytes.
 ///

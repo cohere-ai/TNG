@@ -109,7 +109,15 @@ pub enum Error {
 
     #[cfg(feature = "__coco-builtin-as")]
     #[error("The policy release failed its provenance check")]
-    CocoBuiltinAsPolicyProvenanceFailed(#[source] std::sync::Arc<anyhow::Error>),
+    PolicyProvenanceFailed(#[source] std::sync::Arc<anyhow::Error>),
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Invalid 'policy_source': {0}")]
+    InvalidPolicySource(&'static str),
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Failed to fetch the policy release")]
+    PolicySourceFailed(#[source] std::sync::Arc<anyhow::Error>),
 
     #[cfg(feature = "__coco-builtin-as")]
     #[error(

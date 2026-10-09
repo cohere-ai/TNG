@@ -1,22 +1,64 @@
-//! Fetches the builtin attestation service's policies from a signed release and keeps them on the
-//! newest one.
+//! Fetches attestation policies from a signed release and keeps them on the newest one.
 
+pub mod provenance;
+
+use std::future::Future;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use anyhow::{ensure, Context as _, Result};
-use rats_cert::tee::coco::converter::builtin::policy::TeeClassPolicies;
-use rats_cert::tee::coco::converter::builtin::provenance::{self, ReleaseFile, VerifiedRelease};
-use rats_cert::tee::coco::converter::builtin::CocoBuiltinConverter;
-use sigstore_trust_root::reqwest::{Certificate, Client};
+use anyhow::{ensure, Context as _};
+use serde::{Deserialize, Serialize};
+use sigstore_trust_root::reqwest::{Certificate, Client, Url};
 use sigstore_trust_root::{TrustedRoot, TufConfig};
 
-use crate::config::ra::PolicySourceArgs;
-use crate::tunnel::utils::runtime::TokioRuntime;
+use self::provenance::{Provenance, ReleaseFile, VerifiedRelease};
+use crate::errors::*;
+use crate::tee::coco::converter::builtin::policy::TeeClassPolicies;
+use crate::tee::coco::converter::builtin::CocoBuiltinConverter;
 
 const BUNDLE_FILE: &str = "attestation-bundle.sigstore.json";
 const MAX_DOWNLOAD_BYTES: usize = 1 << 20;
 const TIMEOUT: Duration = Duration::from_secs(30);
+const DEFAULT_REFRESH_INTERVAL: u64 = 300;
+
+/// A signed policy release, as published by a GitHub Actions workflow.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicySourceArgs {
+    /// https prefix the release files are fetched from, e.g. `.../releases/latest/download`
+    pub url: String,
+    /// Seconds between checks for a newer release. 0 to fetch once at startup only.
+    #[serde(default = "default_refresh_interval")]
+    pub refresh_interval: u64,
+    pub provenance: Provenance,
+}
+
+fn default_refresh_interval() -> u64 {
+    DEFAULT_REFRESH_INTERVAL
+}
+
+impl PolicySourceArgs {
+    /// Rejects what is wrong without fetching anything.
+    pub fn validate(&self) -> Result<()> {
+        let p = &self.provenance;
+        let problem = if Url::parse(&self.url).map_or(true, |url| url.scheme() != "https") {
+            "'url' must be an https URL"
+        } else if [
+            &p.repo,
+            &p.signer_workflow,
+            &p.source_ref,
+            &p.predicate_type,
+        ]
+        .iter()
+        .any(|field| field.is_empty())
+            || p.repo.split('/').count() != 2
+        {
+            "'provenance' needs 'repo' as owner/name, 'signer_workflow', 'source_ref' and 'predicate_type'"
+        } else {
+            return Ok(());
+        };
+        Err(Error::InvalidPolicySource(problem))
+    }
+}
 
 pub struct PolicySource {
     args: PolicySourceArgs,
@@ -34,16 +76,19 @@ pub struct ReleaseInfo {
 
 impl PolicySource {
     pub fn new(args: &PolicySourceArgs, policy_id: &str) -> Result<Self> {
-        let roots = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        let client = webpki_root_certs::TLS_SERVER_ROOT_CERTS
             .iter()
             .map(|der| Certificate::from_der(der))
-            .collect::<Result<Vec<_>, _>>()?;
-        let client = Client::builder()
-            .https_only(true)
-            .tls_certs_only(roots)
-            .connect_timeout(TIMEOUT)
-            .timeout(TIMEOUT)
-            .build()?;
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .and_then(|roots| {
+                Client::builder()
+                    .https_only(true)
+                    .tls_certs_only(roots)
+                    .connect_timeout(TIMEOUT)
+                    .timeout(TIMEOUT)
+                    .build()
+            })
+            .map_err(|e| Error::PolicySourceFailed(Arc::new(e.into())))?;
         Ok(Self {
             args: args.clone(),
             policy_id: policy_id.to_owned(),
@@ -57,27 +102,26 @@ impl PolicySource {
     pub async fn fetch_initial(&self) -> Result<(TeeClassPolicies, ReleaseInfo)> {
         let (digest, release) = self
             .fetch(None)
-            .await?
-            .context("No policy release fetched")?;
+            .await
+            .and_then(|fetched| fetched.context("No policy release fetched"))
+            .map_err(|e| Error::PolicySourceFailed(Arc::new(e)))?;
         let current = self.record_current(digest, &release);
         Ok((release.policies, current))
     }
 
-    /// Checks for a newer release every `refresh_interval` until `converter` is dropped or `runtime`
-    /// shuts down, or never if it is 0.
+    /// Returns a task that checks for a newer release every `refresh_interval` until `converter`
+    /// is dropped, or `None` if the interval is 0. The caller decides where to run it.
     pub fn keep_current(
         self,
         mut current: ReleaseInfo,
-        converter: &Arc<CocoBuiltinConverter>,
-        runtime: &TokioRuntime,
-    ) {
+        converter: Weak<CocoBuiltinConverter>,
+    ) -> Option<impl Future<Output = ()> + Send + 'static> {
         if self.args.refresh_interval == 0 {
-            return;
+            return None;
         }
-        let converter: Weak<_> = Arc::downgrade(converter);
         let period = Duration::from_secs(self.args.refresh_interval);
 
-        runtime.spawn_supervised_task_current_span(async move {
+        Some(async move {
             let mut interval =
                 tokio::time::interval_at(tokio::time::Instant::now() + period, period);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -93,14 +137,14 @@ impl PolicySource {
                     );
                 }
             }
-        });
+        })
     }
 
     async fn refresh(
         &self,
         current: &mut ReleaseInfo,
         converter: &CocoBuiltinConverter,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let Some((digest, release)) = self.fetch(Some(&current.digest)).await? else {
             return Ok(());
         };
@@ -118,7 +162,10 @@ impl PolicySource {
     }
 
     /// Fetches and verifies the release, unless its bundle digest is `known_digest`.
-    async fn fetch(&self, known_digest: Option<&str>) -> Result<Option<(String, VerifiedRelease)>> {
+    async fn fetch(
+        &self,
+        known_digest: Option<&str>,
+    ) -> anyhow::Result<Option<(String, VerifiedRelease)>> {
         let bundle = self.download(BUNDLE_FILE).await?;
         let digest = provenance::bundle_digest(&bundle);
         if known_digest == Some(digest.as_str()) {
@@ -151,7 +198,7 @@ impl PolicySource {
         Ok(Some((digest, release)))
     }
 
-    async fn trusted_root(&self) -> Result<Arc<TrustedRoot>> {
+    async fn trusted_root(&self) -> anyhow::Result<Arc<TrustedRoot>> {
         #[cfg(test)]
         if let Some(root) = &self.trusted_root {
             return Ok(root.clone());
@@ -166,7 +213,7 @@ impl PolicySource {
         ))
     }
 
-    async fn download(&self, name: &str) -> Result<Vec<u8>> {
+    async fn download(&self, name: &str) -> anyhow::Result<Vec<u8>> {
         let url = format!("{}/{name}", self.args.url.trim_end_matches('/'));
         let mut response = self
             .client
@@ -202,125 +249,68 @@ impl PolicySource {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::sync::Mutex;
+    use wiremock::matchers::path;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use axum::extract::{Path, State};
-    use axum::http::StatusCode;
-    use axum::routing::get;
-    use axum::Router;
-    use sigstore_trust_root::SIGSTORE_PRODUCTION_TRUSTED_ROOT;
-
+    use super::provenance::tests::{integritee, production_root, A70, A71, POLICY_ID};
     use super::*;
 
-    type Files = Arc<Mutex<HashMap<String, Vec<u8>>>>;
-
-    macro_rules! release {
-        ($version:literal) => {{
-            let file = |name: &str, bytes: &[u8]| (name.to_owned(), bytes.to_vec());
-            macro_rules! fixture {
-                ($name:literal) => {
-                    include_bytes!(concat!(
-                        env!("CARGO_MANIFEST_DIR"),
-                        "/../rats-cert/src/tee/coco/converter/builtin/test_cases/",
-                        $version,
-                        "/",
-                        $name
-                    ))
-                };
-            }
-            HashMap::from([
-                file(BUNDLE_FILE, fixture!("attestation-bundle.sigstore.json")),
-                file(
-                    "trustee_policy_cpu.rego",
-                    fixture!("trustee_policy_cpu.rego"),
-                ),
-                file(
-                    "trustee_policy_gpu.rego",
-                    fixture!("trustee_policy_gpu.rego"),
-                ),
-            ])
-        }};
-    }
-
-    async fn serve(files: Files) -> String {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let app = Router::new()
-            .route(
-                "/{name}",
-                get(
-                    |State(files): State<Files>, Path(name): Path<String>| async move {
-                        files
-                            .lock()
-                            .unwrap()
-                            .get(&name)
-                            .cloned()
-                            .ok_or(StatusCode::NOT_FOUND)
-                    },
-                ),
-            )
-            .with_state(files);
-        #[allow(clippy::disallowed_methods)]
-        tokio::spawn(async move { axum::serve(listener, app).await });
-        format!("http://{addr}")
+    async fn publish(server: &MockServer, bundle: &[u8], cpu: &[u8], gpu: &[u8]) {
+        server.reset().await;
+        for (name, bytes) in [
+            (BUNDLE_FILE, bundle),
+            ("trustee_policy_cpu.rego", cpu),
+            ("trustee_policy_gpu.rego", gpu),
+        ] {
+            Mock::given(path(format!("/{name}")))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes))
+                .mount(server)
+                .await;
+        }
     }
 
     fn source(url: String) -> PolicySource {
-        let args = serde_json::from_value(serde_json::json!({
-            "url": url,
-            "provenance": {
-                "repo": "cohere-ai/integritee",
-                "signer_workflow": ".github/workflows/release-policy.yaml",
-                "source_ref": "refs/heads/main",
-                "predicate_type": "https://cohere.com/attestation-policy/v1",
-                "environment": "release"
-            }
-        }))
-        .unwrap();
         PolicySource {
-            args,
-            policy_id: "trustee_policy".to_owned(),
+            args: PolicySourceArgs {
+                url,
+                refresh_interval: DEFAULT_REFRESH_INTERVAL,
+                provenance: integritee(),
+            },
+            policy_id: POLICY_ID.to_owned(),
             client: Client::new(),
-            trusted_root: Some(Arc::new(
-                TrustedRoot::from_json(SIGSTORE_PRODUCTION_TRUSTED_ROOT).unwrap(),
-            )),
+            trusted_root: Some(Arc::new(production_root())),
         }
     }
 
     /// Only a newer, verified release replaces the current one; anything else keeps it.
     #[tokio::test]
     async fn refresh_installs_only_newer_verified_releases() {
-        let files: Files = Arc::new(Mutex::new(release!("v0.0.1a70")));
-        let source = source(serve(files.clone()).await);
-        let set = |release| *files.lock().unwrap() = release;
+        let server = MockServer::start().await;
+        let source = source(server.uri());
 
+        publish(&server, A70.bundle, A70.cpu, A70.gpu).await;
         let (policies, mut current) = source.fetch_initial().await.unwrap();
-        let converter = CocoBuiltinConverter::new("trustee_policy", &policies, None, &[])
+        let converter = CocoBuiltinConverter::new(POLICY_ID, &policies, None, &[])
             .await
             .unwrap();
         let a70 = current.digest.clone();
 
-        set(release!("v0.0.1a71"));
+        publish(&server, A71.bundle, A71.cpu, A71.gpu).await;
         source.refresh(&mut current, &converter).await.unwrap();
         let a71 = current.digest.clone();
         assert_ne!(a71, a70);
 
-        let mut tampered = release!("v0.0.1a70");
-        tampered
-            .get_mut("trustee_policy_cpu.rego")
-            .unwrap()
-            .push(b'\n');
-        set(tampered);
+        let mut tampered = A70.cpu.to_vec();
+        tampered.push(b'\n');
+        publish(&server, A70.bundle, &tampered, A70.gpu).await;
         source.refresh(&mut current, &converter).await.unwrap_err();
 
-        set(release!("v0.0.1a70"));
+        publish(&server, A70.bundle, A70.cpu, A70.gpu).await;
         source.refresh(&mut current, &converter).await.unwrap();
         assert_eq!(current.digest, a71);
 
-        let mut oversized = release!("v0.0.1a71");
-        oversized.insert(BUNDLE_FILE.to_owned(), vec![b' '; MAX_DOWNLOAD_BYTES + 1]);
-        set(oversized);
+        let oversized = vec![b' '; MAX_DOWNLOAD_BYTES + 1];
+        publish(&server, &oversized, A71.cpu, A71.gpu).await;
         source.refresh(&mut current, &converter).await.unwrap_err();
         assert_eq!(current.digest, a71);
     }

@@ -16,8 +16,6 @@ pub mod attester;
 pub mod converter;
 pub mod evidence;
 pub mod factory;
-#[cfg(feature = "__coco-builtin-as")]
-mod policy_source;
 pub mod provider_type;
 pub mod token;
 pub mod verifier;
