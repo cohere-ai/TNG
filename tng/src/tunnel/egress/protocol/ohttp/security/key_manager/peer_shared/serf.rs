@@ -284,18 +284,14 @@ impl PeerSharedKeyManager {
                         break;
                     };
 
-                    match join_serf_cluster(&serf_ref, &peers).await {
-                        Ok(()) => {
-                            tracing::info!(attempt, "Retry-join: successfully joined cluster");
-                            break;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                attempt,
-                                error = ?e,
-                                "Retry-join: failed, will retry"
-                            );
-                        }
+                    // A successful join may only have reached ourselves, so the
+                    // member count check above is the sole exit on success.
+                    if let Err(e) = join_serf_cluster(&serf_ref, &peers).await {
+                        tracing::warn!(
+                            attempt,
+                            error = ?e,
+                            "Retry-join: failed, will retry"
+                        );
                     }
                 }
             }))
