@@ -37,6 +37,7 @@ _DEFAULT_VERIFY: list = [
         "required_tee_classes": ["cpu", "gpu"],
         "policy_source": {
             "url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+            "refresh_interval": 300,
             "provenance": {
                 "repo": "cohere-ai/integritee",
                 "signer_workflow": ".github/workflows/release-policy.yaml",
