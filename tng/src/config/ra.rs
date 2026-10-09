@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{anyhow, Context as _, Result};
+#[cfg(feature = "__coco-builtin-as")]
+use rats_cert::policy_source::PolicySourceArgs;
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -315,22 +317,37 @@ impl RaArgsUnchecked {
                     #[cfg(feature = "__coco-builtin-as")]
                     ConverterArgs::CocoBuiltin {
                         policy_dir,
+                        policy_source,
                         policy_ids,
                         ..
                     } => {
-                        // No policy is compiled into the binary, so an ingress whose policy
-                        // directory is missing could never verify anything.
-                        if !Path::new(policy_dir).is_dir() {
-                            return Err(TngError::InvalidParameter(anyhow!(
-                                "Policy directory does not exist: {policy_dir}"
-                            )));
+                        match (policy_dir, policy_source) {
+                            (Some(_), Some(_)) => {
+                                return Err(TngError::InvalidParameter(anyhow!(
+                                    "'policy_dir' and 'policy_source' are mutually exclusive"
+                                )));
+                            }
+                            (_, Some(source)) => source
+                                .validate()
+                                .map_err(|e| TngError::InvalidParameter(e.into()))?,
+                            (policy_dir, None) => {
+                                let policy_dir =
+                                    policy_dir.as_deref().unwrap_or(DEFAULT_POLICY_DIR);
+                                // No policy is compiled into the binary, so an ingress whose policy
+                                // directory is missing could never verify anything.
+                                if !Path::new(policy_dir).is_dir() {
+                                    return Err(TngError::InvalidParameter(anyhow!(
+                                        "Policy directory does not exist: {policy_dir}"
+                                    )));
+                                }
+                            }
                         }
 
                         // The EAR token broker enforces the first id and warns that it ignored the
                         // rest, so accepting a longer list would silently enforce less than asked.
                         if policy_ids.len() != 1 {
                             return Err(TngError::InvalidParameter(anyhow!(
-                                "The 'coco_builtin' provider requires exactly one entry in 'policy_ids', naming the policies to read from {policy_dir} as {{policy_id}}_{{tee_class}}.rego, but {} were given",
+                                "The 'coco_builtin' provider requires exactly one entry in 'policy_ids', naming the policies to read as {{policy_id}}_{{tee_class}}.rego, but {} were given",
                                 policy_ids.len()
                             )));
                         }
@@ -462,12 +479,7 @@ fn default_ita_portal_url() -> String {
 /// Nothing is compiled into the binary, so this directory has to exist and hold a CPU policy
 /// before an ingress using the builtin service will start.
 #[cfg(feature = "__coco-builtin-as")]
-const DEFAULT_POLICY_DIR: &str = "/etc/tng/policies";
-
-#[cfg(feature = "__coco-builtin-as")]
-fn default_policy_dir() -> String {
-    DEFAULT_POLICY_DIR.to_string()
-}
+pub const DEFAULT_POLICY_DIR: &str = "/etc/tng/policies";
 
 #[cfg(feature = "__coco-builtin-as")]
 fn default_required_tee_classes() -> Vec<String> {
@@ -486,9 +498,13 @@ pub enum ConverterArgs {
     /// certificates to trust.
     #[cfg(feature = "__coco-builtin-as")]
     CocoBuiltin {
-        /// Directory the Rego policies are read from
-        #[serde(default = "default_policy_dir")]
-        policy_dir: String,
+        /// Directory the Rego policies are read from, `/etc/tng/policies` unless `policy_source`
+        /// is set
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        policy_dir: Option<String>,
+        /// Signed release to fetch the policies from instead of `policy_dir`
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        policy_source: Option<Box<PolicySourceArgs>>,
         /// Policy ID list, naming the policies in `policy_dir` to enforce
         ///
         /// A policy is read from `{policy_id}_{tee_class}.rego`, mirroring how the attestation
@@ -1366,7 +1382,7 @@ mod tests {
                         policy_ids,
                         ..
                     } => {
-                        assert_eq!(policy_dir, "/etc/tng/policies");
+                        assert_eq!(policy_dir.as_deref(), Some("/etc/tng/policies"));
                         assert_eq!(policy_ids, &vec!["myorg"]);
                     }
                     _ => panic!("Expected CocoBuiltin converter"),
@@ -1419,9 +1435,39 @@ mod tests {
             Some(VerifyArgs::BackgroundCheck {
                 converter: ConverterArgs::CocoBuiltin { policy_dir, .. },
                 ..
-            }) => assert_eq!(policy_dir, DEFAULT_POLICY_DIR),
+            }) => assert_eq!(policy_dir, &None),
             _ => panic!("Expected a CocoBuiltin converter"),
         }
+    }
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[test]
+    fn test_coco_builtin_policy_source() {
+        let with = |edit: fn(&mut serde_json::Value)| {
+            let mut json = json!({"verify": {
+                "as_provider": "coco_builtin",
+                "policy_ids": ["trustee_policy"],
+                "policy_source": {
+                    "url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+                    "provenance": {
+                        "repo": "cohere-ai/integritee",
+                        "signer_workflow": ".github/workflows/release-policy.yaml",
+                        "source_ref": "refs/heads/main",
+                        "predicate_type": "https://cohere.com/attestation-policy/v1"
+                    }
+                }
+            }});
+            edit(&mut json["verify"]);
+            serde_json::from_value::<RaArgsUnchecked>(json)
+                .unwrap()
+                .into_checked()
+        };
+
+        with(|_| {}).unwrap();
+        with(|v| v["policy_dir"] = json!("/tmp")).unwrap_err();
+        with(|v| v["policy_source"]["url"] = json!("http://example.com")).unwrap_err();
+        with(|v| v["policy_source"]["refresh_interval"] = json!(0)).unwrap();
+        with(|v| v["policy_source"]["provenance"]["repo"] = json!("integritee")).unwrap_err();
     }
 
     // =====================================================================

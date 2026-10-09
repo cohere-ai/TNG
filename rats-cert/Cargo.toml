@@ -39,6 +39,9 @@ serde_bytes = {workspace = true}
 serde_json = {workspace = true}
 sha2 = {workspace = true, optional = true}
 signature = {workspace = true, optional = true}
+sigstore-trust-root = {workspace = true, optional = true}
+sigstore-types = {workspace = true, optional = true}
+sigstore-verify = {workspace = true, optional = true}
 spin = {workspace = true}
 strum = {workspace = true, features = ["derive"]}
 strum_macros = {workspace = true}
@@ -46,6 +49,7 @@ thiserror = {workspace = true}
 tonic-prost = {workspace = true, optional = true}
 tracing = {workspace = true}
 ttrpc = {workspace = true, optional = true, features = ["async"]}
+webpki-root-certs = {workspace = true, optional = true}
 x509-cert = {workspace = true, optional = true}
 zeroize = {workspace = true}
 
@@ -111,7 +115,19 @@ crypto-rustcrypto = [
 # `__coco-builtin-as` alone builds the service with no verifiers, which is only useful for
 # checking the wiring; each TEE has to be enabled on its own because the verifiers carry
 # native dependencies (openssl, tss-esapi, DCAP).
-__coco-builtin-as = ["dep:attestation-service", "dep:key-value-storage", "dep:regorus", "dep:sha2"]
+__coco-builtin-as = [
+  "dep:attestation-service",
+  "dep:key-value-storage",
+  "dep:regorus",
+  "dep:sha2",
+  "dep:sigstore-trust-root",
+  "dep:sigstore-types",
+  "dep:sigstore-verify",
+  "dep:webpki-root-certs",
+  "sigstore-trust-root/rustls",
+  "sigstore-trust-root/tuf",
+  "tokio/time",
+]
 coco-builtin-as-azsnp = ["__coco-builtin-as", "attestation-service/az-snp-vtpm-verifier"]
 coco-builtin-as-aztdx = ["__coco-builtin-as", "attestation-service/az-tdx-vtpm-verifier"]
 coco-builtin-as-nvidia = ["__coco-builtin-as", "attestation-service/nvidia-verifier"]

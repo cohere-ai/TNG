@@ -596,6 +596,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
 
         let shutdown = tokio_graceful::Shutdown::new(futures::future::pending::<()>());
+        let runtime = TokioRuntime::current(shutdown.guard()).unwrap();
         let layer = Arc::new(
             OHttpSecurityLayer::new(
                 #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -606,8 +607,12 @@ mod tests {
                     }])),
                     ..Default::default()
                 },
-                Arc::new(RaContext::from_ra_args(&RaArgs::NoRa).await.unwrap()),
-                TokioRuntime::current(shutdown.guard()).unwrap(),
+                Arc::new(
+                    RaContext::from_ra_args(&RaArgs::NoRa, &runtime)
+                        .await
+                        .unwrap(),
+                ),
+                runtime,
             )
             .await
             .unwrap(),

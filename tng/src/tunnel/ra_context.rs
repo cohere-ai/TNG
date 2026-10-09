@@ -35,6 +35,7 @@ use std::time::{Duration, SystemTime};
 #[cfg(unix)]
 use crate::tunnel::provider::{create_attester, TngAttester};
 use crate::tunnel::provider::{create_converter, create_verifier, TngConverter, TngVerifier};
+use crate::tunnel::utils::runtime::TokioRuntime;
 
 /// Pre-instantiated RA context for OHTTP security
 ///
@@ -64,14 +65,14 @@ impl RaContext {
     ///
     /// Tests and NoRa paths get a no-op metrics handle. Production tunnels should
     /// call [`Self::from_ra_args_with_metrics`].
-    pub async fn from_ra_args(ra_args: &RaArgs) -> Result<Self> {
+    pub async fn from_ra_args(ra_args: &RaArgs, runtime: &TokioRuntime) -> Result<Self> {
         #[cfg(unix)]
         {
-            Self::from_ra_args_with_metrics(ra_args, AttestationMetrics::noop()).await
+            Self::from_ra_args_with_metrics(ra_args, AttestationMetrics::noop(), runtime).await
         }
         #[cfg(not(unix))]
         {
-            Self::from_ra_args_inner(ra_args, ()).await
+            Self::from_ra_args_inner(ra_args, (), runtime).await
         }
     }
 
@@ -80,14 +81,16 @@ impl RaContext {
     pub async fn from_ra_args_with_metrics(
         ra_args: &RaArgs,
         attestation_metrics: AttestationMetrics,
+        runtime: &TokioRuntime,
     ) -> Result<Self> {
-        Self::from_ra_args_inner(ra_args, attestation_metrics).await
+        Self::from_ra_args_inner(ra_args, attestation_metrics, runtime).await
     }
 
     async fn from_ra_args_inner(
         ra_args: &RaArgs,
         #[cfg(unix)] attestation_metrics: AttestationMetrics,
         #[cfg(not(unix))] _attestation_metrics: (),
+        runtime: &TokioRuntime,
     ) -> Result<Self> {
         match ra_args {
             RaArgs::NoRa => Ok(Self::NoRa),
@@ -96,13 +99,18 @@ impl RaContext {
                     verify_list,
                     #[cfg(unix)]
                     attestation_metrics,
+                    runtime,
                 )
                 .await?,
             ))),
             #[cfg(unix)]
             RaArgs::AttestOnly(attest_args) => Ok(Self::AttestOnly(Arc::new(
-                AttestContext::from_attest_args_with_metrics(attest_args, attestation_metrics)
-                    .await?,
+                AttestContext::from_attest_args_with_metrics(
+                    attest_args,
+                    attestation_metrics,
+                    runtime,
+                )
+                .await?,
             ))),
             #[cfg(unix)]
             RaArgs::AttestAndVerify(attest_args, verify_list) => Ok(Self::AttestAndVerify {
@@ -110,10 +118,13 @@ impl RaContext {
                     AttestContext::from_attest_args_with_metrics(
                         attest_args,
                         attestation_metrics.clone(),
+                        runtime,
                     )
                     .await?,
                 ),
-                verify: Arc::new(VerifyContextSet::new(verify_list, attestation_metrics).await?),
+                verify: Arc::new(
+                    VerifyContextSet::new(verify_list, attestation_metrics, runtime).await?,
+                ),
             }),
         }
     }
@@ -168,10 +179,11 @@ impl VerifyContextSet {
     pub async fn new(
         verify_list: &[VerifyArgs],
         #[cfg(unix)] metrics: AttestationMetrics,
+        runtime: &TokioRuntime,
     ) -> Result<Self> {
         let mut entries = Vec::with_capacity(verify_list.len());
         for verify_args in verify_list {
-            entries.push(VerifyContext::from_verify_args(verify_args).await?);
+            entries.push(VerifyContext::from_verify_args(verify_args, runtime).await?);
         }
         check_keys_unique(&entries)?;
         Ok(Self {
@@ -330,13 +342,17 @@ pub enum AttestContext {
 #[cfg(unix)]
 impl AttestContext {
     /// Create attestation context from AttestArgs configuration
-    pub async fn from_attest_args(attest_args: &AttestArgs) -> Result<Self> {
-        Self::from_attest_args_with_metrics(attest_args, AttestationMetrics::noop()).await
+    pub async fn from_attest_args(
+        attest_args: &AttestArgs,
+        runtime: &TokioRuntime,
+    ) -> Result<Self> {
+        Self::from_attest_args_with_metrics(attest_args, AttestationMetrics::noop(), runtime).await
     }
 
     pub async fn from_attest_args_with_metrics(
         attest_args: &AttestArgs,
         metrics: AttestationMetrics,
+        runtime: &TokioRuntime,
     ) -> Result<Self> {
         match attest_args {
             AttestArgs::Passport {
@@ -345,7 +361,7 @@ impl AttestContext {
                 ..
             } => {
                 let attester = create_attester(attester_args)?;
-                let converter = create_converter(converter_args).await?;
+                let converter = create_converter(converter_args, runtime).await?;
                 Ok(Self::Passport {
                     attester,
                     converter,
@@ -525,7 +541,10 @@ impl std::fmt::Debug for VerifyContext {
 
 impl VerifyContext {
     /// Create verification context from VerifyArgs configuration
-    pub async fn from_verify_args(verify_args: &VerifyArgs) -> Result<Self> {
+    pub async fn from_verify_args(
+        verify_args: &VerifyArgs,
+        runtime: &TokioRuntime,
+    ) -> Result<Self> {
         match verify_args {
             VerifyArgs::Passport {
                 verifier: verifier_args,
@@ -536,7 +555,7 @@ impl VerifyContext {
                 converter: converter_args,
                 verifier: verifier_args,
             } => {
-                let converter = create_converter(converter_args).await?;
+                let converter = create_converter(converter_args, runtime).await?;
 
                 // The builtin service signs each token with an ephemeral key it generated, which is
                 // not nameable in configuration, so this verifier is built from the converter that
@@ -582,6 +601,10 @@ mod tests {
         VerifierArgs,
     };
     use std::collections::HashMap;
+
+    fn runtime() -> TokioRuntime {
+        TokioRuntime::current(tokio_graceful::Shutdown::no_signal().guard()).unwrap()
+    }
 
     #[cfg(unix)]
     #[test]
@@ -655,7 +678,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_ra_context_no_ra() {
         let ra_args = RaArgs::NoRa;
-        let result = RaContext::from_ra_args(&ra_args).await;
+        let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let ctx = result.unwrap();
         assert!(
@@ -677,7 +700,7 @@ mod tests {
     async fn test_ra_context_verify_only_passport() {
         let verify_args = make_verify_passport_args();
         let ra_args = RaArgs::VerifyOnly(vec![verify_args]);
-        let result = RaContext::from_ra_args(&ra_args).await;
+        let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let ctx = result.unwrap();
         assert!(
@@ -694,7 +717,7 @@ mod tests {
     async fn test_ra_context_verify_only_background_check() {
         let verify_args = make_verify_bgcheck_args();
         let ra_args = RaArgs::VerifyOnly(vec![verify_args]);
-        let result = RaContext::from_ra_args(&ra_args).await;
+        let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let ctx = result.unwrap();
         assert!(
@@ -709,10 +732,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn duplicate_verify_keys_are_rejected() {
-        let result = RaContext::from_ra_args(&RaArgs::VerifyOnly(vec![
-            make_verify_bgcheck_args(),
-            make_verify_bgcheck_args(),
-        ]))
+        let result = RaContext::from_ra_args(
+            &RaArgs::VerifyOnly(vec![make_verify_bgcheck_args(), make_verify_bgcheck_args()]),
+            &runtime(),
+        )
         .await;
         let message = result
             .err()
@@ -735,7 +758,7 @@ mod tests {
     async fn test_accessor_verify_only() {
         let verify_args = make_verify_bgcheck_args();
         let ra_args = RaArgs::VerifyOnly(vec![verify_args]);
-        let result = RaContext::from_ra_args(&ra_args).await;
+        let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
         assert!(result.is_ok(), "Failed: {:?}", result.err());
         let ctx = result.unwrap();
         assert!(
@@ -780,7 +803,7 @@ mod tests {
         async fn test_ra_context_attest_only_background_check() {
             let attest_args = make_attest_bgcheck_args();
             let ra_args = RaArgs::AttestOnly(attest_args);
-            let result = RaContext::from_ra_args(&ra_args).await;
+            let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
@@ -793,7 +816,7 @@ mod tests {
         async fn test_ra_context_attest_only_passport() {
             let attest_args = make_attest_passport_args();
             let ra_args = RaArgs::AttestOnly(attest_args);
-            let result = RaContext::from_ra_args(&ra_args).await;
+            let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
@@ -809,7 +832,7 @@ mod tests {
                 refresh_interval: Some(600),
                 max_retries: None,
             };
-            let result = AttestContext::from_attest_args(&attest_args).await;
+            let result = AttestContext::from_attest_args(&attest_args, &runtime()).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
@@ -828,7 +851,7 @@ mod tests {
                 refresh_interval: Some(0),
                 max_retries: None,
             };
-            let result = AttestContext::from_attest_args(&attest_args).await;
+            let result = AttestContext::from_attest_args(&attest_args, &runtime()).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
@@ -846,7 +869,7 @@ mod tests {
             let attest_args = make_attest_passport_args();
             let verify_args = make_verify_passport_args();
             let ra_args = RaArgs::AttestAndVerify(attest_args, vec![verify_args]);
-            let result = RaContext::from_ra_args(&ra_args).await;
+            let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
@@ -868,7 +891,7 @@ mod tests {
             let attest_args = make_attest_bgcheck_args();
             let verify_args = make_verify_bgcheck_args();
             let ra_args = RaArgs::AttestAndVerify(attest_args, vec![verify_args]);
-            let result = RaContext::from_ra_args(&ra_args).await;
+            let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
@@ -890,7 +913,7 @@ mod tests {
             let attest_args = make_attest_bgcheck_args();
             let verify_args = make_verify_passport_args();
             let ra_args = RaArgs::AttestAndVerify(attest_args, vec![verify_args]);
-            let result = RaContext::from_ra_args(&ra_args).await;
+            let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
@@ -915,7 +938,7 @@ mod tests {
         async fn test_accessor_attest_only() {
             let attest_args = make_attest_bgcheck_args();
             let ra_args = RaArgs::AttestOnly(attest_args);
-            let result = RaContext::from_ra_args(&ra_args).await;
+            let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(
@@ -933,7 +956,7 @@ mod tests {
             let attest_args = make_attest_bgcheck_args();
             let verify_args = make_verify_bgcheck_args();
             let ra_args = RaArgs::AttestAndVerify(attest_args, vec![verify_args]);
-            let result = RaContext::from_ra_args(&ra_args).await;
+            let result = RaContext::from_ra_args(&ra_args, &runtime()).await;
             assert!(result.is_ok(), "Failed: {:?}", result.err());
             let ctx = result.unwrap();
             assert!(

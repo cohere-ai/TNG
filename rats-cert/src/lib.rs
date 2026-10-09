@@ -5,6 +5,8 @@
 pub mod cert;
 pub mod crypto;
 pub mod errors;
+#[cfg(feature = "__coco-builtin-as")]
+pub mod policy_source;
 pub mod tee;
 
 #[cfg(test)]

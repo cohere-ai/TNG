@@ -39,7 +39,9 @@ envsubst < "$TEMPLATE" > "$CONFIG"
 if [ -n "$POLICY_IDS" ]; then
     tmp=$(mktemp)
     jq --arg pid "$POLICY_IDS" '($pid | split(",")) as $ids |
-        .add_ingress[0].verify.policy_ids = $ids
+        .add_ingress[0].verify |= map(
+            if .as_provider == "ita" then .policy_ids = $ids else . end
+        )
     ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
 fi
 

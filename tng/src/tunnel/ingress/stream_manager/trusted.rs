@@ -42,8 +42,9 @@ impl TrustedStreamManager {
             bail!("'attest' is not supported with 'ohttp' on an ingress: client attestation over OHTTP is disabled, use 'rats_tls' instead (see the OHTTP section of docs/configuration.md)");
         }
         let ra_args = common_args.ra_args.clone().into_checked()?;
-        let ra_context =
-            Arc::new(RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics).await?);
+        let ra_context = Arc::new(
+            RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics, &runtime).await?,
+        );
 
         Ok(Self {
             stream_forwarder: {

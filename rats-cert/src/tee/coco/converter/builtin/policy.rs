@@ -16,7 +16,7 @@ pub type TeeClassPolicies = BTreeMap<String, String>;
 
 /// The TEE classes upstream's verifiers emit, and so the only classes a policy is ever resolved
 /// for.
-const TEE_CLASSES: &[&str] = &["cpu", "gpu", "switch", "ppcie"];
+pub(crate) const TEE_CLASSES: &[&str] = &["cpu", "gpu", "switch", "ppcie"];
 
 /// The class every attestation appraises, and so the one policy a deployment cannot omit.
 ///

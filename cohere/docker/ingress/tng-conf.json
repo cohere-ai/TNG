@@ -27,14 +27,38 @@
                 ],
                 "key_refresh_before_expiry_seconds": 5
             },
-            "verify": {
-                "as_provider": "ita",
-                "ita_jwks_addr": "https://portal.trustauthority.intel.com",
-                "model": "passport",
-                "policy_ids": [
-                    "cbeedffa-e224-4664-b6b4-573fcd4133d3"
-                ]
-            }
+            "verify": [
+                {
+                    "model": "passport",
+                    "as_provider": "ita",
+                    "ita_jwks_addr": "https://portal.trustauthority.intel.com",
+                    "policy_ids": [
+                        "cbeedffa-e224-4664-b6b4-573fcd4133d3"
+                    ]
+                },
+                {
+                    "model": "background_check",
+                    "as_provider": "coco_builtin",
+                    "policy_ids": ["trustee_policy"],
+                    "required_tee_classes": ["cpu", "gpu"],
+                    "policy_source": {
+                        "url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+                        "refresh_interval": 300,
+                        "provenance": {
+                            "repo": "cohere-ai/integritee",
+                            "signer_workflow": ".github/workflows/release-policy.yaml",
+                            "source_ref": "refs/heads/main",
+                            "predicate_type": "https://cohere.com/attestation-policy/v1",
+                            "environment": "release"
+                        }
+                    },
+                    "verifier_config": {
+                        "nvidia_verifier": {
+                            "type": "remote"
+                        }
+                    }
+                }
+            ]
         }
     ]
 }
