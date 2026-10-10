@@ -106,7 +106,7 @@ regex = "1.11.1"
 regorus = {version = "0.11.0", default-features = false, features = ["base64", "regex", "std", "time"]}
 reqwest = {version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls-webpki-roots", "brotli", "gzip", "zstd"]}
 ring = "0.17.8"
-rsa = {version = "0.9.7", features = ["sha2"]}
+rsa = {version = "0.9.10", features = ["sha2"]}
 rstest = "0.25.0"
 rtnetlink = "0.17.0"
 rustls = {version = "0.23.27", default-features = false, features = ["logging", "std", "tls12", "ring"]}
