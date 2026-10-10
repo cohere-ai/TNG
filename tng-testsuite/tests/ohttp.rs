@@ -1,9 +1,64 @@
 use anyhow::{Context, Result};
+use serde_json::Value;
 use serial_test::serial;
 use tng_testsuite::{
-    run_test,
+    capture_structured_logs, run_test,
     task::{app::AppType, shell::ShellTask, tng::TngInstance, NodeType, Task as _},
 };
+
+#[derive(Debug)]
+struct CacheLookupEvent {
+    cache_hit: bool,
+}
+
+#[derive(Debug)]
+struct EvidenceCompletionEvent {
+    attestation_model: String,
+    success: bool,
+}
+
+fn event_fields<'a>(logs: &'a [Value], event: &str) -> Vec<&'a Value> {
+    logs.iter()
+        .filter_map(move |log| {
+            let fields = log.get("fields")?;
+            (fields.get("event")?.as_str()? == event).then_some(fields)
+        })
+        .collect()
+}
+
+fn cache_lookup_events(logs: &[Value]) -> Vec<CacheLookupEvent> {
+    event_fields(logs, "passport_cache_lookup")
+        .into_iter()
+        .map(|fields| CacheLookupEvent {
+            cache_hit: fields["cache_hit"].as_bool().unwrap(),
+        })
+        .collect()
+}
+
+fn evidence_completion_events(logs: &[Value]) -> Vec<EvidenceCompletionEvent> {
+    event_fields(logs, "attestation_evidence_completed")
+        .into_iter()
+        .map(|fields| EvidenceCompletionEvent {
+            attestation_model: fields["attestation_model"].as_str().unwrap().to_owned(),
+            success: fields["success"].as_bool().unwrap(),
+        })
+        .collect()
+}
+
+fn client_attestation_phases(logs: &[Value], model: &str) -> Vec<String> {
+    event_fields(logs, "client_attestation_phase_completed")
+        .into_iter()
+        .filter(|fields| {
+            fields["attestation_model"].as_str() == Some(model)
+                && fields["protocol"].as_str() == Some("ohttp")
+        })
+        .map(|fields| {
+            assert_eq!(fields["success"], true);
+            assert!(fields["duration_ms"].as_f64().unwrap() >= 0.0);
+            fields["phase"].as_str().unwrap().to_owned()
+        })
+        .collect()
+}
 
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
@@ -317,6 +372,7 @@ async fn test_ingress_mapping_server_attest_client_no_ra() -> Result<()> {
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_ingress_mapping_with_load_balancer() -> Result<()> {
+    let capture = capture_structured_logs()?;
     run_test(vec![
         TngInstance::TngServer(
             r#"
@@ -397,6 +453,18 @@ async fn test_ingress_mapping_with_load_balancer() -> Result<()> {
         }.boxed(),
     ])
     .await?;
+
+    let logs = capture.finish()?;
+    assert_eq!(
+        client_attestation_phases(&logs, "passport"),
+        ["key_config_fetch", "token_decode", "token_verify"]
+    );
+    let completion = event_fields(&logs, "client_attestation_completed")
+        .into_iter()
+        .find(|fields| fields["attestation_model"] == "passport")
+        .context("missing passport client-attestation completion event")?;
+    assert_eq!(completion["success"], true);
+    assert!(completion["duration_ms"].as_f64().unwrap() >= 0.0);
 
     Ok(())
 }
@@ -491,6 +559,7 @@ async fn test_ra_model_matrix_server_attest_with_passport() -> Result<()> {
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_ra_model_matrix_server_attest_with_background_check() -> Result<()> {
+    let capture = capture_structured_logs()?;
     run_test(vec![
         TngInstance::TngServer(
             r#"
@@ -567,6 +636,25 @@ async fn test_ra_model_matrix_server_attest_with_background_check() -> Result<()
         }.boxed(),
     ])
     .await?;
+
+    let logs = capture.finish()?;
+    assert_eq!(
+        client_attestation_phases(&logs, "background_check"),
+        [
+            "challenge",
+            "key_config_fetch",
+            "evidence_decode",
+            "evidence_convert",
+            "token_verify",
+        ]
+    );
+    let completion = event_fields(&logs, "client_attestation_completed")
+        .into_iter()
+        .find(|fields| fields["attestation_model"] == "background_check")
+        .context("missing background-check client-attestation completion event")?;
+    assert_eq!(completion["success"], true);
+    assert!(completion["duration_ms"].as_f64().unwrap() >= 0.0);
+
     Ok(())
 }
 
@@ -743,6 +831,93 @@ async fn test_ra_model_matrix_client_attest_with_background_check() -> Result<()
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_server_attest_passport_cache() -> Result<()> {
+    let capture = capture_structured_logs()?;
+    run_test(vec![
+        TngInstance::TngServer(
+            r#"
+            {
+                "add_egress": [
+                    {
+                        "netfilter": {
+                            "capture_dst": {
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {},
+                        "attest": {
+                            "model": "passport",
+                            "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock",
+                            "as_addr": "http://192.168.1.254:8080/",
+                            "policy_ids": [
+                                "default"
+                            ]
+                        }
+                    }
+                ]
+            }
+            "#,
+        ).boxed(),
+        ShellTask {
+            name: "check_server_keyconfig_cached".to_owned(),
+            node_type: NodeType::Client,
+            script: r#"
+                # Reusable curl command
+                call_api() {
+                    curl --fail-with-body -sS -X POST http://192.168.1.1:30001 \
+                        -H "x-tng-ohttp-api: /tng/key-config" \
+                        -H "Content-Type: application/json" \
+                        -H "Accept: */*" \
+                        -H "User-Agent: tng/2.2.6" \
+                        -d '{"attestation_request":{"model":"passport"}}'
+                }
+
+                echo "Request 1..."
+                r1=$(call_api) || { echo "Error: Request 1 failed"; exit 1; }
+
+                echo "Request 2..."
+                r2=$(call_api) || { echo "Error: Request 2 failed"; exit 1; }
+
+                validate_response() {
+                    jq -e '
+                        (.hpke_key_config.expire_timestamp | type == "number") and
+                        (.hpke_key_config.encoded_key_config_list | type == "string" and length > 0) and
+                        (.attestation_info.model == "passport") and
+                        (.attestation_info.attestation_result | type == "string" and length > 0) and
+                        (.attestation_info.as_provider | type == "string" and length > 0)
+                    ' >/dev/null
+                }
+                printf '%s' "$r1" | validate_response
+                printf '%s' "$r2" | validate_response
+                [ "$r1" = "$r2" ] && echo "PASS: First two responses match" || { echo "FAIL: First two differ"; exit 1; }
+            "#
+            .to_owned(),
+            stop_test_on_finish: true,
+            run_in_foreground: false,
+        }
+        .boxed(),
+    ])
+    .await?;
+
+    let logs = capture.finish()?;
+    let cache_regeneration_events =
+        event_fields(&logs, "passport_cache_regeneration_started").len();
+    let cache_lookup_events = cache_lookup_events(&logs);
+    let evidence_completion_events = evidence_completion_events(&logs);
+
+    assert_eq!(cache_regeneration_events, 1);
+    assert_eq!(cache_lookup_events.len(), 2);
+    assert_eq!(cache_lookup_events[0].cache_hit, false);
+    assert_eq!(cache_lookup_events[1].cache_hit, true);
+    assert_eq!(evidence_completion_events.len(), 1);
+    assert_eq!(evidence_completion_events[0].attestation_model, "passport");
+    assert!(evidence_completion_events[0].success);
+
+    Ok(())
+}
+
+#[serial]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn test_server_attest_passport_refresh() -> Result<()> {
     run_test(vec![
         TngInstance::TngServer(
             r#"
@@ -768,19 +943,29 @@ async fn test_server_attest_passport_cache() -> Result<()> {
                 ]
             }
             "#,
-        ).boxed(),
+        )
+        .boxed(),
         ShellTask {
-            name: "check_server_keyconfig_cached".to_owned(),
+            name: "check_server_keyconfig_refresh".to_owned(),
             node_type: NodeType::Client,
             script: r#"
-                # Reusable curl command
                 call_api() {
-                    curl -s -X POST http://192.168.1.1:30001 \
+                    curl --fail-with-body -sS -X POST http://192.168.1.1:30001 \
                         -H "x-tng-ohttp-api: /tng/key-config" \
                         -H "Content-Type: application/json" \
                         -H "Accept: */*" \
                         -H "User-Agent: tng/2.2.6" \
                         -d '{"attestation_request":{"model":"passport"}}'
+                }
+
+                validate_response() {
+                    jq -e '
+                        (.hpke_key_config.expire_timestamp | type == "number") and
+                        (.hpke_key_config.encoded_key_config_list | type == "string" and length > 0) and
+                        (.attestation_info.model == "passport") and
+                        (.attestation_info.attestation_result | type == "string" and length > 0) and
+                        (.attestation_info.as_provider | type == "string" and length > 0)
+                    ' >/dev/null
                 }
 
                 echo "Request 1..."
@@ -789,6 +974,8 @@ async fn test_server_attest_passport_cache() -> Result<()> {
                 echo "Request 2..."
                 r2=$(call_api) || { echo "Error: Request 2 failed"; exit 1; }
 
+                printf '%s' "$r1" | validate_response
+                printf '%s' "$r2" | validate_response
                 [ "$r1" = "$r2" ] && echo "PASS: First two responses match" || { echo "FAIL: First two differ"; exit 1; }
 
                 echo "Waiting 5s..."
@@ -797,9 +984,8 @@ async fn test_server_attest_passport_cache() -> Result<()> {
                 echo "Request 3..."
                 r3=$(call_api) || { echo "Error: Request 3 failed"; exit 1; }
 
+                printf '%s' "$r3" | validate_response
                 [ "$r3" != "$r1" ] && echo "PASS: Third response differs" || { echo "FAIL: Third response is same"; exit 1; }
-
-                echo "SUCCESS: All tests passed"
             "#
             .to_owned(),
             stop_test_on_finish: true,
@@ -808,6 +994,77 @@ async fn test_server_attest_passport_cache() -> Result<()> {
         .boxed(),
     ])
     .await?;
+
+    Ok(())
+}
+
+#[serial]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn test_server_attest_background_check_evidence_events() -> Result<()> {
+    let capture = capture_structured_logs()?;
+    run_test(vec![
+        TngInstance::TngServer(
+            r#"
+            {
+                "add_egress": [
+                    {
+                        "netfilter": {
+                            "capture_dst": {
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {},
+                        "attest": {
+                            "model": "background_check",
+                            "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
+                        }
+                    }
+                ]
+            }
+            "#,
+        )
+        .boxed(),
+        ShellTask {
+            name: "request_two_background_check_keyconfigs".to_owned(),
+            node_type: NodeType::Client,
+            script: r#"
+                set -euo pipefail
+
+                call_api() {
+                    curl --fail-with-body -sS -X POST http://192.168.1.1:30001 \
+                        -H "x-tng-ohttp-api: /tng/key-config" \
+                        -H "Content-Type: application/json" \
+                        -d '{"attestation_request":{"model":"background_check","challenge_token":"dummy token"}}'
+                }
+
+                r1=$(call_api)
+                r2=$(call_api)
+                validate_response() {
+                    jq -e '
+                        (.hpke_key_config.expire_timestamp | type == "number") and
+                        (.hpke_key_config.encoded_key_config_list | type == "string" and length > 0) and
+                        (.attestation_info.model == "background_check") and
+                        (.attestation_info.evidence | type == "object") and
+                        (.attestation_info.aa_provider | type == "string" and length > 0)
+                    ' >/dev/null
+                }
+                printf '%s' "$r1" | validate_response
+                printf '%s' "$r2" | validate_response
+            "#
+            .to_owned(),
+            stop_test_on_finish: true,
+            run_in_foreground: false,
+        }
+        .boxed(),
+    ])
+    .await?;
+
+    let logs = capture.finish()?;
+    let evidence_completion_events = evidence_completion_events(&logs);
+    assert_eq!(evidence_completion_events.len(), 2);
+    assert!(evidence_completion_events
+        .iter()
+        .all(|event| event.attestation_model == "background_check" && event.success));
 
     Ok(())
 }
@@ -851,12 +1108,22 @@ async fn test_server_attest_passport_rotation_interval() -> Result<()> {
             script: r#"
                 # Reusable curl command
                 call_api() {
-                    curl -s -X POST http://192.168.1.1:30001 \
+                    curl --fail-with-body -sS -X POST http://192.168.1.1:30001 \
                         -H "x-tng-ohttp-api: /tng/key-config" \
                         -H "Content-Type: application/json" \
                         -H "Accept: */*" \
                         -H "User-Agent: tng/2.2.6" \
                         -d '{"attestation_request":{"model":"passport"}}'
+                }
+
+                validate_response() {
+                    jq -e '
+                        (.hpke_key_config.expire_timestamp | type == "number") and
+                        (.hpke_key_config.encoded_key_config_list | type == "string" and length > 0) and
+                        (.attestation_info.model == "passport") and
+                        (.attestation_info.attestation_result | type == "string" and length > 0) and
+                        (.attestation_info.as_provider | type == "string" and length > 0)
+                    ' >/dev/null
                 }
 
                 echo "Request 1..."
@@ -865,6 +1132,8 @@ async fn test_server_attest_passport_rotation_interval() -> Result<()> {
                 echo "Request 2..."
                 r2=$(call_api) || { echo "Error: Request 2 failed"; exit 1; }
 
+                printf '%s' "$r1" | validate_response
+                printf '%s' "$r2" | validate_response
                 [ "$r1" = "$r2" ] && echo "PASS: First two responses match" || { echo "FAIL: First two differ"; exit 1; }
 
                 echo "Waiting 5s..."
@@ -873,6 +1142,7 @@ async fn test_server_attest_passport_rotation_interval() -> Result<()> {
                 echo "Request 3..."
                 r3=$(call_api) || { echo "Error: Request 3 failed"; exit 1; }
 
+                printf '%s' "$r3" | validate_response
                 [ "$r3" != "$r1" ] && echo "PASS: Third response differs" || { echo "FAIL: Third response is same"; exit 1; }
 
                 echo "SUCCESS: All tests passed"
