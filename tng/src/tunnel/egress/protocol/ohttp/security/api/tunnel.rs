@@ -1,8 +1,11 @@
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
+
 use anyhow::{anyhow, Result};
 use bhttp::http_compat::decode::{BhttpDecoder, HttpMessage};
 use bhttp::http_compat::encode::BhttpEncoder;
-use bytes::BytesMut;
-use futures::{AsyncWriteExt, StreamExt as _, TryStreamExt as _};
+use bytes::{Bytes, BytesMut};
+use futures::{AsyncWriteExt, Stream, StreamExt as _, TryStreamExt as _};
 use prost::Message as _;
 use tokio::io::AsyncReadExt;
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;
@@ -18,6 +21,7 @@ use crate::tunnel::ohttp::protocol::header::{
     OHTTP_CHUNKED_REQUEST_CONTENT_TYPE, OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE,
 };
 use crate::tunnel::ohttp::protocol::metadata::{Metadata, METADATA_MAX_LEN};
+use crate::TokioRuntime;
 
 impl OhttpServerApi {
     /// Interface 2: Process Encrypted Request
@@ -48,10 +52,11 @@ impl OhttpServerApi {
         }
 
         let mut reader = tokio_util::io::StreamReader::new(
-            payload
-                .into_body()
-                .into_data_stream()
-                .map(|result| result.map_err(std::io::Error::other)),
+            DrainOnDrop::new(
+                payload.into_body().into_data_stream(),
+                context.runtime.clone(),
+            )
+            .map(|result| result.map_err(std::io::Error::other)),
         );
 
         // Read and decode matadata
@@ -170,5 +175,99 @@ impl OhttpServerApi {
             .map_err(TngError::ConstructHttpResponseFailed)?;
 
         Ok(response)
+    }
+}
+
+/// Outer request body that is read to EOF in the background once the OHTTP decoder drops it.
+///
+/// The bhttp decoder stops at the inner message's trailers, before the final OHTTP chunk and the
+/// outer chunked terminator. If hyper sees the body dropped with those bytes unread, it closes the
+/// connection after the response, and the kernel turns that close into an RST that discards any
+/// response bytes still queued for the client.
+struct DrainOnDrop {
+    inner: Option<axum::body::BodyDataStream>,
+    runtime: TokioRuntime,
+}
+
+impl DrainOnDrop {
+    fn new(inner: axum::body::BodyDataStream, runtime: TokioRuntime) -> Self {
+        Self {
+            inner: Some(inner),
+            runtime,
+        }
+    }
+}
+
+impl Stream for DrainOnDrop {
+    type Item = Result<Bytes, axum::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let Some(inner) = self.inner.as_mut() else {
+            return Poll::Ready(None);
+        };
+        let item = ready!(inner.poll_next_unpin(cx));
+        if item.is_none() {
+            self.inner = None;
+        }
+        Poll::Ready(item)
+    }
+}
+
+impl Drop for DrainOnDrop {
+    fn drop(&mut self) {
+        if let Some(mut inner) = self.inner.take() {
+            self.runtime.spawn_supervised_task_current_span(async move {
+                while let Some(Ok(_)) = inner.next().await {}
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::tests::run_test_with_tokio_runtime;
+
+    #[tokio::test]
+    async fn dropped_body_is_read_to_eof() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let reached_eof = Arc::new(AtomicBool::new(false));
+            let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(4);
+            let body_stream = {
+                let reached_eof = reached_eof.clone();
+                futures::stream::unfold(rx, |mut rx| async move {
+                    rx.recv().await.map(|item| (item, rx))
+                })
+                .chain(futures::stream::once(async move {
+                    reached_eof.store(true, Ordering::SeqCst);
+                    Ok(Bytes::new())
+                }))
+            };
+            let body = axum::body::Body::from_stream(body_stream).into_data_stream();
+
+            let mut stream = DrainOnDrop::new(body, runtime);
+            tx.send(Ok(Bytes::from_static(b"head"))).await?;
+            assert_eq!(
+                stream.next().await.transpose()?,
+                Some(Bytes::from_static(b"head"))
+            );
+            drop(stream);
+
+            tx.send(Ok(Bytes::from_static(b"tail"))).await?;
+            drop(tx);
+
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !reached_eof.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await?;
+            Ok(())
+        })
+        .await
     }
 }
