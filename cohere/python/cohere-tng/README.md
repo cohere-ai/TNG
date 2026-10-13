@@ -79,8 +79,11 @@ with httpx.Client(transport=transport) as client:
 Both `verify` and `ohttp` follow the same schema as TNG's
 [configuration](https://github.com/cohere-ai/tng/blob/cohere/docs/configuration.md).
 
-- **`verify`** (required) — Attestation verification config dict. Pass `None`
-  to explicitly disable verification — not recommended for production.
+- **`verify`** (required) — Attestation verification config dict, or a list of
+  them to accept a remote that attests in any one of those ways (see
+  [Multiple Verifiers](https://github.com/cohere-ai/tng/blob/cohere/docs/configuration.md#multiple-verifiers)).
+  Pass `None` to explicitly disable verification — not recommended for
+  production.
 - **`ohttp`** (optional) — OHTTP config dict (`forward_headers`,
   `tls_ca_certs`, etc.).
 

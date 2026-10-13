@@ -7,8 +7,6 @@ pub const OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE: &str = "message/ohttp-chunked-res
 pub enum OhttpApi {
     KeyConfig,
     Tunnel,
-    BackgroundCheckChallenge,
-    BackgroundCheckVerify,
 }
 
 impl OhttpApi {
@@ -17,8 +15,4 @@ impl OhttpApi {
     pub const KEY_CONFIG: &'static str = "/tng/key-config";
     /// - POST /tng/tunnel: Process encrypted requests
     pub const TUNNEL: &'static str = "/tng/tunnel";
-    /// - GET /tng/background-check/challenge: Get attestation challenge
-    pub const BACKGROUND_CHECK_CHALLENGE: &'static str = "/tng/background-check/challenge";
-    /// - POST /tng/background-check/verify: Verify attestation evidence
-    pub const BACKGROUND_CHECK_VERIFY: &'static str = "/tng/background-check/verify";
 }

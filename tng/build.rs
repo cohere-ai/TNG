@@ -12,10 +12,7 @@ fn main() {
 
     // For protoc
     prost_build::Config::new()
-        .skip_debug([
-            "tng.ohttp.metadata.ServerKeyConfigHint",
-            "tng.ohttp.metadata.AttestedPublicKey",
-        ])
+        .skip_debug(["tng.ohttp.metadata.ServerKeyConfigHint"])
         .compile_protos(
             &["src/tunnel/ohttp/protocol/metadata.proto"],
             &["src/tunnel/ohttp/protocol/"],
@@ -25,12 +22,6 @@ fn main() {
     prost_build::compile_protos(
         &["src/tunnel/egress/protocol/ohttp/security/key_manager/peer_shared/key_update.proto"],
         &["src/tunnel/egress/protocol/ohttp/security/key_manager/peer_shared/"],
-    )
-    .unwrap();
-
-    prost_build::compile_protos(
-        &["src/tunnel/attestation_exchange/exchange.proto"],
-        &["src/tunnel/attestation_exchange/"],
     )
     .unwrap();
 }

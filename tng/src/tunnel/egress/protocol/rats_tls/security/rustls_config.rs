@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::tunnel::utils::cert_manager::AttestedKey;
 use crate::tunnel::utils::rustls_config::{RustlsDummyCert, TlsConfigGenerator};
 use anyhow::Result;
 use rustls::ServerConfig;
@@ -38,7 +39,7 @@ impl TlsConfigGenerator {
                     ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
                         .with_no_client_auth()
                         .with_cert_resolver(Arc::new(rustls::sign::SingleCertAndKey::from(
-                            key.as_ref().clone(),
+                            key.cert.clone(),
                         )));
                 OnetimeTlsServerConfig {
                     config: tls_server_config,
@@ -53,7 +54,7 @@ impl TlsConfigGenerator {
                     ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
                         .with_client_cert_verifier(verifier.clone())
                         .with_cert_resolver(Arc::new(rustls::sign::SingleCertAndKey::from(
-                            key.as_ref().clone(),
+                            key.cert.clone(),
                         )));
                 OnetimeTlsServerConfig {
                     config: tls_server_config,
@@ -72,5 +73,5 @@ impl TlsConfigGenerator {
 pub struct OnetimeTlsServerConfig {
     pub config: rustls::ServerConfig,
     pub verifier: Option<Arc<TngClientCertVerifier>>,
-    pub attested_key: Option<Arc<rustls::sign::CertifiedKey>>,
+    pub attested_key: Option<Arc<AttestedKey>>,
 }

@@ -1,18 +1,37 @@
+use std::error::Error;
+use std::fmt;
+
 use anyhow::{bail, Context, Result};
-use prost::Message;
+use serde::{de::DeserializeOwned, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use super::pb;
+use crate::tunnel::attest::{AttestRequest, AttestResponse};
 
 /// Cap sized for a TEE quote or passport token, not an OHTTP keyset.
 pub const MAX_FRAME_SIZE: u32 = 256 * 1024;
 
+/// Marks a frame whose JSON is not an [`AttestRequest`] or [`AttestResponse`].
+#[derive(Debug)]
+struct MalformedMessage;
+
+impl fmt::Display for MalformedMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("malformed attestation exchange message")
+    }
+}
+
+impl Error for MalformedMessage {}
+
+pub fn is_malformed(err: &anyhow::Error) -> bool {
+    err.is::<MalformedMessage>()
+}
+
 async fn write_msg<W, M>(writer: &mut W, msg: &M) -> Result<()>
 where
     W: AsyncWrite + Unpin,
-    M: Message,
+    M: Serialize,
 {
-    let buf = msg.encode_to_vec();
+    let buf = serde_json::to_vec(msg).context("failed to encode exchange message")?;
     let len = u32::try_from(buf.len()).context("exchange message larger than u32")?;
     if len > MAX_FRAME_SIZE {
         bail!("exchange message size ({len} bytes) exceeds maximum ({MAX_FRAME_SIZE} bytes)");
@@ -26,28 +45,31 @@ where
 async fn read_msg<R, M>(reader: &mut R) -> Result<M>
 where
     R: AsyncRead + Unpin,
-    M: Message + Default,
+    M: DeserializeOwned,
 {
     let buf = read_frame(reader).await?;
-    M::decode(buf.as_slice()).context("failed to decode exchange message")
+    serde_json::from_slice(&buf).context(MalformedMessage)
 }
 
-pub async fn write_request<W: AsyncWrite + Unpin>(writer: &mut W, msg: &pb::Request) -> Result<()> {
+pub async fn write_request<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    msg: &AttestRequest,
+) -> Result<()> {
     write_msg(writer, msg).await
 }
 
-pub async fn read_request<R: AsyncRead + Unpin>(reader: &mut R) -> Result<pb::Request> {
+pub async fn read_request<R: AsyncRead + Unpin>(reader: &mut R) -> Result<AttestRequest> {
     read_msg(reader).await
 }
 
 pub async fn write_response<W: AsyncWrite + Unpin>(
     writer: &mut W,
-    msg: &pb::Response,
+    msg: &AttestResponse,
 ) -> Result<()> {
     write_msg(writer, msg).await
 }
 
-pub async fn read_response<R: AsyncRead + Unpin>(reader: &mut R) -> Result<pb::Response> {
+pub async fn read_response<R: AsyncRead + Unpin>(reader: &mut R) -> Result<AttestResponse> {
     read_msg(reader).await
 }
 
@@ -73,17 +95,20 @@ async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tunnel::attestation_exchange::pb::{
-        request, response, BackgroundCheck, Evidence, Passport, Request, Response, Token,
+    use crate::error::AttestError;
+    use crate::tunnel::attest::{
+        evidence_response, token_response, AttestProposal, AttestResponse, Model,
     };
+    use crate::tunnel::provider::ProviderType;
+    use serde_json::json;
 
-    async fn round_trip_request(sent: Request) -> Request {
+    async fn round_trip_request(sent: AttestRequest) -> AttestRequest {
         let (mut a, mut b) = tokio::io::duplex(256);
         write_request(&mut a, &sent).await.unwrap();
         read_request(&mut b).await.unwrap()
     }
 
-    async fn round_trip_response(sent: Response) -> Response {
+    async fn round_trip_response(sent: AttestResponse) -> AttestResponse {
         let (mut a, mut b) = tokio::io::duplex(256);
         write_response(&mut a, &sent).await.unwrap();
         read_response(&mut b).await.unwrap()
@@ -91,82 +116,45 @@ mod tests {
 
     #[tokio::test]
     async fn request_and_response_round_trips() {
-        let none = Request {
-            body: Some(request::Body::None(pb::None {})),
-        };
+        let none = AttestRequest::default();
         assert_eq!(round_trip_request(none.clone()).await, none);
+        assert_eq!(
+            serde_json::to_value(&none).unwrap(),
+            json!({"proposals": []})
+        );
 
-        let nonce = br#"{"val":"abc+/=","iat":1}"#;
-        let got = round_trip_request(Request {
-            body: Some(request::Body::BackgroundCheck(BackgroundCheck {
-                nonce: nonce.to_vec(),
-            })),
-        })
-        .await;
-        match got.body {
-            Some(request::Body::BackgroundCheck(bc)) => assert_eq!(bc.nonce, nonce),
-            other => panic!("expected background_check, got {other:?}"),
-        }
-
-        let passport = Request {
-            body: Some(request::Body::Passport(Passport {})),
+        let proposals = AttestRequest {
+            proposals: vec![
+                AttestProposal::BackgroundCheck {
+                    provider: ProviderType::Ita,
+                    challenge_token: r#"{"val":"abc+/=","iat":1}"#.into(),
+                },
+                AttestProposal::Passport {
+                    provider: ProviderType::Coco,
+                },
+            ],
         };
-        assert_eq!(round_trip_request(passport.clone()).await, passport);
+        assert_eq!(round_trip_request(proposals.clone()).await, proposals);
 
-        match round_trip_response(Response {
-            body: Some(response::Body::Evidence(Evidence {
-                provider: "coco".into(),
-                json: r#"{"aa_tee_type":"tdx","aa_evidence":"aGVsbG8="}"#.into(),
-            })),
-        })
-        .await
-        .body
-        {
-            Some(response::Body::Evidence(ev)) => {
-                assert_eq!(ev.provider, "coco");
-                assert!(ev.json.contains("aa_tee_type"));
-            }
-            other => panic!("expected evidence, got {other:?}"),
-        }
+        let evidence = evidence_response(
+            ProviderType::Coco,
+            json!({"aa_tee_type": "tdx", "aa_evidence": "aGVsbG8="}),
+        );
+        assert_eq!(round_trip_response(evidence.clone()).await, evidence);
 
         let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
-        match round_trip_response(Response {
-            body: Some(response::Body::Token(Token {
-                provider: "ita".into(),
-                jwt: jwt.into(),
-            })),
-        })
-        .await
-        .body
-        {
-            Some(response::Body::Token(t)) => {
-                assert_eq!(t.provider, "ita");
-                assert_eq!(t.jwt, jwt);
-            }
-            other => panic!("expected token, got {other:?}"),
-        }
+        let token = token_response(ProviderType::Ita, jwt);
+        assert_eq!(round_trip_response(token.clone()).await, token);
 
-        match round_trip_response(Response {
-            body: Some(response::Body::Error(pb::Error {
-                reason: "not configured to attest".into(),
-            })),
-        })
-        .await
-        .body
-        {
-            Some(response::Body::Error(e)) => assert_eq!(e.reason, "not configured to attest"),
-            other => panic!("expected error, got {other:?}"),
-        }
+        let err = Err(AttestError::NotConfigured);
+        assert_eq!(round_trip_response(err.clone()).await, err);
+        let duplicate = Err(AttestError::DuplicateProposal {
+            model: Model::BackgroundCheck,
+            provider: ProviderType::Coco,
+        });
+        assert_eq!(round_trip_response(duplicate.clone()).await, duplicate);
 
-        match round_trip_response(Response {
-            body: Some(response::Body::Ack(pb::None {})),
-        })
-        .await
-        .body
-        {
-            Some(response::Body::Ack(_)) => {}
-            other => panic!("expected ack, got {other:?}"),
-        }
+        assert_eq!(round_trip_response(Ok(None)).await, Ok(None));
     }
 
     #[tokio::test]
@@ -178,6 +166,7 @@ mod tests {
         a.flush().await.unwrap();
         let err = read_request(&mut b).await.unwrap_err();
         assert!(err.to_string().contains("exceeds maximum"));
+        assert!(!is_malformed(&err));
 
         let (mut a, mut b) = tokio::io::duplex(16);
         a.write_all(&8u32.to_be_bytes()).await.unwrap();
@@ -186,5 +175,21 @@ mod tests {
         drop(a);
         let err = read_request(&mut b).await.unwrap_err();
         assert!(err.to_string().contains("truncated"));
+        assert!(!is_malformed(&err));
+    }
+
+    #[tokio::test]
+    async fn invalid_json_is_malformed() {
+        let (mut a, mut b) = tokio::io::duplex(256);
+        let body = br#"{"proposals":[{"model":"passport","provider":"bad_provider"}]}"#;
+        a.write_u32(body.len() as u32).await.unwrap();
+        a.write_all(body).await.unwrap();
+        a.flush().await.unwrap();
+        let err = read_request(&mut b).await.unwrap_err();
+        assert!(is_malformed(&err));
+        assert!(
+            format!("{err:#}").contains("no recognized proposal"),
+            "{err:#}"
+        );
     }
 }

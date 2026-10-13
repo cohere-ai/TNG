@@ -1,4 +1,5 @@
 pub(crate) mod access_log;
+pub(crate) mod attest;
 #[cfg(unix)]
 pub(crate) mod attestation_exchange;
 #[cfg(unix)]

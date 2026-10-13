@@ -57,7 +57,7 @@ impl TngEvidence {
         }
     }
 
-    /// Serialize to the CoCo evidence JSON object. OHTTP adds `aa_provider` beside this value.
+    /// Serialize to the CoCo evidence JSON object. The wire carries `provider` beside this value.
     pub fn serialize_to_json(&self) -> serde_json::Result<serde_json::Value> {
         match self {
             Self::Coco(e) => e.serialize_to_json(),
@@ -65,7 +65,7 @@ impl TngEvidence {
         }
     }
 
-    /// Deserialize evidence JSON for `provider` (OHTTP passes [`ProviderType`] from `aa_provider`).
+    /// Deserialize evidence JSON for `provider` (taken from the wire `provider` field).
     pub fn deserialize_from_json(provider: ProviderType, value: serde_json::Value) -> Result<Self> {
         match provider {
             ProviderType::Coco => Ok(Self::Coco(CocoEvidence::deserialize_from_json(value)?)),

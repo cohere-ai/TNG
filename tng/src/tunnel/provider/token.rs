@@ -63,12 +63,12 @@ impl TngToken {
         }
     }
 
-    /// JSON string value containing the JWT. OHTTP adds `as_provider` beside this in API types.
+    /// JSON string value containing the JWT. The wire carries `provider` beside this value.
     pub fn serialize_to_json(&self) -> Result<serde_json::Value> {
         Ok(serde_json::Value::String(self.as_str().to_owned()))
     }
 
-    /// Deserialize a JSON string JWT. `provider` comes from OHTTP `as_provider` (same idea as evidence).
+    /// Deserialize a JSON string JWT. `provider` comes from the wire `provider` field.
     pub fn deserialize_from_json(provider: ProviderType, value: serde_json::Value) -> Result<Self> {
         match value {
             serde_json::Value::String(s) => Self::from_wire(provider, s),
