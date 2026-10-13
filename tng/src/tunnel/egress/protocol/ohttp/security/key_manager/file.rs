@@ -21,14 +21,19 @@ use crate::{
     TokioRuntime,
 };
 
+/// How long a replaced key keeps decrypting: it must outlive the key config rebuild, which mints
+/// a passport.
+const REPLACED_KEY_GRACE: Duration = Duration::from_secs(60);
+
 /// A key manager that loads an HPKE private key from a PEM file and monitors the file for changes.
 ///
 /// This implementation supports dynamic reloading of the OHTTP decryption key when the underlying
 /// PEM file is updated on disk (e.g., via external certificate rotation tools).
 ///
 /// It uses the `notify` crate to watch for filesystem events and automatically triggers callbacks
-/// when a new key is loaded. Old keys are replaced immediately upon reload — it's expected that
-/// clients will re-fetch public key configurations after updates.
+/// when a new key is loaded. Only the new key is advertised after a reload, and the old one still
+/// decrypts for [`REPLACED_KEY_GRACE`] — it's expected that clients will re-fetch public key
+/// configurations after updates.
 ///
 /// # Thread Safety
 /// Internally uses `Arc<RwLock<...>>` for shared access, making it safe to use across async tasks.
@@ -52,6 +57,10 @@ struct FileBasedKeyManagerInner {
     /// Protected by a write lock during updates; readers can concurrently access the current key.
     /// When the file is modified, a new `KeyInfo` replaces the old one atomically.
     key: RwLock<Option<(PublicKeyData, KeyInfo)>>,
+
+    /// The key replaced by the last reload. It still decrypts until its `expire_at`, so clients
+    /// handed it before the new key config is published are still served.
+    replaced: RwLock<Option<(PublicKeyData, KeyInfo)>>,
 
     /// Manages registration and invocation of callbacks on key lifecycle events (create/remove).
     ///
@@ -97,6 +106,7 @@ impl FileBasedKeyManager {
 
         let inner = Arc::new(FileBasedKeyManagerInner {
             key: RwLock::new(Some((key_info.key_config.public_key_data()?, key_info))),
+            replaced: RwLock::new(None),
             callback_manager: CallbackManager::new(),
         });
 
@@ -128,7 +138,15 @@ impl FileBasedKeyManager {
                                                 continue;
                                             }
                                         };
-                                    write.replace((public_key_data, new_key_info.clone()))
+                                    let old =
+                                        write.replace((public_key_data, new_key_info.clone()));
+                                    *inner_clone.replaced.write().await =
+                                        old.clone().map(|(public_key_data, mut key_info)| {
+                                            key_info.expire_at =
+                                                SystemTime::now() + REPLACED_KEY_GRACE;
+                                            (public_key_data, key_info)
+                                        });
+                                    old
                                 };
 
                                 // Trigger creation event for the new key
@@ -222,9 +240,15 @@ impl KeyManager for FileBasedKeyManager {
         public_key_data: &PublicKeyData,
     ) -> Result<KeyInfo, TngError> {
         let key = self.inner.key.read().await;
-        match key.as_ref() {
-            Some((p, k)) if p == public_key_data => Ok(k.clone()),
-            _ => Err(TngError::ServerKeyConfigNotFound(either::Either::Right(
+        let replaced = self.inner.replaced.read().await;
+        let now = SystemTime::now();
+        match key
+            .iter()
+            .chain(replaced.iter())
+            .find(|(p, k)| p == public_key_data && k.expire_at > now)
+        {
+            Some((_, k)) => Ok(k.clone()),
+            None => Err(TngError::ServerKeyConfigNotFound(either::Either::Right(
                 public_key_data.clone(),
             ))),
         }
@@ -261,5 +285,43 @@ impl KeyManager for FileBasedKeyManager {
 impl Drop for FileBasedKeyManager {
     fn drop(&mut self) {
         self.watch_task.abort();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::run_test_with_tokio_runtime;
+
+    const KEY_1: &str = "-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VuBCIEIOixlJE0Ykdc4ePwmaf2LLAea8Lfkfb+SARsKYmCBRpR
+-----END PRIVATE KEY-----";
+    const KEY_2: &str = "-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VuBCIEIGA/SyKnQ6JfKjKrxdNxTzf0YaiaSDehWBG73u09kCFp
+-----END PRIVATE KEY-----";
+
+    #[tokio::test]
+    async fn replaced_key_still_decrypts_after_reload() -> anyhow::Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let dir = tempfile::tempdir()?;
+            let path = dir.path().join("key.pem");
+            std::fs::write(&path, KEY_1)?;
+            let manager = FileBasedKeyManager::new(runtime, path.clone()).await?;
+            let old = manager.get_client_visible_keys().await?[0]
+                .key_config
+                .public_key_data()?;
+
+            std::fs::write(&path, KEY_2)?;
+            for _ in 0..50 {
+                let visible = manager.get_client_visible_keys().await?;
+                if visible[0].key_config.public_key_data()? != old {
+                    manager.get_key_by_public_key_data(&old).await?;
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            anyhow::bail!("key was not reloaded")
+        })
+        .await
     }
 }
