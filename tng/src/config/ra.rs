@@ -853,6 +853,7 @@ fn inject_ita_api_key_default(obj: &mut serde_json::Map<String, serde_json::Valu
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use serial_test::serial;
 
     use super::*;
 
@@ -1625,6 +1626,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ita_api_key_env)]
     fn test_ita_api_key_defaults_from_env() {
         let env_key = "env-key-456";
         let json = json!({
@@ -1684,6 +1686,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ita_api_key_env)]
     fn test_ita_background_check_verify_into_checked_rejects_missing_api_key() {
         std::env::remove_var(ITA_API_KEY_ENV);
         let json = json!({
@@ -1712,6 +1715,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(ita_api_key_env)]
     fn test_ita_passport_attest_into_checked_rejects_missing_api_key() {
         std::env::remove_var(ITA_API_KEY_ENV);
         let json = json!({
