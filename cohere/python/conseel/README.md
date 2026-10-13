@@ -55,8 +55,9 @@ async with httpx.AsyncClient(transport=AsyncTransport()) as client:
 
 1. **Encrypts** all traffic via OHTTP so that even the network infrastructure
    cannot inspect request or response payloads.
-2. **Verifies** the remote TEE via Intel Trust Authority attestation before
-   sending any data (configurable via the `verify` parameter).
+2. **Verifies** the remote TEE before sending any data, accepting either an
+   Intel Trust Authority passport or a background-check appraisal against the
+   latest signed integritee policy release (configurable via `verify`).
 3. **Promotes** the `model` field from JSON request bodies to the
    `x-gateway-model-name` HTTP header for gateway routing. This happens
    inside TNG via `body_field_headers` config. Body parsing is skipped
@@ -73,7 +74,10 @@ for the full schema). The only difference is that `conseel` provides sensible
 defaults:
 
 - **`verify`** — Defaults to Intel Trust Authority attestation. Accepts one
-  config dict or a list of them. Pass `None` to disable verification (not
+  config dict or a list of them. Defaults to a list of two verifiers: Intel Trust Authority
+  passport, and the builtin attestation service in background-check mode
+  fetching `trustee_policy` from the latest integritee release. Pass a single
+  object to allow only one, or `None` to disable verification (not
   recommended for production).
 - **`ohttp`** — Defaults include forwarding `authorization` headers and
   promoting the `model` JSON body field to `x-gateway-model-name` via

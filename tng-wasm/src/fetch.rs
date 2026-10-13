@@ -306,7 +306,7 @@ async fn send_request_async_impl(
     let shutdown = tokio_graceful::Shutdown::no_signal();
     let runtime = TokioRuntime::wasm_main_thread(shutdown.guard())?;
 
-    let ra_context = Arc::new(RaContext::from_ra_args(&ra_args).await?);
+    let ra_context = Arc::new(RaContext::from_ra_args(&ra_args, &runtime).await?);
     let ohttp_security_layer = OHttpSecurityLayer::new(ohttp, ra_context, runtime.clone()).await?;
 
     let (response, attestation_result) = ohttp_security_layer

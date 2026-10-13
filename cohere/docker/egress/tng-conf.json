@@ -7,18 +7,6 @@
     },
     "add_egress": [
         {
-            "attest": {
-                "aa_provider": "ita_asr",
-                "as_provider": "ita",
-                "asr_addr": "http://127.0.0.1:8006/",
-                "as_addr": "https://api.trustauthority.intel.com",
-                "model": "passport",
-                "max_retries": 0,
-                "ita_retry_initial_delay_ms": 500,
-                "ita_retry_max_delay_ms": 5000,
-                "ita_max_retries": 4,
-                "policy_ids": []
-            },
             "direct_forward": [
                 {
                     "http_path": "^/(ping|health|metrics)$"
@@ -36,18 +24,6 @@
             },
             "ohttp": {
                 "key": {
-                    "attest": {
-                        "aa_provider": "ita_asr",
-                        "as_provider": "ita",
-                        "asr_addr": "http://127.0.0.1:8006/",
-                        "as_addr": "https://api.trustauthority.intel.com",
-                        "model": "passport",
-                        "max_retries": 0,
-                        "ita_retry_initial_delay_ms": 500,
-                        "ita_retry_max_delay_ms": 5000,
-                        "ita_max_retries": 4,
-                        "policy_ids": []
-                    },
                     "peers": [],
                     "port": 8301,
                     "rotation_interval": 300,
@@ -55,13 +31,7 @@
                     "push_pull_interval": 5,
                     "activation_delay": 15,
                     "join_max_attempts": 0,
-                    "join_retry_interval": 5,
-                    "verify": {
-                        "as_provider": "ita",
-                        "ita_jwks_addr": "https://portal.trustauthority.intel.com",
-                        "model": "passport",
-                        "policy_ids": []
-                    }
+                    "join_retry_interval": 5
                 }
             }
         }

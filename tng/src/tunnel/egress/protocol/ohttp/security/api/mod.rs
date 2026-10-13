@@ -149,17 +149,20 @@ mod tests {
     async fn failed_passport_mint_still_serves_the_key_config() -> Result<()> {
         run_test_with_tokio_runtime(|runtime| async move {
             let (aa_addr, _listener) = dummy_aa();
-            let ra_context = RaContext::from_ra_args(&RaArgs::AttestOnly(AttestArgs::Passport {
-                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
-                converter: ConverterArgs::Coco(CocoConverterArgs::Restful {
-                    as_addr: "http://127.0.0.1:1".into(),
-                    policy_ids: vec![],
-                    as_headers: Default::default(),
-                    as_ca_certs: vec![],
+            let ra_context = RaContext::from_ra_args(
+                &RaArgs::AttestOnly(AttestArgs::Passport {
+                    attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
+                    converter: ConverterArgs::Coco(CocoConverterArgs::Restful {
+                        as_addr: "http://127.0.0.1:1".into(),
+                        policy_ids: vec![],
+                        as_headers: Default::default(),
+                        as_ca_certs: vec![],
+                    }),
+                    refresh_interval: None,
+                    max_retries: Some(0),
                 }),
-                refresh_interval: None,
-                max_retries: Some(0),
-            }))
+                &runtime,
+            )
             .await?;
             let api = OhttpServerApi::new(
                 Arc::new(ra_context),
@@ -194,13 +197,15 @@ mod tests {
     async fn key_rotation_refreshes_snapshot_without_a_request() -> Result<()> {
         run_test_with_tokio_runtime(|runtime| async move {
             let (aa_addr, _listener) = dummy_aa();
-            let ra_context =
-                RaContext::from_ra_args(&RaArgs::AttestOnly(AttestArgs::BackgroundCheck {
+            let ra_context = RaContext::from_ra_args(
+                &RaArgs::AttestOnly(AttestArgs::BackgroundCheck {
                     attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
                     refresh_interval: Some(3600),
                     max_retries: None,
-                }))
-                .await?;
+                }),
+                &runtime,
+            )
+            .await?;
             let api = OhttpServerApi::new(
                 Arc::new(ra_context),
                 KeyArgs::SelfGenerated {

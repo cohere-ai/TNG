@@ -121,7 +121,7 @@ impl PeerSharedKeyManager {
         );
         let ra_args = peer_shared.ra_args.clone().into_checked()?;
         let ra_context = Arc::new(
-            RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics.clone())
+            RaContext::from_ra_args_with_metrics(&ra_args, attestation_metrics.clone(), runtime)
                 .await
                 .map_err(TngError::InvalidParameter)?,
         );
@@ -284,18 +284,14 @@ impl PeerSharedKeyManager {
                         break;
                     };
 
-                    match join_serf_cluster(&serf_ref, &peers).await {
-                        Ok(()) => {
-                            tracing::info!(attempt, "Retry-join: successfully joined cluster");
-                            break;
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                attempt,
-                                error = ?e,
-                                "Retry-join: failed, will retry"
-                            );
-                        }
+                    // A successful join may only have reached ourselves, so the
+                    // member count check above is the sole exit on success.
+                    if let Err(e) = join_serf_cluster(&serf_ref, &peers).await {
+                        tracing::warn!(
+                            attempt,
+                            error = ?e,
+                            "Retry-join: failed, will retry"
+                        );
                     }
                 }
             }))

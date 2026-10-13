@@ -107,6 +107,24 @@ pub enum Error {
     #[error("The token was not signed by the builtin attestation service in this process")]
     CocoBuiltinAsForeignTokenSigner,
 
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("The policy release failed its provenance check")]
+    PolicyProvenanceFailed(#[source] std::sync::Arc<anyhow::Error>),
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Invalid 'policy_source': {0}")]
+    InvalidPolicySource(&'static str),
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error("Failed to fetch the policy release")]
+    PolicySourceFailed(#[source] std::sync::Arc<anyhow::Error>),
+
+    #[cfg(feature = "__coco-builtin-as")]
+    #[error(
+        "Replacement policies drop the installed `{tee_class}` policy, which cannot be removed"
+    )]
+    CocoBuiltinAsPolicyClassDropped { tee_class: String },
+
     // Remote AS related
     #[error("Remote AS gRPC is not supported")]
     RemoteAsGrpcNotSupported,

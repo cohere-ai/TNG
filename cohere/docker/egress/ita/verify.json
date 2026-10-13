@@ -1,0 +1,6 @@
+{
+    "model": "passport",
+    "as_provider": "ita",
+    "ita_jwks_addr": "https://portal.trustauthority.intel.com",
+    "policy_ids": []
+}

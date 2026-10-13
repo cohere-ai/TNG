@@ -1,9 +1,13 @@
 #[cfg(feature = "__coco-builtin-as")]
 use std::path::Path;
+#[cfg(feature = "__coco-builtin-as")]
+use std::sync::Arc;
 
 #[cfg(feature = "__coco-builtin-as")]
 use anyhow::Context as _;
 use anyhow::Result;
+#[cfg(feature = "__coco-builtin-as")]
+use rats_cert::policy_source::PolicySource;
 #[cfg(unix)]
 use rats_cert::tee::coco::attester::CocoAttester;
 #[cfg(feature = "__coco-builtin-as")]
@@ -13,6 +17,8 @@ use rats_cert::tee::coco::converter::restful::CocoRestfulConverter;
 use rats_cert::tee::coco::converter::CocoConverter;
 use rats_cert::tee::coco::verifier::remote::CocoRemoteVerifier;
 
+#[cfg(feature = "__coco-builtin-as")]
+use crate::config::ra::DEFAULT_POLICY_DIR;
 #[cfg(unix)]
 use crate::config::ra::{AttesterArgs, CocoAttesterArgs};
 use crate::config::ra::{CocoConverterArgs, CocoVerifierArgs, ConverterArgs, VerifierArgs};
@@ -21,6 +27,7 @@ use crate::config::ra::{CocoConverterArgs, CocoVerifierArgs, ConverterArgs, Veri
 use super::attester::TngAttester;
 use super::converter::TngConverter;
 use super::verifier::TngVerifier;
+use crate::tunnel::utils::runtime::TokioRuntime;
 
 /// Instantiate a `TngAttester` from config. Dispatches on provider, then sub-type.
 #[cfg(unix)]
@@ -36,11 +43,16 @@ pub fn create_attester(config: &AttesterArgs) -> Result<TngAttester> {
 }
 
 /// Instantiate a `TngConverter` from config. Dispatches on provider, then sub-type.
-pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
+#[cfg_attr(not(feature = "__coco-builtin-as"), allow(unused_variables))]
+pub async fn create_converter(
+    config: &ConverterArgs,
+    runtime: &TokioRuntime,
+) -> Result<TngConverter> {
     match config {
         #[cfg(feature = "__coco-builtin-as")]
         ConverterArgs::CocoBuiltin {
             policy_dir,
+            policy_source,
             policy_ids,
             required_tee_classes,
             verifier_config,
@@ -52,13 +64,24 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
 
             // Read here rather than lazily: an ingress with no usable policy can verify nothing,
             // so failing now surfaces the problem at startup instead of on the first handshake.
-            let policies = rats_cert::tee::coco::converter::builtin::policy::load_from_dir(
-                Path::new(policy_dir),
-                policy_id,
-            )
-            .await?;
+            let (policies, source) = match policy_source {
+                Some(args) => {
+                    let source = PolicySource::new(args, policy_id)?;
+                    let (policies, current) = source.fetch_initial().await?;
+                    (policies, Some((source, current)))
+                }
+                None => {
+                    let policy_dir = policy_dir.as_deref().unwrap_or(DEFAULT_POLICY_DIR);
+                    let policies = rats_cert::tee::coco::converter::builtin::policy::load_from_dir(
+                        Path::new(policy_dir),
+                        policy_id,
+                    )
+                    .await?;
+                    (policies, None)
+                }
+            };
 
-            Ok(TngConverter::CocoBuiltin(
+            let converter = Arc::new(
                 CocoBuiltinConverter::new(
                     policy_id,
                     &policies,
@@ -66,7 +89,13 @@ pub async fn create_converter(config: &ConverterArgs) -> Result<TngConverter> {
                     required_tee_classes,
                 )
                 .await?,
-            ))
+            );
+            if let Some(task) = source.and_then(|(source, current)| {
+                source.keep_current(current, Arc::downgrade(&converter))
+            }) {
+                runtime.spawn_supervised_task_current_span(task);
+            }
+            Ok(TngConverter::CocoBuiltin(converter))
         }
         ConverterArgs::Coco(coco) => match coco {
             CocoConverterArgs::Restful {

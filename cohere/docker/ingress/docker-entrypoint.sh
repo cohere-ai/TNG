@@ -39,8 +39,11 @@ envsubst < "$TEMPLATE" > "$CONFIG"
 if [ -n "$POLICY_IDS" ]; then
     tmp=$(mktemp)
     jq --arg pid "$POLICY_IDS" '($pid | split(",")) as $ids |
-        .add_ingress[0].verify.policy_ids = $ids
-    ' "$CONFIG" > "$tmp" && mv "$tmp" "$CONFIG"
+        (.add_ingress[0].verify
+            | if type == "array" then .[] else . end
+            | select(.as_provider? == "ita") | .policy_ids) = $ids
+    ' "$CONFIG" > "$tmp"
+    mv "$tmp" "$CONFIG"
 fi
 
 if [ -n "$TNG_METRIC_OTLP_ENDPOINT" ]; then

@@ -29,7 +29,7 @@ async-http-proxy = {version = "1.2.5", features = ["runtime-tokio"]}
 async-stream = "0.3.6"
 async-trait = "0.1.88"
 # `default-features` false to avoid pulling gRPC server's dependencies (clap, tonic-health...).
-attestation-service = {git = "https://github.com/cohere-ai/trustee.git", rev = "c8576c115dcb013602606871f3afece917d46c0f", default-features = false}
+attestation-service = {git = "https://github.com/cohere-ai/trustee.git", rev = "5654fa699816ba847bb66f18090e4cf460c81a86", default-features = false}
 atty = "0.2.14"
 auto_enums = {version = "0.8", features = ["std", "tokio1"]}
 axum = {version = "0.8.4", default-features = false}
@@ -74,7 +74,7 @@ itertools = "0.14.0"
 js-sys = "0.3.77"
 # Same rev as `attestation-service`: the AS takes an `Arc<dyn StorageProvider>` it does not
 # construct itself, and does not re-export this crate.
-key-value-storage = {git = "https://github.com/cohere-ai/trustee.git", rev = "c8576c115dcb013602606871f3afece917d46c0f", default-features = false}
+key-value-storage = {git = "https://github.com/cohere-ai/trustee.git", rev = "5654fa699816ba847bb66f18090e4cf460c81a86", default-features = false}
 jsonwebtoken = {version = "9", default-features = false}
 # `std` is off deliberately: it pulls `ear`, which drags in openssl and jsonwebtoken/aws-lc-rs.
 # Only `Tee` is used here, and it is available without it.
@@ -125,6 +125,9 @@ serial_test = "3.2.0"
 sha2 = "0.10.8"
 shadow-rs = {version = "=1.0.0", default-features = false}
 signature = "2.2.0"
+sigstore-trust-root = {version = "0.14.0", default-features = false}
+sigstore-types = "0.14.0"
+sigstore-verify = {version = "0.14.0", default-features = false}
 socket2 = {version = "0.5.10", features = ["all"]}# `all` gates set_mark() and original_dst(), used by the netfilter transport
 spin = {version = "0.10.0", default-features = false, features = ["mutex", "spin_mutex"]}
 strum = "0.27.1"
@@ -161,6 +164,7 @@ wasm-bindgen-futures = "0.4.50"
 wasm-streams = "0.4.2"
 web-sys = {version = "0.3.77"}
 web-time = "1.1.0"
+webpki-root-certs = "1.0.9"
 which = "7.0.3"
 ws_stream_tungstenite = "0.13.0"
 ws_stream_wasm = "=0.7.5"

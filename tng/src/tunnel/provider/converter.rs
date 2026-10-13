@@ -18,7 +18,8 @@ use super::token::TngToken;
 pub enum TngConverter {
     Coco(CocoConverter),
     #[cfg(feature = "__coco-builtin-as")]
-    CocoBuiltin(CocoBuiltinConverter),
+    /// Shared with the task refreshing its policies, if any.
+    CocoBuiltin(std::sync::Arc<CocoBuiltinConverter>),
     Ita(ItaConverter),
 }
 
