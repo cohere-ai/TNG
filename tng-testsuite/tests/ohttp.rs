@@ -1168,6 +1168,7 @@ async fn test_egress_key_from_peer_shared_with_peers_file() -> Result<()> {
                                         "source": "peer_shared",
                                         "peers_file": "/tmp/tng-test/peers.json",
                                         "rotation_interval": 10,
+                                        "self_check": true,
                                         "attest": {
                                             "model": "background_check",
                                             "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"

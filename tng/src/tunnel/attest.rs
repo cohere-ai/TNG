@@ -437,6 +437,33 @@ fn pick_proposal(
         })
 }
 
+/// Claims for a [`self_check`]: only the nonce, since the result never leaves this node.
+pub fn self_check_claims(nonce: &str) -> Result<Claims> {
+    let mut claims = Claims::new();
+    claims.insert("challenge_token".to_string(), nonce.into());
+    Ok(claims)
+}
+
+/// Run one exchange against this node: propose with `proposers`, answer with `attester`, and
+/// check the answer with `verifiers`, as a peer with the same configuration would. A passport
+/// `prepared` must be minted over [`self_check_claims`].
+pub async fn self_check(
+    attester: &dyn Attester,
+    prepared: &Prepared,
+    proposers: &[Proposer<'_>],
+    verifiers: &[&dyn Verifier],
+) -> Result<()> {
+    let request = make_request(proposers, || ()).await?;
+    let response = respond(&request, Some(attester), prepared, self_check_claims).await;
+    check_response(&request, &response, verifiers, |proposal| {
+        proposal
+            .challenge_token()
+            .map_or_else(|| Ok(Claims::new()), self_check_claims)
+    })
+    .await?;
+    Ok(())
+}
+
 pub(crate) async fn with_retry<T, F, Fut>(max_retries: usize, task: F) -> Result<T>
 where
     F: FnMut() -> Fut,
@@ -789,6 +816,64 @@ mod tests {
         assert!(check(token_response(ITA, "t"))
             .await
             .contains("not proposed"));
+    }
+
+    struct EchoAttester;
+
+    #[async_trait::async_trait]
+    impl Attester for EchoAttester {
+        fn key(&self) -> (Model, ProviderType) {
+            (Model::BackgroundCheck, COCO)
+        }
+
+        async fn produce_evidence(&self, claims: Claims) -> Result<serde_json::Value> {
+            Ok(claims.into())
+        }
+    }
+
+    struct ClaimsVerifier;
+
+    #[async_trait::async_trait]
+    impl Verifier for ClaimsVerifier {
+        fn key(&self) -> (Model, ProviderType) {
+            (Model::BackgroundCheck, COCO)
+        }
+
+        async fn verify_evidence(
+            &self,
+            evidence: &serde_json::Value,
+            expected: Claims,
+        ) -> Result<AttestationResult> {
+            anyhow::ensure!(*evidence == serde_json::Value::from(expected), "mismatch");
+            Ok(AttestationResult::from_token(
+                Model::BackgroundCheck,
+                TngToken::from_wire(COCO, "fake.jwt.token".into())?,
+            ))
+        }
+
+        async fn verify_token(&self, _: &str, _: Claims) -> Result<AttestationResult> {
+            bail!("unused")
+        }
+    }
+
+    #[tokio::test]
+    async fn self_check_passes_only_when_own_verifiers_accept() {
+        let nonce = FixedNonce(Some("n"));
+        let proposers: [Proposer<'_>; 1] = [(COCO, Some(&nonce))];
+        let none = Prepared::default();
+        self_check(&EchoAttester, &none, &proposers, &[&ClaimsVerifier])
+            .await
+            .unwrap();
+        assert!(
+            self_check(&FAILING_BC, &none, &proposers, &[&ClaimsVerifier])
+                .await
+                .is_err()
+        );
+        assert!(
+            self_check(&EchoAttester, &none, &proposers, &[&UnusedVerifier])
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

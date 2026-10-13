@@ -125,6 +125,13 @@ impl PeerSharedKeyManager {
                 .await
                 .map_err(TngError::InvalidParameter)?,
         );
+        if peer_shared.self_check {
+            ra_context
+                .self_check()
+                .await
+                .context("peer_shared attestation self-check failed")
+                .map_err(TngError::InvalidParameter)?;
+        }
         let net_opts =
             NetTransportOptions::<_, SocketAddrResolver<InstrumentedTokioRuntime>, _>::with_stream_layer_options(
                 node_id,

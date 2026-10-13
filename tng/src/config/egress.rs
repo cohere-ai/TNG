@@ -254,6 +254,11 @@ pub struct PeerSharedArgs {
     #[serde(default = "default_rats_tls_pool_ttl")]
     pub rats_tls_pool_ttl: u64,
 
+    /// Attest this node against its own `verify` config before starting serf, failing startup
+    /// if rejected. Requires both `attest` and `verify`. Defaults to false.
+    #[serde(default)]
+    pub self_check: bool,
+
     /// Define how this node proves its identity when connecting to others, and how to verify
     /// the identity of remote peers.
     #[serde(flatten)]

@@ -31,7 +31,8 @@
                     "push_pull_interval": 5,
                     "activation_delay": 15,
                     "join_max_attempts": 0,
-                    "join_retry_interval": 5
+                    "join_retry_interval": 5,
+                    "self_check": true
                 }
             }
         }
