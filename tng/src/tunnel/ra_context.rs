@@ -279,6 +279,11 @@ fn check_keys_unique(entries: &[VerifyContext]) -> Result<()> {
     Ok(())
 }
 
+/// Upper bound on one passport mint, retries included, so a hung attestation service can't stall
+/// startup or the snapshot refresh loop.
+#[cfg(unix)]
+const MINT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Delay before minting again after a failed passport mint: 1s, doubling up to `cap`, and reset by
 /// a successful mint.
 #[cfg(unix)]
@@ -404,19 +409,21 @@ impl AttestContext {
             } => {
                 // A fresh nonce from this side's own attestation service on every attempt.
                 let pipeline = AttesterPipeline::new(attester, converter);
-                let minted = with_retry(*max_retries, || async {
+                let mint = with_retry(*max_retries, || async {
                     let nonce = ChallengeSource::get_nonce(converter).await?;
                     pipeline
                         .get_evidence(&ReportData::Claims(passport_claims(&nonce)?))
                         .await
                         .map_err(|error| anyhow::anyhow!("attester failed: {error}"))
-                })
-                .await
-                .and_then(|token| {
-                    let prepared = Prepared::new(token);
-                    let expire = prepared.expire()?;
-                    Ok((prepared, expire))
                 });
+                let minted = tokio::time::timeout(MINT_TIMEOUT, mint)
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("passport mint timed out")))
+                    .and_then(|token| {
+                        let prepared = Prepared::new(token);
+                        let expire = prepared.expire()?;
+                        Ok((prepared, expire))
+                    });
                 match minted {
                     Ok(minted) => {
                         mint_backoff.succeeded();

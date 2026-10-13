@@ -4,6 +4,8 @@ use reqwest::Client;
 
 use crate::errors::*;
 
+const ASR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// HTTP response from `GET /info` on the CoCo API Server Rest (ASR).
 #[derive(serde::Deserialize)]
 struct AsrInfoResponse {
@@ -39,6 +41,7 @@ impl AsrClient {
         let resp = self
             .http
             .get(&url)
+            .timeout(ASR_TIMEOUT)
             .query(&[
                 ("runtime_data", &runtime_data_b64),
                 ("encoding", &"base64".to_string()),
@@ -77,6 +80,7 @@ impl AsrClient {
         let resp = self
             .http
             .get(&url)
+            .timeout(ASR_TIMEOUT)
             .send()
             .await
             .map_err(|e| Error::AsrHttpRequestFailed {
@@ -115,6 +119,7 @@ impl AsrClient {
         let resp = match self
             .http
             .get(&url)
+            .timeout(ASR_TIMEOUT)
             .query(&[
                 ("runtime_data", &runtime_data_b64),
                 ("encoding", &"base64".to_string()),

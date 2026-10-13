@@ -10,7 +10,7 @@ pub mod evidence;
 pub mod verifier;
 
 #[cfg(feature = "attester-coco")]
-pub const TTRPC_DEFAULT_TIMEOUT_NANO: i64 = 50 * 1000 * 1000 * 1000;
+pub const TTRPC_DEFAULT_TIMEOUT_NANO: i64 = 10 * 1000 * 1000 * 1000;
 
 #[cfg(all(test, feature = "attester-coco", feature = "verifier-coco"))]
 mod tests {
