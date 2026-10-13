@@ -20,7 +20,7 @@ use serf::types::MaybeResolvedAddress;
 use serf::{MemberlistOptions, Options};
 use uuid::Uuid;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::str::FromStr;
@@ -250,33 +250,9 @@ impl PeerSharedKeyManager {
             Some(runtime.spawn_supervised_task_current_span(async move {
                 let mut attempt: u32 = 1; // initial join was attempt 1
 
+                // Keeps running after joining so that sub-clusters formed by partial
+                // join failures still merge once a non-member peer shows up in DNS.
                 loop {
-                    let Some(serf_ref) = serf_weak.upgrade() else {
-                        tracing::debug!("Serf dropped, stopping retry-join task");
-                        break;
-                    };
-
-                    if serf_ref.members().await.len() > 1 {
-                        tracing::info!("Retry-join: cluster has peers, stopping");
-                        break;
-                    }
-
-                    drop(serf_ref);
-
-                    attempt = attempt.saturating_add(1);
-                    if max_attempts > 1 && attempt > max_attempts {
-                        tracing::warn!(
-                            max_attempts,
-                            "Retry-join: exhausted max attempts without joining"
-                        );
-                        break;
-                    }
-
-                    tracing::info!(
-                        attempt,
-                        interval_secs = interval.as_secs(),
-                        "Retry-join: no peers yet, waiting before next attempt"
-                    );
                     tokio::time::sleep(interval).await;
 
                     let Some(serf_ref) = serf_weak.upgrade() else {
@@ -284,8 +260,18 @@ impl PeerSharedKeyManager {
                         break;
                     };
 
-                    // A successful join may only have reached ourselves, so the
-                    // member count check above is the sole exit on success.
+                    if serf_ref.num_members().await <= 1 {
+                        attempt = attempt.saturating_add(1);
+                        if max_attempts > 1 && attempt > max_attempts {
+                            tracing::warn!(
+                                max_attempts,
+                                "Retry-join: exhausted max attempts without joining"
+                            );
+                            break;
+                        }
+                        tracing::debug!(attempt, "Retry-join: no peers yet, retrying");
+                    }
+
                     if let Err(e) = join_serf_cluster(&serf_ref, &peers).await {
                         tracing::warn!(
                             attempt,
@@ -326,21 +312,51 @@ async fn resolve_peer_addresses(addr: &String) -> Result<Vec<SocketAddr>, TngErr
     Ok(socket_addrs)
 }
 
-/// Joins the Serf cluster via a list of peer addresses.
-/// Tries all peers and succeeds if at least one join succeeds.
+/// Whether `addr` points at this node. Serf may bind `0.0.0.0` and advertise a single
+/// interface IP, so loopback on our own port is treated as self too.
+fn is_local_addr(addr: &SocketAddr, local: &SocketAddr) -> bool {
+    addr.port() == local.port()
+        && (addr.ip() == local.ip() || addr.ip().is_loopback() || addr.ip().is_unspecified())
+}
+
+/// Joins the Serf cluster via a list of peer addresses, skipping addresses of this node
+/// and of existing members so that no attested handshake is wasted on them.
+/// Succeeds if at least one join succeeds or if there was nothing new to dial.
 async fn join_serf_cluster(serf: &Serf, peers: &[String]) -> Result<(), TngError> {
+    let local_addr = *serf.local_member().await.node().address();
+    let member_addrs: HashSet<SocketAddr> = serf
+        .members()
+        .await
+        .iter()
+        .map(|member| *member.node().address())
+        .collect();
+
+    let mut any_attempted = false;
     let mut any_joined = false;
 
     for peer in peers.iter() {
-        tracing::info!(peer, "Attempting to join Serf cluster");
+        tracing::debug!(peer, "Attempting to join Serf cluster");
 
-        let socket_addrs = match resolve_peer_addresses(peer).await {
-            Ok(addrs) => addrs,
+        let socket_addrs: Vec<_> = match resolve_peer_addresses(peer).await {
+            Ok(addrs) => addrs
+                .into_iter()
+                .filter(|addr| !is_local_addr(addr, &local_addr) && !member_addrs.contains(addr))
+                .collect(),
             Err(e) => {
                 tracing::warn!(peer, error = ?e, "Failed to resolve peer address, skipping");
+                any_attempted = true;
                 continue;
             }
         };
+
+        if socket_addrs.is_empty() {
+            tracing::debug!(
+                peer,
+                "Peer resolved only to self or existing members, skipping"
+            );
+            continue;
+        }
+        any_attempted = true;
 
         // Attempt to join the cluster using every resolved socket address for this host.
         // Since a hostname (e.g., via DNS) may resolve to multiple IPs (A/AAAA records),
@@ -381,7 +397,7 @@ async fn join_serf_cluster(serf: &Serf, peers: &[String]) -> Result<(), TngError
         }
     }
 
-    if any_joined {
+    if any_joined || !any_attempted {
         Ok(())
     } else {
         Err(TngError::SerfCrateError(anyhow!("Failed to join any peer")))
@@ -449,6 +465,30 @@ impl Drop for PeerSharedKeyManager {
         }
         if let Some(task) = self.retry_join_task.take() {
             task.abort();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_local_addr;
+    use std::net::SocketAddr;
+
+    #[test]
+    fn test_is_local_addr() {
+        let local: SocketAddr = "10.0.0.5:8301".parse().unwrap();
+        for (addr, expected) in [
+            ("10.0.0.5:8301", true),
+            ("127.0.0.1:8301", true),
+            ("0.0.0.0:8301", true),
+            ("10.0.0.5:8302", false),
+            ("10.0.0.6:8301", false),
+        ] {
+            assert_eq!(
+                is_local_addr(&addr.parse().unwrap(), &local),
+                expected,
+                "{addr}"
+            );
         }
     }
 }

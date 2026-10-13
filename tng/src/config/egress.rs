@@ -237,6 +237,10 @@ pub struct PeerSharedArgs {
     /// - `1` (default): try once, no retries — `join_retry_interval` is ignored.
     /// - `0`: unlimited retries (similar to serf-cli).
     /// - `N > 1`: try up to N times total (initial + N-1 retries).
+    ///
+    /// When retries are enabled, the node keeps re-resolving `peers` every
+    /// `join_retry_interval` and joins any address that is not itself or an existing
+    /// member. Only rounds in which the node has no peers count as attempts.
     #[serde(default = "default_join_max_attempts")]
     pub join_max_attempts: u32,
 
