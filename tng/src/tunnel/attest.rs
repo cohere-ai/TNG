@@ -23,6 +23,18 @@ use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::provider::{ProviderType, TngToken};
 use crate::tunnel::utils::maybe_cached::Expire;
 
+#[cfg(unix)]
+use tokio::time as tokio_time;
+#[cfg(wasm)]
+use tokio_with_wasm::alias::time as tokio_time;
+
+/// Upper bound on one verifier's nonce fetch, well under the exchange timeout, so a hung
+/// attestation service only drops its own proposal.
+const NONCE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// More proposals than a peer has any reason to send, one per configured verifier.
+const MAX_PROPOSALS: usize = 10;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Model {
@@ -83,6 +95,11 @@ fn known_proposals<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<AttestProposal>, D::Error> {
     let sent = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    if sent.len() > MAX_PROPOSALS {
+        return Err(serde::de::Error::custom(format!(
+            "more than {MAX_PROPOSALS} proposals"
+        )));
+    }
     let is_empty = sent.is_empty();
     let known: Vec<AttestProposal> = sent
         .into_iter()
@@ -196,12 +213,15 @@ pub async fn make_request<A: ChallengeAttempt>(
                 return Some(AttestProposal::Passport { provider });
             };
             let attempt = start_challenge();
-            let nonce = nonce_source.get_nonce().await.and_then(|nonce| {
-                if nonce.is_empty() {
-                    bail!("converter returned an empty nonce");
-                }
-                Ok(nonce)
-            });
+            let nonce = tokio_time::timeout(NONCE_TIMEOUT, nonce_source.get_nonce())
+                .await
+                .unwrap_or_else(|_| Err(anyhow!("timed out fetching the nonce")))
+                .and_then(|nonce| {
+                    if nonce.is_empty() {
+                        bail!("converter returned an empty nonce");
+                    }
+                    Ok(nonce)
+                });
             match nonce {
                 Ok(challenge_token) => {
                     attempt.succeeded();
@@ -514,6 +534,13 @@ mod tests {
             error.to_string().contains("no recognized proposal"),
             "{error}"
         );
+
+        let proposals: Vec<_> = (0..=MAX_PROPOSALS)
+            .map(|i| json!({"model": "passport", "provider": format!("future_provider_{i}")}))
+            .collect();
+        let error =
+            serde_json::from_value::<AttestRequest>(json!({ "proposals": proposals })).unwrap_err();
+        assert!(error.to_string().contains("more than"), "{error}");
     }
 
     fn request(proposals: Vec<AttestProposal>) -> AttestRequest {
@@ -647,11 +674,25 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    struct HungNonce;
+
+    #[async_trait::async_trait]
+    impl ChallengeSource for HungNonce {
+        async fn get_nonce(&self) -> Result<String> {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn make_request_drops_only_failed_nonce_fetches() {
         let (up, down) = (FixedNonce(Some("n")), FixedNonce(None));
         let request = make_request(
-            &[(COCO, Some(&down)), (ITA, Some(&up)), (COCO, None)],
+            &[
+                (COCO, Some(&down)),
+                (ITA, Some(&up)),
+                (COCO, None),
+                (ITA, Some(&HungNonce)),
+            ],
             || (),
         )
         .await
