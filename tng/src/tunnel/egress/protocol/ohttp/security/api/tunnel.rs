@@ -1,8 +1,12 @@
+use std::pin::Pin;
+use std::task::{ready, Context, Poll};
+use std::time::Duration;
+
 use anyhow::{anyhow, Result};
 use bhttp::http_compat::decode::{BhttpDecoder, HttpMessage};
 use bhttp::http_compat::encode::BhttpEncoder;
-use bytes::BytesMut;
-use futures::{AsyncWriteExt, StreamExt as _, TryStreamExt as _};
+use bytes::{Bytes, BytesMut};
+use futures::{AsyncWriteExt, Stream, StreamExt as _, TryStreamExt as _};
 use prost::Message as _;
 use tokio::io::AsyncReadExt;
 use tokio_util::compat::FuturesAsyncReadCompatExt as _;
@@ -18,6 +22,7 @@ use crate::tunnel::ohttp::protocol::header::{
     OHTTP_CHUNKED_REQUEST_CONTENT_TYPE, OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE,
 };
 use crate::tunnel::ohttp::protocol::metadata::{Metadata, METADATA_MAX_LEN};
+use crate::TokioRuntime;
 
 impl OhttpServerApi {
     /// Interface 2: Process Encrypted Request
@@ -48,10 +53,11 @@ impl OhttpServerApi {
         }
 
         let mut reader = tokio_util::io::StreamReader::new(
-            payload
-                .into_body()
-                .into_data_stream()
-                .map(|result| result.map_err(std::io::Error::other)),
+            DrainOnDrop::new(
+                payload.into_body().into_data_stream(),
+                context.runtime.clone(),
+            )
+            .map(|result| result.map_err(std::io::Error::other)),
         );
 
         // Read and decode matadata
@@ -170,5 +176,172 @@ impl OhttpServerApi {
             .map_err(TngError::ConstructHttpResponseFailed)?;
 
         Ok(response)
+    }
+}
+
+/// Outer request body that is read to EOF in the background once the OHTTP decoder drops it.
+///
+/// The bhttp decoder stops at the inner message's trailers, before the final OHTTP chunk and the
+/// outer chunked terminator. If hyper sees the body dropped with those bytes unread, it closes the
+/// connection after the response, and the kernel turns that close into an RST that discards any
+/// response bytes still queued for the client.
+///
+/// The drain is bounded so a client that never finishes the body, or keeps sending after the
+/// trailers, cannot hold the task and connection open; past either limit hyper closes as before.
+struct DrainOnDrop {
+    inner: Option<axum::body::BodyDataStream>,
+    runtime: TokioRuntime,
+    drain_timeout: Duration,
+    drain_max_bytes: usize,
+}
+
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const DRAIN_MAX_BYTES: usize = 64 * 1024;
+
+impl DrainOnDrop {
+    fn new(inner: axum::body::BodyDataStream, runtime: TokioRuntime) -> Self {
+        Self {
+            inner: Some(inner),
+            runtime,
+            drain_timeout: DRAIN_TIMEOUT,
+            drain_max_bytes: DRAIN_MAX_BYTES,
+        }
+    }
+}
+
+impl Stream for DrainOnDrop {
+    type Item = Result<Bytes, axum::Error>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let Some(inner) = self.inner.as_mut() else {
+            return Poll::Ready(None);
+        };
+        let item = ready!(inner.poll_next_unpin(cx));
+        if item.is_none() {
+            self.inner = None;
+        }
+        Poll::Ready(item)
+    }
+}
+
+impl Drop for DrainOnDrop {
+    fn drop(&mut self) {
+        if let Some(mut inner) = self.inner.take() {
+            let (drain_timeout, drain_max_bytes) = (self.drain_timeout, self.drain_max_bytes);
+            self.runtime.spawn_supervised_task_current_span(async move {
+                let drain = async {
+                    let mut drained = 0;
+                    while let Some(Ok(chunk)) = inner.next().await {
+                        drained += chunk.len();
+                        if drained > drain_max_bytes {
+                            tracing::debug!(drained, "Stopped draining OHTTP request body: too many bytes after the inner message");
+                            return;
+                        }
+                    }
+                };
+                if tokio::time::timeout(drain_timeout, drain).await.is_err() {
+                    tracing::debug!(?drain_timeout, "Stopped draining OHTTP request body: timed out");
+                }
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    use tokio::sync::mpsc::Sender;
+
+    use super::*;
+    use crate::tests::run_test_with_tokio_runtime;
+
+    /// Body fed from a channel; the flag is set once the channel closes and the body reaches EOF.
+    fn channel_body() -> (
+        Sender<Result<Bytes, std::io::Error>>,
+        axum::body::BodyDataStream,
+        Arc<AtomicBool>,
+    ) {
+        let reached_eof = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let body_stream = {
+            let reached_eof = reached_eof.clone();
+            futures::stream::unfold(rx, |mut rx| async move {
+                rx.recv().await.map(|item| (item, rx))
+            })
+            .chain(futures::stream::once(async move {
+                reached_eof.store(true, Ordering::SeqCst);
+                Ok(Bytes::new())
+            }))
+        };
+        let body = axum::body::Body::from_stream(body_stream).into_data_stream();
+        (tx, body, reached_eof)
+    }
+
+    /// Reads the first chunk, then drops the stream so the background drain takes over.
+    async fn read_head_and_drop(
+        mut stream: DrainOnDrop,
+        tx: &Sender<Result<Bytes, std::io::Error>>,
+    ) -> Result<()> {
+        tx.send(Ok(Bytes::from_static(b"head"))).await?;
+        assert_eq!(
+            stream.next().await.transpose()?,
+            Some(Bytes::from_static(b"head"))
+        );
+        drop(stream);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dropped_body_is_read_to_eof() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let (tx, body, reached_eof) = channel_body();
+            read_head_and_drop(DrainOnDrop::new(body, runtime), &tx).await?;
+
+            tx.send(Ok(Bytes::from_static(b"tail"))).await?;
+            drop(tx);
+
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !reached_eof.load(Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await?;
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn drain_gives_up_after_timeout() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let (tx, body, reached_eof) = channel_body();
+            let mut stream = DrainOnDrop::new(body, runtime);
+            stream.drain_timeout = Duration::from_millis(100);
+            read_head_and_drop(stream, &tx).await?;
+
+            tokio::time::timeout(Duration::from_secs(5), tx.closed()).await?;
+            assert!(!reached_eof.load(Ordering::SeqCst));
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn drain_gives_up_after_byte_limit() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let (tx, body, reached_eof) = channel_body();
+            let mut stream = DrainOnDrop::new(body, runtime);
+            stream.drain_max_bytes = 8;
+            read_head_and_drop(stream, &tx).await?;
+
+            tx.send(Ok(Bytes::from_static(b"more than eight bytes")))
+                .await?;
+            tokio::time::timeout(Duration::from_secs(5), tx.closed()).await?;
+            assert!(!reached_eof.load(Ordering::SeqCst));
+            Ok(())
+        })
+        .await
     }
 }
