@@ -2,8 +2,8 @@
 
 [中文文档](version_compatibility_zh.md)
 
-Both ends of every `rats_tls` link must run a build that includes post-handshake attestation. There is no transitional mode.
+1.0.0 cannot complete a `rats_tls` connection with 0.7.0 or earlier. There is no transitional mode. Upgrade ingress and egress together.
 
 | Compatible Version Range | Description |
 | --- | --- |
-| Post-handshake attestation cutover | Evidence is no longer carried in the X.509 certificate. Peers that still embed DICE tagged evidence in the certificate cannot complete a `rats_tls` connection with an upgraded peer. TLS session resumption and 0-RTT are disabled. Upgrade ingress and egress together. |
+| >= 1.0.0 | RATS-TLS no longer carries evidence in the X.509 certificate. Attestation is a post-handshake JSON exchange, and TLS session resumption and 0-RTT are disabled. `verify` accepts a list of verifiers. A peer that still embeds DICE tagged evidence in the certificate, or that speaks the previous exchange, cannot connect. |
