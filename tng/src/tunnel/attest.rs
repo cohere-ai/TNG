@@ -32,6 +32,10 @@ use tokio_with_wasm::alias::time as tokio_time;
 /// attestation service only drops its own proposal.
 const NONCE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Upper bound on a whole [`self_check`], matching the peer exchange timeout, so a hung
+/// attestation service fails startup instead of stalling it.
+const SELF_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// More proposals than a peer has any reason to send, one per configured verifier.
 const MAX_PROPOSALS: usize = 10;
 
@@ -453,14 +457,18 @@ pub async fn self_check(
     proposers: &[Proposer<'_>],
     verifiers: &[&dyn Verifier],
 ) -> Result<()> {
-    let request = make_request(proposers, || ()).await?;
-    let response = respond(&request, Some(attester), prepared, self_check_claims).await;
-    check_response(&request, &response, verifiers, |proposal| {
-        proposal
-            .challenge_token()
-            .map_or_else(|| Ok(Claims::new()), self_check_claims)
+    tokio_time::timeout(SELF_CHECK_TIMEOUT, async {
+        let request = make_request(proposers, || ()).await?;
+        let response = respond(&request, Some(attester), prepared, self_check_claims).await;
+        check_response(&request, &response, verifiers, |proposal| {
+            proposal
+                .challenge_token()
+                .map_or_else(|| Ok(Claims::new()), self_check_claims)
+        })
+        .await
     })
-    .await?;
+    .await
+    .map_err(|_| anyhow!("self-check timed out"))??;
     Ok(())
 }
 
@@ -856,7 +864,28 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    struct HungVerifier;
+
+    #[async_trait::async_trait]
+    impl Verifier for HungVerifier {
+        fn key(&self) -> (Model, ProviderType) {
+            (Model::BackgroundCheck, COCO)
+        }
+
+        async fn verify_evidence(
+            &self,
+            _: &serde_json::Value,
+            _: Claims,
+        ) -> Result<AttestationResult> {
+            std::future::pending().await
+        }
+
+        async fn verify_token(&self, _: &str, _: Claims) -> Result<AttestationResult> {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
     async fn self_check_passes_only_when_own_verifiers_accept() {
         let nonce = FixedNonce(Some("n"));
         let proposers: [Proposer<'_>; 1] = [(COCO, Some(&nonce))];
@@ -874,6 +903,10 @@ mod tests {
                 .await
                 .is_err()
         );
+        let err = self_check(&EchoAttester, &none, &proposers, &[&HungVerifier])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("timed out"), "{err}");
     }
 
     #[tokio::test]
