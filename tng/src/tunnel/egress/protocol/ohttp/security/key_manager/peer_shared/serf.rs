@@ -16,7 +16,7 @@ use serf::delegate::CompositeDelegate;
 use serf::net::hostaddr::Host;
 use serf::net::resolver::socket_addr::SocketAddrResolver;
 use serf::net::{HostAddr, NetTransport, NetTransportOptions, NodeId};
-use serf::types::MaybeResolvedAddress;
+use serf::types::{MaybeResolvedAddress, MemberStatus};
 use serf::{MemberlistOptions, Options};
 use uuid::Uuid;
 
@@ -260,7 +260,7 @@ impl PeerSharedKeyManager {
                         break;
                     };
 
-                    if serf_ref.num_members().await <= 1 {
+                    if alive_member_addrs(&serf_ref).await.len() <= 1 {
                         attempt = attempt.saturating_add(1);
                         if max_attempts > 1 && attempt > max_attempts {
                             tracing::warn!(
@@ -319,17 +319,23 @@ fn is_local_addr(addr: &SocketAddr, local: &SocketAddr) -> bool {
         && (addr.ip() == local.ip() || addr.ip().is_loopback() || addr.ip().is_unspecified())
 }
 
+/// Addresses of alive members, including this node. Failed and left members linger for
+/// up to 24h and their addresses may be reused by new nodes, so they are excluded.
+async fn alive_member_addrs(serf: &Serf) -> HashSet<SocketAddr> {
+    serf.members()
+        .await
+        .iter()
+        .filter(|member| *member.status() == MemberStatus::Alive)
+        .map(|member| *member.node().address())
+        .collect()
+}
+
 /// Joins the Serf cluster via a list of peer addresses, skipping addresses of this node
-/// and of existing members so that no attested handshake is wasted on them.
+/// and of alive members so that no attested handshake is wasted on them.
 /// Succeeds if at least one join succeeds or if there was nothing new to dial.
 async fn join_serf_cluster(serf: &Serf, peers: &[String]) -> Result<(), TngError> {
     let local_addr = *serf.local_member().await.node().address();
-    let member_addrs: HashSet<SocketAddr> = serf
-        .members()
-        .await
-        .iter()
-        .map(|member| *member.node().address())
-        .collect();
+    let member_addrs = alive_member_addrs(serf).await;
 
     let mut any_attempted = false;
     let mut any_joined = false;
@@ -352,7 +358,7 @@ async fn join_serf_cluster(serf: &Serf, peers: &[String]) -> Result<(), TngError
         if socket_addrs.is_empty() {
             tracing::debug!(
                 peer,
-                "Peer resolved only to self or existing members, skipping"
+                "Peer resolved only to self or alive members, skipping"
             );
             continue;
         }
