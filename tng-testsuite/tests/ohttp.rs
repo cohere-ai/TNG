@@ -1168,7 +1168,6 @@ async fn test_egress_key_from_peer_shared_with_peers_file() -> Result<()> {
                                         "source": "peer_shared",
                                         "peers_file": "/tmp/tng-test/peers.json",
                                         "rotation_interval": 10,
-                                        "self_check": true,
                                         "attest": {
                                             "model": "background_check",
                                             "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
@@ -1617,6 +1616,60 @@ async fn test_peer_shared_retry_join_on_delayed_peer_startup() -> Result<()> {
             port: 10001,
             host_header: "example.com",
             path_and_query: "/foo/bar/www?type=1&case=1",
+        }
+        .boxed(),
+    ])
+    .await?;
+
+    Ok(())
+}
+
+#[serial]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn test_peer_shared_self_check() -> Result<()> {
+    run_test(vec![
+        TngInstance::TngServer(
+            r#"
+            {
+                "add_egress": [
+                    {
+                        "netfilter": {
+                            "capture_dst": {
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {
+                            "key": {
+                                "source": "peer_shared",
+                                "rotation_interval": 300,
+                                "self_check": true,
+                                "attest": {
+                                    "model": "background_check",
+                                    "aa_addr": "unix:///run/confidential-containers/attestation-agent/attestation-agent.sock"
+                                },
+                                "verify": {
+                                    "model": "background_check",
+                                    "as_addr": "http://192.168.1.254:8080/",
+                                    "policy_ids": [
+                                        "default"
+                                    ]
+                                }
+                            }
+                        },
+                        "no_ra": true
+                    }
+                ]
+            }
+            "#,
+        )
+        .boxed(),
+        // A failed self-check surfaces as an error from the tng_server task
+        ShellTask {
+            name: "self_check_passed".to_owned(),
+            node_type: NodeType::Client,
+            script: "true".to_owned(),
+            stop_test_on_finish: true,
+            run_in_foreground: true,
         }
         .boxed(),
     ])
