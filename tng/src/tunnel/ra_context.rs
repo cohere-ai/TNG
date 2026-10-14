@@ -21,7 +21,7 @@ use rats_cert::tee::{AttesterPipeline, GenericAttester};
 use rats_cert::tee::{GenericConverter, GenericVerifier, ReportData};
 
 #[cfg(unix)]
-use crate::tunnel::attest::{with_retry, Attester, Prepared};
+use crate::tunnel::attest::{self_check, self_check_claims, with_retry, Attester, Prepared};
 use crate::tunnel::attest::{ChallengeSource, Model, Proposer, Verifier};
 use crate::tunnel::attestation_result::AttestationResult;
 use crate::tunnel::provider::{ProviderType, TngEvidence, TngToken};
@@ -157,6 +157,25 @@ impl RaContext {
             Self::AttestAndVerify { attest, .. } => Some(attest),
             _ => None,
         }
+    }
+
+    /// Check that this node's attestation passes its own verifiers, as a peer sharing this
+    /// configuration would check it. Requires both attest and verify.
+    #[cfg(unix)]
+    pub async fn self_check(&self) -> Result<()> {
+        let Self::AttestAndVerify { attest, verify } = self else {
+            bail!("self_check requires both attest and verify");
+        };
+        let (prepared, _) = attest.prepare(self_check_claims).await;
+        self_check(
+            attest.as_ref(),
+            &prepared,
+            &verify.proposers(),
+            &verify.verifiers(),
+        )
+        .await?;
+        tracing::info!("Self-attestation passed");
+        Ok(())
     }
 }
 
