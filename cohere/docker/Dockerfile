@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Cohere TNG images. Use `--target tng` (no baked-in config), `--target egress-ita`,
-# `--target egress-trustee`, or `--target ingress`.
+# Cohere TNG images, one target per image repository: `tng` (no baked-in config), `tng-ita`,
+# `tng-trustee` and `tng-ingress`. CI builds them all together through docker-bake.hcl.
 
 # Verifiers for the in-process attestation service, one argument each because each one brings its
 # own system dependencies. Each takes a boolean: 1, true, yes or on to build it, and 0, false, no,
@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
+    git \
     libprotobuf-dev \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
@@ -104,6 +105,7 @@ RUN rustup show
 COPY . .
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
     set -eu; \
     bool() { case "$(echo "${2-}" | tr 'A-Z' 'a-z')" in \
@@ -118,7 +120,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     [ -z "$tdx" ] || features="$features,coco-builtin-as-tdx"; \
     [ -z "$azsnp" ] || features="$features,coco-builtin-as-azsnp"; \
     [ -z "$nvidia" ] || features="$features,coco-builtin-as-nvidia"; \
-    env RUSTFLAGS="--cfg tokio_unstable" \
+    env RUSTFLAGS="--cfg tokio_unstable" CARGO_NET_GIT_FETCH_WITH_CLI=true \
     cargo install --locked \
     ${features:+--features "${features#,}"} \
     --path ./tng/ --root /out
@@ -183,13 +185,13 @@ COPY cohere/docker/egress/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 CMD ["docker-entrypoint.sh"]
 
-FROM egress-base AS egress-ita
+FROM egress-base AS tng-ita
 COPY --from=egress-conf /src/ita/conf.json /etc/tng/conf.default.json
 
-FROM egress-base AS egress-trustee
+FROM egress-base AS tng-trustee
 COPY --from=egress-conf /src/trustee/conf.json /etc/tng/conf.default.json
 
-FROM runtime-base AS ingress
+FROM runtime-base AS tng-ingress
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gettext-base \
     && rm -rf /var/lib/apt/lists/*

@@ -12,37 +12,26 @@ on:
         required: true
 
 jobs:
+  # All images come from one bake build with no imported cache, so the shared stages are built once
+  # on this runner from this checkout alone.
   build:
-    strategy:
-      matrix:
-        include:
-          - target: tng
-            image: ghcr.io/cohere-ai/tng
-          - target: egress-ita
-            image: ghcr.io/cohere-ai/tng-ita
-          - target: egress-trustee
-            image: ghcr.io/cohere-ai/tng-trustee
-          - target: ingress
-            image: ghcr.io/cohere-ai/tng-ingress
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-      attestations: write
-      id-token: write
-      artifact-metadata: write
+    outputs:
+      images: ${{ steps.images.outputs.images }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
       - name: Docker Setup Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ matrix.image }}
           flavor: |
             latest=auto
           tags: |
@@ -58,37 +47,68 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        id: build
-        uses: docker/build-push-action@v6.9.0
+        id: bake
+        uses: docker/bake-action@v7
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
         with:
-          context: .
-          file: cohere/docker/Dockerfile
-          target: ${{ matrix.target }}
+          source: .
+          files: |
+            cohere/docker/docker-bake.hcl
+            ${{ steps.meta.outputs.bake-file-labels }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+
+      - name: Collect image digests
+        id: images
+        env:
+          METADATA: ${{ steps.bake.outputs.metadata }}
+        run: |
+          images=$(jq -c '[to_entries[] | select(.value | type == "object" and has("containerimage.digest"))
+            | {name: .key,
+               image: (.value["image.name"] | split(",")[0] | sub(":[^:/]+$"; "")),
+               digest: .value["containerimage.digest"]}]' <<< "$METADATA")
+          echo "$images" | jq .
+          echo "images=$images" >> "$GITHUB_OUTPUT"
+
+  attest:
+    needs: [build]
+    strategy:
+      matrix:
+        include: ${{ fromJSON(needs.build.outputs.images) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+      artifact-metadata: write
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attest build provenance
         uses: actions/attest@v4
         with:
           subject-name: ${{ matrix.image }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-digest: ${{ matrix.digest }}
           push-to-registry: true
 
       - name: Generate SBOM
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ matrix.image }}@${{ steps.build.outputs.digest }}
-          output-file: sbom-${{ matrix.target }}.spdx.json
-          artifact-name: sbom-${{ matrix.target }}.spdx.json
+          image: ${{ matrix.image }}@${{ matrix.digest }}
+          output-file: sbom-${{ matrix.name }}.spdx.json
+          artifact-name: sbom-${{ matrix.name }}.spdx.json
           upload-release-assets: false
 
       - name: Attest SBOM
         uses: actions/attest@v4
         with:
           subject-name: ${{ matrix.image }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          sbom-path: sbom-${{ matrix.target }}.spdx.json
+          subject-digest: ${{ matrix.digest }}
+          sbom-path: sbom-${{ matrix.name }}.spdx.json
           push-to-registry: true
