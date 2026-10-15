@@ -3,8 +3,12 @@ name: Cohere Build Python
 on:
   push:
     branches: [cohere]
-    tags: ['v*']
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
 
 jobs:
   build-cohere-tng:
@@ -94,7 +98,12 @@ jobs:
       - uses: actions/setup-python@v6
         with: { python-version: '3.11' }
       - run: pip install build setuptools-scm
-      - run: python -m build
+      # The release tag is only created when the release publishes, so pass the version explicitly.
+      - env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [ -z "$VERSION" ] || export SETUPTOOLS_SCM_PRETEND_VERSION="$VERSION"
+          python -m build
         working-directory: cohere/python/conseel
       # Validate package metadata and README will render correctly on PyPI
       - run: pip install twine && twine check cohere/python/conseel/dist/*
@@ -112,46 +121,3 @@ jobs:
           name: cohere-tng-wheels
           pattern: 'cohere-tng-*'
           delete-merged: true
-
-  # --- Publish (PyPI then GitHub Release) ---
-  # Chained sequentially: cohere-tng first (conseel depends on it),
-  # then conseel, then GitHub Release only after both succeed.
-
-  publish-cohere-tng:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [merge-cohere-tng-wheels]
-    runs-on: ubuntu-latest
-    environment: pypi-cohere-tng
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v6
-        with: { name: cohere-tng-wheels, path: dist }
-      - uses: pypa/gh-action-pypi-publish@release/v1
-
-  publish-conseel:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [publish-cohere-tng, build-conseel]
-    runs-on: ubuntu-latest
-    environment: pypi-conseel
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v6
-        with: { name: conseel, path: dist }
-      - uses: pypa/gh-action-pypi-publish@release/v1
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [publish-cohere-tng, publish-conseel]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v6
-        with: { name: cohere-tng-wheels, path: dist }
-      - uses: actions/download-artifact@v6
-        with: { name: conseel, path: dist }
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
