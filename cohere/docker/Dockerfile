@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     ca-certificates \
     curl \
+    git \
     libprotobuf-dev \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
@@ -104,6 +105,7 @@ RUN rustup show
 COPY . .
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
     set -eu; \
     bool() { case "$(echo "${2-}" | tr 'A-Z' 'a-z')" in \
@@ -118,7 +120,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     [ -z "$tdx" ] || features="$features,coco-builtin-as-tdx"; \
     [ -z "$azsnp" ] || features="$features,coco-builtin-as-azsnp"; \
     [ -z "$nvidia" ] || features="$features,coco-builtin-as-nvidia"; \
-    env RUSTFLAGS="--cfg tokio_unstable" \
+    env RUSTFLAGS="--cfg tokio_unstable" CARGO_NET_GIT_FETCH_WITH_CLI=true \
     cargo install --locked \
     ${features:+--features "${features#,}"} \
     --path ./tng/ --root /out
