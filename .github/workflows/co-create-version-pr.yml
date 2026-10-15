@@ -1,0 +1,56 @@
+name: Cohere Create Version PR
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      HAS_APP: ${{ secrets.GH_APP_CLIENT_ID != '' && secrets.GH_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        if: env.HAS_APP == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v6
+        with:
+          ref: cohere
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || github.token }}
+
+      - name: Install release tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: git-cliff,cargo-edit
+
+      - name: Bump version and open PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+        run: |
+          version=$(git-cliff --bumped-version)
+          version="${version#v}"
+
+          cargo set-version "$version"
+          git diff --quiet Cargo.toml && { echo "::error::Cargo.toml is already at v$version"; exit 1; }
+
+          branch="release/v$version"
+          bot="${{ steps.app-token.outputs.app-slug || 'github-actions' }}[bot]"
+          git config user.name "$bot"
+          git config user.email "$bot@users.noreply.github.com"
+          git checkout -B "$branch"
+          git commit -am "chore: Bump version to v$version"
+          git push -f origin "$branch"
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base cohere \
+            --head "$branch" \
+            --title "chore: Bump version to v$version" \
+            --body "Bumps workspace version to \`v$version\`."

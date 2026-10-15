@@ -1,0 +1,115 @@
+name: Cohere Release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.info.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - id: info
+        run: |
+          [ "$GITHUB_REF" = refs/heads/cohere ] || { echo "::error::Run from the cohere branch"; exit 1; }
+          version=$(awk -F'"' '/^version = "/ { print $2; exit }' Cargo.toml)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Invalid Cargo.toml version '$version'"; exit 1; }
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "::error::Tag v$version already exists"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Preparing release v$version from $GITHUB_SHA"
+
+      - name: Wait for all other workflows on this commit to succeed
+        run: |
+          mapfile -t run_ids < <(
+            gh run list --repo "$GH_REPO" --commit "$GITHUB_SHA" --event push --limit 50 \
+              --json databaseId --jq '.[].databaseId'
+          )
+          if [ "${#run_ids[@]}" -eq 0 ]; then
+            echo "::error::No CI workflow runs found on commit $GITHUB_SHA"; exit 1
+          fi
+          for id in "${run_ids[@]}"; do
+            echo "Waiting for workflow run $id..."
+            gh run watch "$id" --repo "$GH_REPO" --exit-status
+          done
+
+  docker:
+    needs: [check]
+    uses: ./.github/workflows/co-build-docker.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+      artifact-metadata: write
+
+  python:
+    needs: [check]
+    uses: ./.github/workflows/co-build-python.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
+    permissions:
+      contents: read
+
+  # cohere-tng first since conseel depends on it.
+  publish-cohere-tng:
+    needs: [python]
+    runs-on: ubuntu-latest
+    environment: pypi-cohere-tng
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with: { name: cohere-tng-wheels, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with: { skip-existing: true }
+
+  publish-conseel:
+    needs: [publish-cohere-tng]
+    runs-on: ubuntu-latest
+    environment: pypi-conseel
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with: { name: conseel, path: dist }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with: { skip-existing: true }
+
+  # Creates the git tag and immutable GitHub Release atomically once everything else has succeeded.
+  release:
+    needs: [check, docker, publish-conseel]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with: { name: cohere-tng-wheels, path: dist }
+      - uses: actions/download-artifact@v6
+        with: { name: conseel, path: dist }
+      - uses: actions/download-artifact@v6
+        with: { pattern: 'sbom-*', path: dist, merge-multiple: true }
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          gh release create "v$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --generate-notes
