@@ -1,0 +1,26 @@
+name: Cohere Auto Release Check
+
+on:
+  push:
+    branches: [cohere]
+    paths: ['Cargo.toml']
+
+jobs:
+  trigger-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Dispatch release if version is untagged
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(awk -F'"' '/^version = "/ { print $2; exit }' Cargo.toml)
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "Tag v$version already exists; skipping release."
+            exit 0
+          fi
+          echo "New untagged version v$version detected on $GITHUB_SHA; dispatching co-release.yml"
+          gh workflow run co-release.yml --repo "$GITHUB_REPOSITORY" --ref cohere

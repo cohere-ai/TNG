@@ -1,0 +1,69 @@
+name: Cohere Create Version PR
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      HAS_APP: ${{ secrets.GH_APP_CLIENT_ID != '' && secrets.GH_APP_PRIVATE_KEY != '' }}
+    steps:
+      - name: Mint GitHub App token
+        id: app-token
+        if: env.HAS_APP == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@v6
+        with:
+          ref: cohere
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install release tools
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: git-cliff@2.14.2,cargo-edit@0.13.13
+          # cargo-edit has no checksummed manifest; build it from crates.io instead of cargo-binstall.
+          fallback: cargo-install
+
+      - name: Bump version
+        id: bump
+        run: |
+          version=$(git-cliff --bumped-version)
+          version="${version#v}"
+
+          cargo set-version "$version"
+          git diff --quiet Cargo.toml && { echo "::error::Cargo.toml is already at v$version"; exit 1; }
+
+          branch="release/v$version"
+          bot="${{ steps.app-token.outputs.app-slug || 'github-actions' }}[bot]"
+          git config user.name "$bot"
+          git config user.email "$bot@users.noreply.github.com"
+          git checkout -B "$branch"
+          git commit -am "chore: Bump version to v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Push and open PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          version: ${{ steps.bump.outputs.version }}
+          branch: ${{ steps.bump.outputs.branch }}
+        run: |
+          gh auth setup-git
+          git push -f origin "$branch"
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base cohere \
+            --head "$branch" \
+            --title "chore: Bump version to v$version" \
+            --body "Bumps workspace version to \`v$version\`."
