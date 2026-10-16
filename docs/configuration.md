@@ -945,7 +945,7 @@ The OHTTP capability can be enabled by specifying the `ohttp` field in the `add_
 
     Body field promotion has the following behavior:
     - If all target headers are already present on the request, body parsing is skipped entirely.
-    - Only applies when the request `Content-Type` starts with `application/json`. Non-JSON requests (e.g. multipart file uploads) are passed through without inspection.
+    - Only applies when the request `Content-Type` starts with `application/json` or is `multipart/form-data`. For multipart, only form fields before the first file part within the first 64 KiB are read, and the rest of the upload streams through unbuffered. Other requests are passed through without inspection.
     - If the JSON body exceeds 64 MB, the request is rejected with an error. This limit is only enforced after confirming the content type is JSON.
     - If the JSON field is missing, not a string, or the body cannot be parsed as JSON, promotion is silently skipped and the request continues normally.
     - Existing headers are never overwritten.
