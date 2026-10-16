@@ -19,21 +19,24 @@ jobs:
         with:
           client-id: ${{ secrets.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
 
       - uses: actions/checkout@v6
         with:
           ref: cohere
           fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token || github.token }}
+          persist-credentials: false
 
       - name: Install release tools
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: git-cliff,cargo-edit
+          tool: git-cliff@2.14.2,cargo-edit@0.13.13
+          # cargo-edit has no checksummed manifest; build it from crates.io instead of cargo-binstall.
+          fallback: cargo-install
 
-      - name: Bump version and open PR
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+      - name: Bump version
+        id: bump
         run: |
           version=$(git-cliff --bumped-version)
           version="${version#v}"
@@ -47,6 +50,16 @@ jobs:
           git config user.email "$bot@users.noreply.github.com"
           git checkout -B "$branch"
           git commit -am "chore: Bump version to v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Push and open PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          version: ${{ steps.bump.outputs.version }}
+          branch: ${{ steps.bump.outputs.branch }}
+        run: |
+          gh auth setup-git
           git push -f origin "$branch"
           gh pr create \
             --repo "$GITHUB_REPOSITORY" \
