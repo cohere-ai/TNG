@@ -342,12 +342,18 @@ impl OHttpSecurityLayer {
             read.get(&client_cache_key).cloned()
         };
 
-        // If no entry exists, create one with uninitialized value.
+        // If no entry exists, or its client stopped refreshing, create one with uninitialized value.
         let cell = match cell {
-            Some(cell) => cell,
-            _ => {
+            Some(cell) if !cell.get().is_some_and(|client| client.is_stopped()) => cell,
+            stale => {
                 let mut map = self.ohttp_clients.write().await;
-                let cell = map.entry(client_cache_key).or_default().clone();
+                let entry = map.entry(client_cache_key).or_default();
+                if let Some(stale) = stale {
+                    if Arc::ptr_eq(entry, &stale) {
+                        *entry = Default::default();
+                    }
+                }
+                let cell = entry.clone();
                 if map.len() > 100 && map.len().is_power_of_two() {
                     tracing::warn!(
                         cache_size = map.len(),

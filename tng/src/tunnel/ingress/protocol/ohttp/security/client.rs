@@ -57,6 +57,7 @@ use crate::{
 
 const DEFAULT_KEY_CONFIG_REFRESH_SECOND: u64 = 5 * 60; // 5 minutes
 const DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS: u64 = 0;
+const KEY_CONFIG_IDLE_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 pub struct OHttpClient {
     inner: Arc<OHttpClientInner>,
@@ -109,18 +110,23 @@ impl OHttpClient {
             refresh_before_expiry,
         });
 
-        let key_store_value = MaybeCached::new(runtime.clone(), refresh_strategy, {
-            let inner = inner.clone();
-            move || {
+        let key_store_value = MaybeCached::new_with_idle_timeout(
+            runtime.clone(),
+            refresh_strategy,
+            Some(KEY_CONFIG_IDLE_TIMEOUT),
+            {
                 let inner = inner.clone();
-                Box::pin(async move {
-                    inner
-                        .create_key_store_value()
-                        .await
-                        .map_err(TngError::GenServerHpkeConfigurationResponseFailed)
-                }) as Pin<Box<_>>
-            }
-        })
+                move || {
+                    let inner = inner.clone();
+                    Box::pin(async move {
+                        inner
+                            .create_key_store_value()
+                            .await
+                            .map_err(TngError::GenServerHpkeConfigurationResponseFailed)
+                    }) as Pin<Box<_>>
+                }
+            },
+        )
         .await?;
 
         Ok(Self {
@@ -131,6 +137,10 @@ impl OHttpClient {
 }
 
 impl OHttpClient {
+    pub fn is_stopped(&self) -> bool {
+        self.key_store_value.is_stopped()
+    }
+
     pub async fn forward_request(
         &self,
         request: axum::extract::Request,
