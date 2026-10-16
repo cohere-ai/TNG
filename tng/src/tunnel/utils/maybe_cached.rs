@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use futures::FutureExt as _;
 use std::cmp::{Ord, Ordering, PartialOrd};
+use std::sync::atomic::AtomicU64;
 use std::{pin::Pin, sync::Arc, time::Duration};
 use tokio::select;
 
@@ -96,6 +97,7 @@ pub enum MaybeCached<
         invalidator_tx: tokio::sync::watch::Sender<()>,
         #[allow(unused)]
         f: MaybeCachedUpdateFunc<T, E>,
+        last_used: Arc<AtomicU64>,
     },
     NoCache {
         f: MaybeCachedUpdateFunc<T, E>,
@@ -118,6 +120,24 @@ impl<
             + Sync
             + 'static,
     {
+        Self::new_with_idle_timeout(runtime, refresh_strategy, None, f).await
+    }
+
+    /// Like `new`, but the periodic refresh stops once `get_latest` has not been called for
+    /// `idle_timeout`. A stopped cache keeps returning its last value, so callers must check
+    /// `is_stopped` and rebuild it.
+    pub async fn new_with_idle_timeout<F>(
+        runtime: TokioRuntime,
+        refresh_strategy: RefreshStrategy,
+        idle_timeout: Option<Duration>,
+        f: F,
+    ) -> Result<Self, E>
+    where
+        F: Fn() -> Pin<Box<dyn TokioRuntimeSupportedFuture<Result<(T, Expire), E>>>>
+            + Send
+            + Sync
+            + 'static,
+    {
         match refresh_strategy {
             RefreshStrategy::Periodically { interval } => {
                 // Fetch the value first time
@@ -127,10 +147,13 @@ impl<
 
                 let (invalidator_tx, mut invalidator_rx) = tokio::sync::watch::channel(());
 
+                let last_used = Arc::new(AtomicU64::new(now_millis()));
+
                 let f = Arc::new(f);
                 let refresh_task = {
                     let f = f.clone();
                     let latest = latest.clone();
+                    let last_used = last_used.clone();
 
                     let join_handle = runtime.spawn_supervised_task_current_span(async move {
                         let mut expire = init_expire;
@@ -176,17 +199,37 @@ impl<
                                     () = periodically_fut=> { /* nothing */ }
                                 }
 
+                                if let Some(idle_timeout) = idle_timeout {
+                                    let idle = now_millis().saturating_sub(
+                                        last_used.load(std::sync::atomic::Ordering::Relaxed),
+                                    );
+                                    if Duration::from_millis(idle) >= idle_timeout {
+                                        return Ok(false);
+                                    }
+                                }
+
                                 let (new_value, new_expire) = f().await.map_err(|e| e.into())?;
 
                                 expire = new_expire;
 
                                 latest.0.send(Arc::new(new_value)).map_err(|e| {
                                     anyhow!("Failed to set the latest cached value: {e}")
-                                })
+                                })?;
+                                Ok::<_, anyhow::Error>(true)
                             };
 
-                            if let Err(e) = fut.await {
-                                tracing::error!(error=?e,"Failed to update the cached value");
+                            match fut.await {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    tracing::debug!(
+                                        ?idle_timeout,
+                                        "Cached value unused, stopping background refresh"
+                                    );
+                                    break;
+                                }
+                                Err(e) => {
+                                    tracing::error!(error=?e,"Failed to update the cached value");
+                                }
                             }
                         }
                     });
@@ -199,6 +242,7 @@ impl<
                     refresh_task,
                     invalidator_tx,
                     f,
+                    last_used,
                 })
             }
             RefreshStrategy::Always => Ok(MaybeCached::NoCache { f: Arc::new(f) }),
@@ -207,8 +251,20 @@ impl<
 
     pub async fn get_latest(&self) -> Result<Arc<T>, E> {
         match self {
-            MaybeCached::UpdatePeriodically { latest, .. } => Ok(latest.1.borrow().clone()),
+            MaybeCached::UpdatePeriodically {
+                latest, last_used, ..
+            } => {
+                last_used.store(now_millis(), std::sync::atomic::Ordering::Relaxed);
+                Ok(latest.1.borrow().clone())
+            }
             MaybeCached::NoCache { f } => Ok(Arc::new(f().await?.0)),
+        }
+    }
+
+    pub fn is_stopped(&self) -> bool {
+        match self {
+            MaybeCached::UpdatePeriodically { refresh_task, .. } => refresh_task.is_finished(),
+            MaybeCached::NoCache { .. } => false,
         }
     }
 
@@ -220,6 +276,13 @@ impl<
             MaybeCached::NoCache { .. } => {}
         }
     }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -555,6 +618,50 @@ mod tests {
             assert_eq!(*value4, "value3");
             // Verify the function was called three times
             assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 3);
+            Ok(())
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn test_maybe_cached_stops_when_idle() -> Result<()> {
+        run_test_with_tokio_runtime(|runtime| async move {
+            let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+            let call_count_clone = call_count.clone();
+
+            let maybe_cached: MaybeCached<String, anyhow::Error> =
+                MaybeCached::new_with_idle_timeout(
+                    runtime,
+                    RefreshStrategy::Periodically { interval: 1 },
+                    Some(Duration::from_millis(1500)),
+                    move || {
+                        let call_count_clone = call_count_clone.clone();
+                        Box::pin(async move {
+                            call_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            Ok(("value".to_string(), Expire::NoExpire))
+                        })
+                    },
+                )
+                .await
+                .expect("Failed to create MaybeCached");
+
+            // Keeps refreshing while in use
+            for _ in 0..6 {
+                tokio_time::sleep(Duration::from_millis(400)).await;
+                maybe_cached.get_latest().await?;
+            }
+            assert!(!maybe_cached.is_stopped());
+            assert!(call_count.load(std::sync::atomic::Ordering::SeqCst) >= 3);
+
+            // Stops once unused for longer than the idle timeout
+            tokio_time::sleep(Duration::from_secs(4)).await;
+            assert!(maybe_cached.is_stopped());
+            let stopped_count = call_count.load(std::sync::atomic::Ordering::SeqCst);
+            tokio_time::sleep(Duration::from_millis(1500)).await;
+            assert_eq!(
+                call_count.load(std::sync::atomic::Ordering::SeqCst),
+                stopped_count
+            );
             Ok(())
         })
         .await
