@@ -138,6 +138,15 @@ impl CommonCocoVerifier {
                     })?;
 
                 if status != "affirming" {
+                    // The claims the policy was evaluated against, so a rejection can be
+                    // diagnosed against the policy's golden values.
+                    tracing::warn!(
+                        submodule = %key,
+                        annotated_evidence = %value
+                            .pointer("/ear.veraison.annotated-evidence")
+                            .unwrap_or(&serde_json::Value::Null),
+                        "EAR appraisal not affirming"
+                    );
                     return Err(Error::EarStatusNotAffirming {
                         status: status.to_string(),
                         tee_type: key.to_string(),
