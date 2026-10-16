@@ -418,59 +418,97 @@ async fn promote_body_fields(
         .get(http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if let Some(boundary) = multipart_boundary(content_type) {
-        return promote_multipart_fields(body_field_headers, &boundary, request).await;
-    }
     let content_type = content_type.to_ascii_lowercase();
-    if !content_type.starts_with("application/json") {
+    let is_json = content_type.starts_with("application/json");
+    let is_multipart = content_type.starts_with("multipart/form-data");
+    if !is_json && !is_multipart {
         tracing::debug!(
             content_type,
-            "Non-JSON content type, skipping body field promotion"
+            "Unsupported content type, skipping body field promotion"
         );
         return Ok(request);
     }
 
     let (parts, body) = request.into_parts();
-    let bytes = axum::body::to_bytes(body, BODY_FIELD_PROMOTION_MAX_BYTES)
-        .await
-        .map_err(|e| {
-            TngError::InvalidOHttpRequest(anyhow::anyhow!(
-                "Failed to buffer request body for field promotion: {e}"
-            ))
-        })?;
+    let (json_value, body) = if is_multipart {
+        read_multipart_fields(&parts.headers, body).await?
+    } else {
+        let bytes = axum::body::to_bytes(body, BODY_FIELD_PROMOTION_MAX_BYTES)
+            .await
+            .map_err(|e| {
+                TngError::InvalidOHttpRequest(anyhow::anyhow!(
+                    "Failed to buffer request body for field promotion: {e}"
+                ))
+            })?;
 
-    let json_value: serde_json::Value = match serde_json::from_slice(&bytes) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("Failed to parse JSON body for field promotion: {e}");
-            return Ok(axum::extract::Request::from_parts(
-                parts,
-                axum::body::Body::from(bytes),
-            ));
-        }
+        let json_value: serde_json::Value = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Failed to parse JSON body for field promotion: {e}");
+                return Ok(axum::extract::Request::from_parts(
+                    parts,
+                    axum::body::Body::from(bytes),
+                ));
+            }
+        };
+        (json_value, axum::body::Body::from(bytes))
     };
 
     let mut parts = parts;
     if let serde_json::Value::Object(ref map) = json_value {
-        insert_promoted_headers(&mut parts.headers, body_field_headers, map);
+        for (field_name, header_name) in body_field_headers {
+            if parts.headers.contains_key(header_name) {
+                continue;
+            }
+            if let Some(serde_json::Value::String(value)) = map.get(field_name.as_str()) {
+                match HeaderValue::from_str(value) {
+                    Ok(header_value) => {
+                        tracing::debug!(
+                            field = field_name,
+                            header = header_name.as_str(),
+                            value = value,
+                            "Promoted body field to header"
+                        );
+                        parts.headers.insert(header_name.clone(), header_value);
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            field = field_name,
+                            value = value,
+                            "Skipping body field promotion, invalid header value: {e}"
+                        );
+                    }
+                }
+            } else {
+                tracing::debug!(
+                    field = field_name,
+                    "Body field not found or not a string, skipping promotion"
+                );
+            }
+        }
     }
 
-    Ok(axum::extract::Request::from_parts(
-        parts,
-        axum::body::Body::from(bytes),
-    ))
+    Ok(axum::extract::Request::from_parts(parts, body))
 }
 
 /// Holds at most MULTIPART_PROMOTION_MAX_BYTES before forwarding the rest of
 /// the stream, so only form fields that precede the file part are promoted.
-async fn promote_multipart_fields(
-    body_field_headers: &[(String, HeaderName)],
-    boundary: &str,
-    request: axum::extract::Request,
-) -> Result<axum::extract::Request, TngError> {
+async fn read_multipart_fields(
+    headers: &http::HeaderMap,
+    body: axum::body::Body,
+) -> Result<(serde_json::Value, axum::body::Body), TngError> {
     use futures::StreamExt as _;
 
-    let (mut parts, body) = request.into_parts();
+    let Some(boundary) = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| header_param(v, "boundary"))
+        .filter(|b| !b.is_empty())
+    else {
+        tracing::debug!("Multipart boundary missing, skipping body field promotion");
+        return Ok((serde_json::Value::Null, body));
+    };
+
     let mut stream = body.into_data_stream();
     let mut prefix = bytes::BytesMut::new();
     while prefix.len() < MULTIPART_PROMOTION_MAX_BYTES {
@@ -485,13 +523,11 @@ async fn promote_multipart_fields(
     }
 
     let fields = multipart_fields(&prefix, boundary);
-    insert_promoted_headers(&mut parts.headers, body_field_headers, &fields);
-
     let prefix = prefix.freeze();
     let body = axum::body::Body::from_stream(
         futures::stream::once(async { Ok::<_, axum::Error>(prefix) }).chain(stream),
     );
-    Ok(axum::extract::Request::from_parts(parts, body))
+    Ok((serde_json::Value::Object(fields), body))
 }
 
 fn multipart_fields(prefix: &[u8], boundary: &str) -> serde_json::Map<String, serde_json::Value> {
@@ -519,7 +555,9 @@ fn multipart_fields(prefix: &[u8], boundary: &str) -> serde_json::Map<String, se
         }) else {
             continue;
         };
-        if header_param(disposition, "filename").is_some() {
+        if header_param(disposition, "filename").is_some()
+            || header_param(disposition, "filename*").is_some()
+        {
             break;
         }
         if let Some(name) = header_param(disposition, "name") {
@@ -529,60 +567,20 @@ fn multipart_fields(prefix: &[u8], boundary: &str) -> serde_json::Map<String, se
     fields
 }
 
-fn multipart_boundary(content_type: &str) -> Option<String> {
-    let (mime, params) = content_type.split_once(';')?;
-    if !mime.trim().eq_ignore_ascii_case("multipart/form-data") {
-        return None;
-    }
-    header_param(params, "boundary")
-        .filter(|boundary| !boundary.is_empty())
-        .map(str::to_owned)
-}
-
 fn header_param<'a>(value: &'a str, key: &str) -> Option<&'a str> {
-    value.split(';').find_map(|param| {
+    let mut in_quotes = false;
+    let separator = move |c: char| {
+        if c == '"' {
+            in_quotes = !in_quotes;
+        }
+        c == ';' && !in_quotes
+    };
+    value.split(separator).find_map(|param| {
         let (name, value) = param.split_once('=')?;
         name.trim()
             .eq_ignore_ascii_case(key)
             .then(|| value.trim().trim_matches('"'))
     })
-}
-
-fn insert_promoted_headers(
-    headers: &mut http::HeaderMap,
-    body_field_headers: &[(String, HeaderName)],
-    map: &serde_json::Map<String, serde_json::Value>,
-) {
-    for (field_name, header_name) in body_field_headers {
-        if headers.contains_key(header_name) {
-            continue;
-        }
-        if let Some(serde_json::Value::String(value)) = map.get(field_name.as_str()) {
-            match HeaderValue::from_str(value) {
-                Ok(header_value) => {
-                    tracing::debug!(
-                        field = field_name,
-                        header = header_name.as_str(),
-                        value = value,
-                        "Promoted body field to header"
-                    );
-                    headers.insert(header_name.clone(), header_value);
-                }
-                Err(e) => {
-                    tracing::debug!(
-                        field = field_name,
-                        value = value,
-                        "Skipping body field promotion, invalid header value: {e}"
-                    );
-                }
-            }
-        } else {
-            tracing::debug!(
-                field = field_name,
-                "Body field not found or not a string, skipping promotion"
-            );
-        }
-    }
 }
 
 #[cfg(test)]
@@ -686,9 +684,11 @@ mod tests {
         let model =
             "--b\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncohere-transcribe\r\n";
         let file = "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\n\r\nRIFF\0--b\r\n";
+        let encoded_file = "--b\r\nContent-Disposition: form-data; name=\"file\"; filename*=UTF-8''a.wav\r\n\r\nRIFF\0--b\r\n";
         for (body, expected) in [
             (format!("{model}{file}--b--\r\n"), Some("cohere-transcribe")),
             (format!("{file}{model}--b--\r\n"), None),
+            (format!("{encoded_file}{model}--b--\r\n"), None),
         ] {
             // One byte per chunk, so fields straddle chunk boundaries.
             let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
@@ -713,6 +713,13 @@ mod tests {
                 .unwrap();
             assert_eq!(forwarded.as_ref(), body.as_bytes());
         }
+    }
+
+    #[test]
+    fn test_header_param_quoted_semicolon() {
+        let disposition = r#"form-data; name="a;filename=b"; x=1"#;
+        assert_eq!(header_param(disposition, "name"), Some("a;filename=b"));
+        assert_eq!(header_param(disposition, "filename"), None);
     }
 
     /// Verifies forward_directly preserves request framing across all common cases.
