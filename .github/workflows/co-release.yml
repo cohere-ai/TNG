@@ -77,7 +77,6 @@ jobs:
       - uses: actions/download-artifact@v6
         with: { name: cohere-tng-wheels, path: dist }
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with: { skip-existing: true }
 
   publish-conseel:
     needs: [publish-cohere-tng]
@@ -89,7 +88,6 @@ jobs:
       - uses: actions/download-artifact@v6
         with: { name: conseel, path: dist }
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with: { skip-existing: true }
 
   # Creates the git tag and immutable GitHub Release atomically once everything else has succeeded.
   release:
