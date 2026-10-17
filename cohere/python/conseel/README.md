@@ -60,9 +60,9 @@ async with httpx.AsyncClient(transport=AsyncTransport()) as client:
    latest signed integritee policy release (configurable via `verify`).
 3. **Promotes** the `model` field from JSON request bodies to the
    `x-gateway-model-name` HTTP header for gateway routing. This happens
-   inside TNG via `body_field_headers` config. Body parsing is skipped
-   entirely for non-JSON requests (e.g. multipart audio uploads) and
-   when the target headers are already present on the request.
+   inside TNG via `body_field_headers` config. Multipart uploads (e.g.
+   audio) are supported when `model` precedes the file. Body parsing is
+   skipped when the target headers are already present on the request.
 4. **Forwards** `authorization` and `x-gateway-model-name` headers through the
    OHTTP layer to the backend.
 

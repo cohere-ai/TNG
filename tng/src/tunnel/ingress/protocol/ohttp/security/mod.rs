@@ -54,6 +54,7 @@ struct OHttpClientCacheKey {
 }
 
 const BODY_FIELD_PROMOTION_MAX_BYTES: usize = 64 * 1024 * 1024;
+const MULTIPART_PROMOTION_MAX_BYTES: usize = 64 * 1024;
 
 pub struct OHttpSecurityLayer {
     ra_context: Arc<RaContext>,
@@ -418,32 +419,39 @@ async fn promote_body_fields(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     let content_type = content_type.to_ascii_lowercase();
-    if !content_type.starts_with("application/json") {
+    let is_json = content_type.starts_with("application/json");
+    let is_multipart = content_type.starts_with("multipart/form-data");
+    if !is_json && !is_multipart {
         tracing::debug!(
             content_type,
-            "Non-JSON content type, skipping body field promotion"
+            "Unsupported content type, skipping body field promotion"
         );
         return Ok(request);
     }
 
     let (parts, body) = request.into_parts();
-    let bytes = axum::body::to_bytes(body, BODY_FIELD_PROMOTION_MAX_BYTES)
-        .await
-        .map_err(|e| {
-            TngError::InvalidOHttpRequest(anyhow::anyhow!(
-                "Failed to buffer request body for field promotion: {e}"
-            ))
-        })?;
+    let (json_value, body) = if is_multipart {
+        read_multipart_fields(&parts.headers, body).await?
+    } else {
+        let bytes = axum::body::to_bytes(body, BODY_FIELD_PROMOTION_MAX_BYTES)
+            .await
+            .map_err(|e| {
+                TngError::InvalidOHttpRequest(anyhow::anyhow!(
+                    "Failed to buffer request body for field promotion: {e}"
+                ))
+            })?;
 
-    let json_value: serde_json::Value = match serde_json::from_slice(&bytes) {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("Failed to parse JSON body for field promotion: {e}");
-            return Ok(axum::extract::Request::from_parts(
-                parts,
-                axum::body::Body::from(bytes),
-            ));
-        }
+        let json_value: serde_json::Value = match serde_json::from_slice(&bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Failed to parse JSON body for field promotion: {e}");
+                return Ok(axum::extract::Request::from_parts(
+                    parts,
+                    axum::body::Body::from(bytes),
+                ));
+            }
+        };
+        (json_value, axum::body::Body::from(bytes))
     };
 
     let mut parts = parts;
@@ -480,10 +488,99 @@ async fn promote_body_fields(
         }
     }
 
-    Ok(axum::extract::Request::from_parts(
-        parts,
-        axum::body::Body::from(bytes),
-    ))
+    Ok(axum::extract::Request::from_parts(parts, body))
+}
+
+/// Holds at most MULTIPART_PROMOTION_MAX_BYTES before forwarding the rest of
+/// the stream, so only form fields that precede the file part are promoted.
+async fn read_multipart_fields(
+    headers: &http::HeaderMap,
+    body: axum::body::Body,
+) -> Result<(serde_json::Value, axum::body::Body), TngError> {
+    use futures::StreamExt as _;
+
+    let Some(boundary) = headers
+        .get(http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| header_param(v, "boundary"))
+        .filter(|b| !b.is_empty())
+    else {
+        tracing::debug!("Multipart boundary missing, skipping body field promotion");
+        return Ok((serde_json::Value::Null, body));
+    };
+
+    let mut stream = body.into_data_stream();
+    let mut prefix = bytes::BytesMut::new();
+    while prefix.len() < MULTIPART_PROMOTION_MAX_BYTES {
+        let Some(chunk) = stream.next().await else {
+            break;
+        };
+        prefix.extend_from_slice(&chunk.map_err(|e| {
+            TngError::InvalidOHttpRequest(anyhow::anyhow!(
+                "Failed to read request body for field promotion: {e}"
+            ))
+        })?);
+    }
+
+    let fields = multipart_fields(&prefix, boundary);
+    let prefix = prefix.freeze();
+    let body = axum::body::Body::from_stream(
+        futures::stream::once(async { Ok::<_, axum::Error>(prefix) }).chain(stream),
+    );
+    Ok((serde_json::Value::Object(fields), body))
+}
+
+fn multipart_fields(prefix: &[u8], boundary: &str) -> serde_json::Map<String, serde_json::Value> {
+    let body = format!("\r\n{}", String::from_utf8_lossy(prefix));
+    let segments: Vec<&str> = body.split(&format!("\r\n--{boundary}")).collect();
+    let mut fields = serde_json::Map::new();
+    // Skip the preamble and the last segment, which is the epilogue or a part
+    // cut off at the read limit.
+    for segment in segments
+        .iter()
+        .take(segments.len().saturating_sub(1))
+        .skip(1)
+    {
+        let Some((headers, value)) = segment
+            .strip_prefix("\r\n")
+            .and_then(|part| part.split_once("\r\n\r\n"))
+        else {
+            break;
+        };
+        let Some(disposition) = headers.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.trim()
+                .eq_ignore_ascii_case("content-disposition")
+                .then_some(value)
+        }) else {
+            continue;
+        };
+        if header_param(disposition, "filename").is_some()
+            || header_param(disposition, "filename*").is_some()
+        {
+            break;
+        }
+        if let Some(name) = header_param(disposition, "name") {
+            fields.entry(name).or_insert_with(|| value.into());
+        }
+    }
+    fields
+}
+
+fn header_param<'a>(value: &'a str, key: &str) -> Option<&'a str> {
+    let mut in_quotes = false;
+    let separator = move |c: char| {
+        if c == '"' {
+            in_quotes = !in_quotes;
+        }
+        c == ';' && !in_quotes
+    };
+    value.split(separator).find_map(|param| {
+        let (name, value) = param.split_once('=')?;
+        name.trim()
+            .eq_ignore_ascii_case(key)
+            .then(|| value.trim().trim_matches('"'))
+    })
 }
 
 #[cfg(test)]
@@ -569,13 +666,60 @@ mod tests {
         )];
         let request = axum::extract::Request::builder()
             .uri("http://example.com/v1/audio/transcriptions")
-            .header("content-type", "multipart/form-data; boundary=---abc")
+            .header("content-type", "application/octet-stream")
             .body(Body::from("some binary data"))
             .unwrap();
 
         let result = promote_body_fields(&config, request).await.unwrap();
 
         assert!(result.headers().get("x-gateway-model-name").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_promote_body_fields_multipart() {
+        let config = vec![(
+            "model".to_owned(),
+            HeaderName::from_static("x-gateway-model-name"),
+        )];
+        let model =
+            "--b\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncohere-transcribe\r\n";
+        let file = "--b\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.wav\"\r\n\r\nRIFF\0--b\r\n";
+        let encoded_file = "--b\r\nContent-Disposition: form-data; name=\"file\"; filename*=UTF-8''a.wav\r\n\r\nRIFF\0--b\r\n";
+        for (body, expected) in [
+            (format!("{model}{file}--b--\r\n"), Some("cohere-transcribe")),
+            (format!("{file}{model}--b--\r\n"), None),
+            (format!("{encoded_file}{model}--b--\r\n"), None),
+        ] {
+            // One byte per chunk, so fields straddle chunk boundaries.
+            let chunks: Vec<Result<Vec<u8>, std::io::Error>> =
+                body.bytes().map(|byte| Ok(vec![byte])).collect();
+            let request = axum::extract::Request::builder()
+                .uri("http://example.com/v2/audio/transcriptions")
+                .header("content-type", "multipart/form-data; boundary=\"b\"")
+                .body(Body::from_stream(futures::stream::iter(chunks)))
+                .unwrap();
+
+            let result = promote_body_fields(&config, request).await.unwrap();
+
+            assert_eq!(
+                result
+                    .headers()
+                    .get("x-gateway-model-name")
+                    .and_then(|v| v.to_str().ok()),
+                expected
+            );
+            let forwarded = axum::body::to_bytes(result.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(forwarded.as_ref(), body.as_bytes());
+        }
+    }
+
+    #[test]
+    fn test_header_param_quoted_semicolon() {
+        let disposition = r#"form-data; name="a;filename=b"; x=1"#;
+        assert_eq!(header_param(disposition, "name"), Some("a;filename=b"));
+        assert_eq!(header_param(disposition, "filename"), None);
     }
 
     /// Verifies forward_directly preserves request framing across all common cases.
