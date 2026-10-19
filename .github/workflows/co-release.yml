@@ -1,7 +1,7 @@
 name: Cohere Release
 
 # PyPI uploads are irreversible. If a job fails after publishing, use "Re-run failed jobs"
-# on the same run; a new dispatch rebuilds and fails because the version already exists on PyPI.
+# on the same run; a new dispatch fails because the version already exists on PyPI.
 
 on:
   workflow_dispatch:
@@ -18,6 +18,7 @@ jobs:
       actions: read
     outputs:
       version: ${{ steps.info.outputs.version }}
+      python-run-id: ${{ steps.wait.outputs.python-run-id }}
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -36,6 +37,7 @@ jobs:
           echo "Preparing release v$version from $GITHUB_SHA"
 
       - name: Wait for all other workflows on this commit to succeed
+        id: wait
         run: |
           mapfile -t run_ids < <(
             gh run list --repo "$GH_REPO" --commit "$GITHUB_SHA" --event push --limit 50 \
@@ -48,48 +50,65 @@ jobs:
             echo "Waiting for workflow run $id..."
             gh run watch "$id" --repo "$GH_REPO" --exit-status
           done
+          python_run_id=$(
+            gh run list --repo "$GH_REPO" --commit "$GITHUB_SHA" --event push --workflow co-build-python.yml \
+              --limit 1 --json databaseId --jq '.[0].databaseId // empty'
+          )
+          [ -n "$python_run_id" ] || { echo "::error::No co-build-python.yml push run on $GITHUB_SHA"; exit 1; }
+          echo "python-run-id=$python_run_id" >> "$GITHUB_OUTPUT"
 
+  # Promotes the images CI already built for this commit; attestations stay valid since the digest is unchanged.
   docker:
     needs: [check]
-    uses: ./.github/workflows/co-build-docker.yml
-    with:
-      version: ${{ needs.check.outputs.version }}
+    runs-on: ubuntu-latest
     permissions:
-      contents: read
       packages: write
-      attestations: write
-      id-token: write
-      artifact-metadata: write
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+      - env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          for img in tng tng-ita tng-trustee tng-ingress; do
+            ref="ghcr.io/cohere-ai/$img"
+            docker buildx imagetools create -t "$ref:$VERSION" -t "$ref:latest" "$ref:sha-$GITHUB_SHA"
+          done
 
-  python:
-    needs: [check]
-    uses: ./.github/workflows/co-build-python.yml
-    with:
-      version: ${{ needs.check.outputs.version }}
-    permissions:
-      contents: read
-
+  # Python packages are the ones CI already built for this commit, downloaded from its push run.
   # cohere-tng first since conseel depends on it.
   publish-cohere-tng:
-    needs: [python]
+    needs: [check]
     runs-on: ubuntu-latest
     environment: pypi-cohere-tng
     permissions:
+      actions: read
       id-token: write
     steps:
       - uses: actions/download-artifact@v6
-        with: { name: cohere-tng-wheels, path: dist }
+        with:
+          name: cohere-tng-wheels
+          path: dist
+          run-id: ${{ needs.check.outputs.python-run-id }}
+          github-token: ${{ github.token }}
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   publish-conseel:
-    needs: [publish-cohere-tng]
+    needs: [check, publish-cohere-tng]
     runs-on: ubuntu-latest
     environment: pypi-conseel
     permissions:
+      actions: read
       id-token: write
     steps:
       - uses: actions/download-artifact@v6
-        with: { name: conseel, path: dist }
+        with:
+          name: conseel
+          path: dist
+          run-id: ${{ needs.check.outputs.python-run-id }}
+          github-token: ${{ github.token }}
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   # Creates the git tag and immutable GitHub Release atomically once everything else has succeeded.
@@ -99,18 +118,29 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v6
-        with: { name: cohere-tng-wheels, path: dist }
-      - uses: actions/download-artifact@v6
-        with: { name: conseel, path: dist }
-      - uses: actions/download-artifact@v6
-        with: { pattern: 'sbom-*', path: dist, merge-multiple: true }
       - env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check.outputs.version }}
         run: |
-          gh release create "v$VERSION" dist/* \
+          notes=$(cat <<EOF
+          ## Published images and packages
+
+          Docker images:
+          - \`ghcr.io/cohere-ai/tng:$VERSION\`
+          - \`ghcr.io/cohere-ai/tng-ita:$VERSION\`
+          - \`ghcr.io/cohere-ai/tng-trustee:$VERSION\`
+          - \`ghcr.io/cohere-ai/tng-ingress:$VERSION\`
+
+          Python packages:
+          - [cohere-tng $VERSION](https://pypi.org/project/cohere-tng/$VERSION/)
+          - [conseel $VERSION](https://pypi.org/project/conseel/$VERSION/)
+
+          Verify provenance with \`gh attestation verify <image or file> -R $GITHUB_REPOSITORY\`.
+          EOF
+          )
+          gh release create "v$VERSION" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "v$VERSION" \
-            --generate-notes
+            --generate-notes \
+            --notes "$notes"

@@ -4,14 +4,13 @@ on:
   push:
     branches: [cohere]
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      version:
-        type: string
-        required: true
 
 jobs:
   build-cohere-tng:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         include:
@@ -85,6 +84,9 @@ jobs:
             exit 1
           fi
           echo "No OpenSSL shared library in $(basename "$WHEEL") - statically linked as intended"
+      - uses: actions/attest@v4
+        with:
+          subject-path: cohere/python/cohere-tng/dist/*.whl
       - uses: actions/upload-artifact@v6
         with:
           name: cohere-tng-${{ matrix.os }}-${{ matrix.target }}
@@ -92,21 +94,27 @@ jobs:
 
   build-conseel:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
       - uses: actions/setup-python@v6
         with: { python-version: '3.11' }
       - run: pip install build setuptools-scm
-      # The release tag is only created when the release publishes, so pass the version explicitly.
-      - env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          [ -z "$VERSION" ] || export SETUPTOOLS_SCM_PRETEND_VERSION="$VERSION"
+      # Versioned like cohere-tng (from Cargo.toml) so co-release.yml can publish this build before the tag exists.
+      - run: |
+          SETUPTOOLS_SCM_PRETEND_VERSION=$(awk -F'"' '/^version = "/ { print $2; exit }' ../../../Cargo.toml)
+          export SETUPTOOLS_SCM_PRETEND_VERSION
           python -m build
         working-directory: cohere/python/conseel
       # Validate package metadata and README will render correctly on PyPI
       - run: pip install twine && twine check cohere/python/conseel/dist/*
+      - uses: actions/attest@v4
+        with:
+          subject-path: cohere/python/conseel/dist/*
       - uses: actions/upload-artifact@v6
         with:
           name: conseel

@@ -5,11 +5,6 @@ on:
     branches:
       - cohere
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      version:
-        type: string
-        required: true
 
 jobs:
   build:
@@ -44,11 +39,12 @@ jobs:
         with:
           images: ${{ matrix.image }}
           flavor: |
-            latest=auto
+            latest=false
+          # :latest and version tags are only added by co-release.yml when it promotes the sha image.
           tags: |
-            type=raw,value=cohere,enable=${{ github.ref == 'refs/heads/cohere' && inputs.version == '' }}
-            type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
-            type=ref,event=branch,enable=${{ inputs.version == '' }}
+            type=raw,value=cohere,enable=${{ github.ref == 'refs/heads/cohere' }}
+            type=ref,event=branch
+            type=sha,format=long
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -80,7 +76,7 @@ jobs:
         with:
           image: ${{ matrix.image }}@${{ steps.build.outputs.digest }}
           output-file: sbom-${{ matrix.target }}.spdx.json
-          artifact-name: sbom-${{ matrix.target }}.spdx.json
+          upload-artifact: false
           upload-release-assets: false
 
       - name: Attest SBOM
