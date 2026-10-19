@@ -15,21 +15,23 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install release tools
+      - name: Install git-cliff
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: git-cliff@2.14.2,cargo-edit@0.13.13
-          # cargo-edit has no checksummed manifest; build it from crates.io instead of cargo-binstall.
-          fallback: cargo-install
+          tool: git-cliff@2.14.2
+          fallback: none
 
       - name: Bump version
         id: bump
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
         run: |
           version=$(git-cliff --bumped-version)
           version="${version#v}"
 
-          cargo set-version "$version"
+          sed -i "0,/^version = \".*\"$/s//version = \"$version\"/" Cargo.toml
           git diff --quiet Cargo.toml && { echo "::error::Cargo.toml is already at v$version"; exit 1; }
+          cargo update --workspace
 
           branch="release/v$version"
           git config user.name "github-actions[bot]"
