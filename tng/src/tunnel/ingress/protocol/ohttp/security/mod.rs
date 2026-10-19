@@ -343,11 +343,13 @@ impl OHttpSecurityLayer {
             read.get(&client_cache_key).cloned()
         };
 
-        // If no entry exists, create one with uninitialized value.
+        // If no entry exists, or its client stopped refreshing, create one with uninitialized value.
+        // Stopped clients for other egresses are dropped here too.
         let cell = match cell {
-            Some(cell) => cell,
+            Some(cell) if !cell.get().is_some_and(|client| client.is_stopped()) => cell,
             _ => {
                 let mut map = self.ohttp_clients.write().await;
+                map.retain(|_, cell| !cell.get().is_some_and(|client| client.is_stopped()));
                 let cell = map.entry(client_cache_key).or_default().clone();
                 if map.len() > 100 && map.len().is_power_of_two() {
                     tracing::warn!(
