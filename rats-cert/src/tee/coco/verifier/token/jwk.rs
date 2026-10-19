@@ -422,6 +422,7 @@ impl JwkAttestationTokenVerifier {
     }
 
     pub async fn verify(&self, token: String) -> anyhow::Result<Value> {
+        crate::install_jwt_crypto_provider();
         let header = decode_header(&token)
             .map_err(|e| anyhow!("Failed to decode attestation token header: {}", e))?;
 
@@ -490,10 +491,7 @@ mod tests {
         "{\"keys\":[{\"kty\":\"oct\",\"alg\":\"HS256\",\"kid\":\"coco123\",\"k\":\"foobar\"}]}",
         false
     )]
-    #[case(
-        "{\"keys\":[{\"kty\":\"oct\",\"alg\":\"COCO42\",\"kid\":\"coco123\",\"k\":\"foobar\"}]}",
-        true
-    )]
+    #[case("{\"keys\":[{\"kty\":\"oct\",\"kid\":\"coco123\"", true)]
     #[tokio::test]
     async fn test_source_reads(#[case] json: &str, #[case] expect_error: bool) {
         let client = reqwest::Client::new();

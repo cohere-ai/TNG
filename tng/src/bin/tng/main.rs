@@ -3,7 +3,10 @@
 // The builtin-AS release future's layout exceeds rustc's default query depth.
 #![recursion_limit = "256"]
 
-use std::{fs::File, io::BufReader};
+use std::{
+    fs::File,
+    io::{BufReader, IsTerminal},
+};
 
 use anyhow::{bail, Context};
 use clap::Parser as _;
@@ -42,7 +45,7 @@ async fn main() {
         )
         .with(
             tracing_subscriber::fmt::layer()
-                .with_ansi(atty::is(atty::Stream::Stdout))
+                .with_ansi(std::io::stdout().is_terminal())
                 .with_filter(
                     tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
                         "info,tokio_graceful=off,rats_cert=info,tng=info".into()
