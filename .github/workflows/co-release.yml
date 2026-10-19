@@ -1,5 +1,8 @@
 name: Cohere Release
 
+# PyPI uploads are irreversible. If a job fails after publishing, use "Re-run failed jobs"
+# on the same run; a new dispatch rebuilds and fails because the version already exists on PyPI.
+
 on:
   workflow_dispatch:
 
