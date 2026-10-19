@@ -48,7 +48,7 @@ jobs:
           fi
           for id in "${run_ids[@]}"; do
             echo "Waiting for workflow run $id..."
-            gh run watch "$id" --repo "$GH_REPO" --exit-status
+            gh run watch "$id" --repo "$GH_REPO" --exit-status --interval 30
           done
           python_run_id=$(
             gh run list --repo "$GH_REPO" --commit "$GITHUB_SHA" --event push --workflow co-build-python.yml \
@@ -56,26 +56,6 @@ jobs:
           )
           [ -n "$python_run_id" ] || { echo "::error::No co-build-python.yml push run on $GITHUB_SHA"; exit 1; }
           echo "python-run-id=$python_run_id" >> "$GITHUB_OUTPUT"
-
-  # Promotes the images CI already built for this commit; attestations stay valid since the digest is unchanged.
-  docker:
-    needs: [check]
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    steps:
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ github.token }}
-      - env:
-          VERSION: ${{ needs.check.outputs.version }}
-        run: |
-          for img in tng tng-ita tng-trustee tng-ingress; do
-            ref="ghcr.io/cohere-ai/$img"
-            docker buildx imagetools create -t "$ref:$VERSION" -t "$ref:latest" "$ref:sha-$GITHUB_SHA"
-          done
 
   # Python packages are the ones CI already built for this commit, downloaded from its push run.
   # cohere-tng first since conseel depends on it.
@@ -110,6 +90,27 @@ jobs:
           run-id: ${{ needs.check.outputs.python-run-id }}
           github-token: ${{ github.token }}
       - uses: pypa/gh-action-pypi-publish@release/v1
+
+  # Promotes the images CI already built for this commit; attestations stay valid since the digest is unchanged.
+  # Runs after PyPI so :latest never points at a version whose publish failed.
+  docker:
+    needs: [check, publish-conseel]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
+      - env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          for img in tng tng-ita tng-trustee tng-ingress; do
+            ref="ghcr.io/cohere-ai/$img"
+            docker buildx imagetools create -t "$ref:$VERSION" -t "$ref:latest" "$ref:sha-$GITHUB_SHA"
+          done
 
   # Creates the git tag and immutable GitHub Release atomically once everything else has succeeded.
   release:
