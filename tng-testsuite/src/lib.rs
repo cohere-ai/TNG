@@ -1,7 +1,7 @@
 pub mod netns;
 pub mod task;
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, io::IsTerminal, sync::Arc, time::Duration};
 
 use anyhow::{bail, Context, Result};
 use futures::StreamExt as _;
@@ -45,7 +45,7 @@ pub async fn run_test(tasks: Vec<Box<dyn Task>>) -> Result<()> {
                     ))
                     .with(
                         tracing_subscriber::fmt::layer()
-                            .with_ansi(atty::is(atty::Stream::Stdout))
+                            .with_ansi(std::io::stdout().is_terminal())
                             .with_filter(
                                 tracing_subscriber::EnvFilter::try_from_default_env()
                                     .unwrap_or_else(|_| {

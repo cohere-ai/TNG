@@ -22,7 +22,8 @@ repository = "https://github.com/cohere-ai/tng"
 version = "1.4.0"
 
 [workspace.dependencies]
-again = "0.1.2"
+# `rand` (jitter, unused here) is off: it pulls rand 0.7, which has a published advisory.
+again = {version = "0.1.2", default-features = false, features = ["log"]}
 anyhow = "1.0.98"
 as-any = "0.3.2"
 async-http-proxy = {version = "1.2.5", features = ["runtime-tokio"]}
@@ -30,7 +31,6 @@ async-stream = "0.3.6"
 async-trait = "0.1.88"
 # `default-features` false to avoid pulling gRPC server's dependencies (clap, tonic-health...).
 attestation-service = {git = "https://github.com/cohere-ai/trustee.git", rev = "5654fa699816ba847bb66f18090e4cf460c81a86", default-features = false}
-atty = "0.2.14"
 auto_enums = {version = "0.8", features = ["std", "tokio1"]}
 axum = {version = "0.8.4", default-features = false}
 axum-extra = "0.10.1"
@@ -75,7 +75,7 @@ js-sys = "0.3.77"
 # Same rev as `attestation-service`: the AS takes an `Arc<dyn StorageProvider>` it does not
 # construct itself, and does not re-export this crate.
 key-value-storage = {git = "https://github.com/cohere-ai/trustee.git", rev = "5654fa699816ba847bb66f18090e4cf460c81a86", default-features = false}
-jsonwebtoken = {version = "9", default-features = false}
+jsonwebtoken = {version = "10.3", default-features = false, features = ["rust_crypto"]}
 # `std` is off deliberately: it pulls `ear`, which drags in openssl and jsonwebtoken/aws-lc-rs.
 # Only `Tee` is used here, and it is available without it.
 kbs-types = {version = "0.18", default-features = false, features = ["alloc"]}
@@ -83,10 +83,10 @@ netns-rs = "0.1.0"
 nix = "0.30.1"
 notify = "7.0.0"
 once_cell = "1.21.3"
-opentelemetry = "0.31.0"
-opentelemetry-otlp = {version = "0.31.0", default-features = false}
-opentelemetry-stdout = "0.31.0"
-opentelemetry_sdk = "0.31.0"
+opentelemetry = "0.32.0"
+opentelemetry-otlp = {version = "0.32.0", default-features = false}
+opentelemetry-stdout = "0.32.0"
+opentelemetry_sdk = "0.32.1"
 p256 = "0.13.2"
 peekable = {version = "0.5", features = ["future"]}
 pin-project = "1"
@@ -109,7 +109,7 @@ ring = "0.17.8"
 rsa = {version = "0.9.7", features = ["sha2"]}
 rstest = "0.25.0"
 rtnetlink = "0.17.0"
-rustls = {version = "0.23.27", default-features = false, features = ["logging", "std", "tls12", "ring"]}
+rustls = {version = "0.23.46", default-features = false, features = ["logging", "std", "tls12", "ring"]}
 rustls-pemfile = "2.2.0"
 rustls-pki-types = "1.10.1"
 rustls-webpki = {package = "rustls-webpki", version = "0.103.3", default-features = false, features = ["alloc", "ring"]}
@@ -120,7 +120,8 @@ serde_bytes = "0.11.15"
 serde_json = "1.0.140"
 serde_variant = "0.1.3"
 serde_with = {version = "3.12.0", features = ["json"]}
-serf = {version = "0.5.2", features = ["default", "tokio", "tcp", "serde"]}
+# Default features minus `dns`: peers are plain socket addresses, and `dns` pulls hickory.
+serf = {version = "0.5.2", default-features = false, features = ["tokio", "compression", "encryption", "tcp", "quic", "serde"]}
 serial_test = "3.2.0"
 sha2 = "0.10.8"
 shadow-rs = {version = "=1.0.0", default-features = false}
@@ -152,11 +153,11 @@ tower-http = "0.6.6"
 tracing = "0.1"
 tracing-futures = {version = "0.2.5"}
 tracing-log = "0.2.0"
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 tracing-subscriber = {version = "0.3", features = ["env-filter"]}
 tracing-wasm = "0.2.1"
 ttrpc = "0.8.4"
-ttrpc-codegen = "0.5.0"
+ttrpc-codegen = "0.7.0"
 url = "2.5"
 uuid = {version = "1.18.1"}
 wasm-bindgen = "0.2.84"
