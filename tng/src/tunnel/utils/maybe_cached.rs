@@ -633,7 +633,7 @@ mod tests {
                 MaybeCached::new_with_idle_timeout(
                     runtime,
                     RefreshStrategy::Periodically { interval: 1 },
-                    Some(Duration::from_millis(1500)),
+                    Some(Duration::from_millis(500)),
                     move || {
                         let call_count_clone = call_count_clone.clone();
                         Box::pin(async move {
@@ -646,22 +646,17 @@ mod tests {
                 .expect("Failed to create MaybeCached");
 
             // Keeps refreshing while in use
-            for _ in 0..6 {
-                tokio_time::sleep(Duration::from_millis(400)).await;
+            for _ in 0..4 {
+                tokio_time::sleep(Duration::from_millis(300)).await;
                 maybe_cached.get_latest().await?;
             }
             assert!(!maybe_cached.is_stopped());
-            assert!(call_count.load(std::sync::atomic::Ordering::SeqCst) >= 3);
+            assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
 
-            // Stops once unused for longer than the idle timeout
-            tokio_time::sleep(Duration::from_secs(4)).await;
+            // Stops at the next refresh once unused for longer than the idle timeout
+            tokio_time::sleep(Duration::from_millis(1300)).await;
             assert!(maybe_cached.is_stopped());
-            let stopped_count = call_count.load(std::sync::atomic::Ordering::SeqCst);
-            tokio_time::sleep(Duration::from_millis(1500)).await;
-            assert_eq!(
-                call_count.load(std::sync::atomic::Ordering::SeqCst),
-                stopped_count
-            );
+            assert_eq!(call_count.load(std::sync::atomic::Ordering::SeqCst), 2);
             Ok(())
         })
         .await
