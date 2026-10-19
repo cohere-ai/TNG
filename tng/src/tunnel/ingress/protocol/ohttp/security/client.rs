@@ -36,7 +36,7 @@ use crate::{
         ohttp::protocol::{
             metadata::{Metadata, ServerKeyConfigHint, METADATA_MAX_LEN},
             userdata::ServerUserData,
-            KeyConfigRequest, KeyConfigResponse,
+            KeyConfigRequest, KeyConfigResponse, OHTTP_STREAM_BUFFER_SIZE,
         },
         utils::maybe_cached::{Expire, MaybeCached, RefreshStrategy},
     },
@@ -310,7 +310,7 @@ impl OHttpClientInner {
                 client.encapsulate_stream(futures::io::Cursor::new(&mut encrypted_request))?;
 
             #[cfg(unix)]
-            let (encrypted_request, request_write) = tokio::io::duplex(4096);
+            let (encrypted_request, request_write) = tokio::io::duplex(OHTTP_STREAM_BUFFER_SIZE);
             #[cfg(unix)]
             let client_request = client.encapsulate_stream(request_write.compat())?;
 
@@ -319,11 +319,15 @@ impl OHttpClientInner {
             let encryption_task = async {
                 async {
                     let mut client_request = client_request.compat_write();
-                    tokio::io::copy(
-                        &mut bhttp_encoder
-                            .map_err(std::io::Error::other)
-                            .into_async_read()
-                            .compat(),
+                    // copy_buf with a 64 KiB reader so each write can fill a 16 KiB chunk.
+                    tokio::io::copy_buf(
+                        &mut tokio::io::BufReader::with_capacity(
+                            OHTTP_STREAM_BUFFER_SIZE,
+                            bhttp_encoder
+                                .map_err(std::io::Error::other)
+                                .into_async_read()
+                                .compat(),
+                        ),
                         &mut client_request,
                     )
                     .await?;
@@ -381,7 +385,10 @@ impl OHttpClientInner {
             #[cfg(unix)]
             {
                 let body = std::io::Cursor::new(metadata_buf).chain(encrypted_request);
-                reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(body))
+                reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::with_capacity(
+                    body,
+                    OHTTP_STREAM_BUFFER_SIZE,
+                ))
             }
         };
 

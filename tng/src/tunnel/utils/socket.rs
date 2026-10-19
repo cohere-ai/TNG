@@ -123,6 +123,13 @@ where
             }
 
             set_tcp_common_sock_opts(&socket)?;
+            // Disable Nagle algorithm, as accept_with_common_sock_opts() does for accepted
+            // streams. Requests are forwarded in several small writes (head, then body
+            // frames); with Nagle on, a write queued behind an unacknowledged one can wait
+            // out the peer's delayed ACK (~40 ms).
+            socket
+                .set_nodelay(true)
+                .context("Failed to set TCP_NODELAY on socket")?;
 
             tokio::net::TcpSocket::from_std_stream(socket.into())
         };
