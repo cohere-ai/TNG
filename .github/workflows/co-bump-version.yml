@@ -1,27 +1,14 @@
-name: Cohere Create Version PR
+name: Cohere Bump Version
 
 on:
   workflow_dispatch:
 
 jobs:
-  create-pr:
+  bump:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
-    env:
-      HAS_APP: ${{ secrets.GH_APP_CLIENT_ID != '' && secrets.GH_APP_PRIVATE_KEY != '' }}
     steps:
-      - name: Mint GitHub App token
-        id: app-token
-        if: env.HAS_APP == 'true'
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ secrets.GH_APP_CLIENT_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          permission-contents: write
-          permission-pull-requests: write
-
       - uses: actions/checkout@v6
         with:
           ref: cohere
@@ -45,25 +32,17 @@ jobs:
           git diff --quiet Cargo.toml && { echo "::error::Cargo.toml is already at v$version"; exit 1; }
 
           branch="release/v$version"
-          bot="${{ steps.app-token.outputs.app-slug || 'github-actions' }}[bot]"
-          git config user.name "$bot"
-          git config user.email "$bot@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "$branch"
           git commit -am "chore: Bump version to v$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "branch=$branch" >> "$GITHUB_OUTPUT"
 
-      - name: Push and open PR
+      - name: Push branch
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
-          version: ${{ steps.bump.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
           branch: ${{ steps.bump.outputs.branch }}
         run: |
           gh auth setup-git
           git push -f origin "$branch"
-          gh pr create \
-            --repo "$GITHUB_REPOSITORY" \
-            --base cohere \
-            --head "$branch" \
-            --title "chore: Bump version to v$version" \
-            --body "Bumps workspace version to \`v$version\`."
+          echo "Open the PR: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/cohere...$branch?expand=1" >> "$GITHUB_STEP_SUMMARY"
