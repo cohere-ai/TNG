@@ -1,0 +1,48 @@
+name: Cohere Bump Version
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: cohere
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install release tools
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: git-cliff@2.14.2,cargo-edit@0.13.13
+          # cargo-edit has no checksummed manifest; build it from crates.io instead of cargo-binstall.
+          fallback: cargo-install
+
+      - name: Bump version
+        id: bump
+        run: |
+          version=$(git-cliff --bumped-version)
+          version="${version#v}"
+
+          cargo set-version "$version"
+          git diff --quiet Cargo.toml && { echo "::error::Cargo.toml is already at v$version"; exit 1; }
+
+          branch="release/v$version"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git commit -am "chore: Bump version to v$version"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Push branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          branch: ${{ steps.bump.outputs.branch }}
+        run: |
+          gh auth setup-git
+          git push -f origin "$branch"
+          echo "Open the PR: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/cohere...$branch?expand=1" >> "$GITHUB_STEP_SUMMARY"

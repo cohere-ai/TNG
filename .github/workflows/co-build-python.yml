@@ -3,11 +3,14 @@ name: Cohere Build Python
 on:
   push:
     branches: [cohere]
-    tags: ['v*']
   workflow_dispatch:
 
 jobs:
   build-cohere-tng:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         include:
@@ -81,6 +84,9 @@ jobs:
             exit 1
           fi
           echo "No OpenSSL shared library in $(basename "$WHEEL") - statically linked as intended"
+      - uses: actions/attest@v4
+        with:
+          subject-path: cohere/python/cohere-tng/dist/*.whl
       - uses: actions/upload-artifact@v6
         with:
           name: cohere-tng-${{ matrix.os }}-${{ matrix.target }}
@@ -88,16 +94,27 @@ jobs:
 
   build-conseel:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
       - uses: actions/setup-python@v6
         with: { python-version: '3.11' }
       - run: pip install build setuptools-scm
-      - run: python -m build
+      # Versioned like cohere-tng (from Cargo.toml) so co-release.yml can publish this build before the tag exists.
+      - run: |
+          SETUPTOOLS_SCM_PRETEND_VERSION=$(awk -F'"' '/^version = "/ { print $2; exit }' ../../../Cargo.toml)
+          export SETUPTOOLS_SCM_PRETEND_VERSION
+          python -m build
         working-directory: cohere/python/conseel
       # Validate package metadata and README will render correctly on PyPI
       - run: pip install twine && twine check cohere/python/conseel/dist/*
+      - uses: actions/attest@v4
+        with:
+          subject-path: cohere/python/conseel/dist/*
       - uses: actions/upload-artifact@v6
         with:
           name: conseel
@@ -112,46 +129,3 @@ jobs:
           name: cohere-tng-wheels
           pattern: 'cohere-tng-*'
           delete-merged: true
-
-  # --- Publish (PyPI then GitHub Release) ---
-  # Chained sequentially: cohere-tng first (conseel depends on it),
-  # then conseel, then GitHub Release only after both succeed.
-
-  publish-cohere-tng:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [merge-cohere-tng-wheels]
-    runs-on: ubuntu-latest
-    environment: pypi-cohere-tng
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v6
-        with: { name: cohere-tng-wheels, path: dist }
-      - uses: pypa/gh-action-pypi-publish@release/v1
-
-  publish-conseel:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [publish-cohere-tng, build-conseel]
-    runs-on: ubuntu-latest
-    environment: pypi-conseel
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v6
-        with: { name: conseel, path: dist }
-      - uses: pypa/gh-action-pypi-publish@release/v1
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [publish-cohere-tng, publish-conseel]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v6
-        with: { name: cohere-tng-wheels, path: dist }
-      - uses: actions/download-artifact@v6
-        with: { name: conseel, path: dist }
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
