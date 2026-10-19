@@ -343,17 +343,13 @@ impl OHttpSecurityLayer {
         };
 
         // If no entry exists, or its client stopped refreshing, create one with uninitialized value.
+        // Stopped clients for other egresses are dropped here too.
         let cell = match cell {
             Some(cell) if !cell.get().is_some_and(|client| client.is_stopped()) => cell,
-            stale => {
+            _ => {
                 let mut map = self.ohttp_clients.write().await;
-                let entry = map.entry(client_cache_key).or_default();
-                if let Some(stale) = stale {
-                    if Arc::ptr_eq(entry, &stale) {
-                        *entry = Default::default();
-                    }
-                }
-                let cell = entry.clone();
+                map.retain(|_, cell| !cell.get().is_some_and(|client| client.is_stopped()));
+                let cell = map.entry(client_cache_key).or_default().clone();
                 if map.len() > 100 && map.len().is_power_of_two() {
                     tracing::warn!(
                         cache_size = map.len(),
