@@ -22,6 +22,7 @@ use crate::tunnel::ohttp::protocol::header::{
     OHTTP_CHUNKED_REQUEST_CONTENT_TYPE, OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE,
 };
 use crate::tunnel::ohttp::protocol::metadata::{Metadata, METADATA_MAX_LEN};
+use crate::tunnel::ohttp::protocol::OHTTP_STREAM_BUFFER_SIZE;
 use crate::TokioRuntime;
 
 impl OhttpServerApi {
@@ -137,17 +138,22 @@ impl OhttpServerApi {
         let bhttp_encoder = BhttpEncoder::from_response(response);
         // Encrypt to get the ohttp message
         let encrypted_response = {
-            let (response_read, response_write) = tokio::io::duplex(4096);
+            let (response_read, response_write) = tokio::io::duplex(OHTTP_STREAM_BUFFER_SIZE);
             let server_response =
                 server_response_encapsulator.encapsulate_response(response_write.compat())?;
             context.runtime.spawn_supervised_task_current_span(async {
                 async {
                     let mut server_response = server_response.compat_write();
-                    tokio::io::copy(
-                        &mut bhttp_encoder
-                            .map_err(std::io::Error::other)
-                            .into_async_read()
-                            .compat(),
+                    // copy_buf with a 64 KiB reader, not copy's fixed 8 KiB buffer, so each
+                    // write hands the encryptor up to a full 16 KiB chunk.
+                    tokio::io::copy_buf(
+                        &mut tokio::io::BufReader::with_capacity(
+                            OHTTP_STREAM_BUFFER_SIZE,
+                            bhttp_encoder
+                                .map_err(std::io::Error::other)
+                                .into_async_read()
+                                .compat(),
+                        ),
                         &mut server_response,
                     )
                     .await?;
@@ -170,8 +176,9 @@ impl OhttpServerApi {
                 http::header::CONTENT_TYPE,
                 OHTTP_CHUNKED_RESPONSE_CONTENT_TYPE,
             )
-            .body(axum::body::Body::from_stream(ReaderStream::new(
+            .body(axum::body::Body::from_stream(ReaderStream::with_capacity(
                 encrypted_response,
+                OHTTP_STREAM_BUFFER_SIZE,
             )))
             .map_err(TngError::ConstructHttpResponseFailed)?;
 

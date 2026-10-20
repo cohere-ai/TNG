@@ -1,5 +1,6 @@
 use axum::response::IntoResponse;
 
+use crate::tunnel::ohttp::protocol::OHTTP_STREAM_BUFFER_SIZE;
 use crate::{error::TngError, AttestationResult, CommonStreamTrait, TokioIo, TokioRuntime};
 
 #[derive(Clone)]
@@ -25,7 +26,9 @@ impl TngStreamContext {
     {
         // TODO: maybe adjust forward the request to the upstream server with reqwest?
 
-        let (s1, s2) = tokio::io::duplex(4096);
+        // The upstream response body crosses this pipe on its way to the OHTTP encryptor, so
+        // its capacity bounds the body frames hyper reads and, through them, the chunk size.
+        let (s1, s2) = tokio::io::duplex(OHTTP_STREAM_BUFFER_SIZE);
 
         self.sender
             .send((Box::new(s2), attestation_result))
