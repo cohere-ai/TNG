@@ -13,6 +13,7 @@ use crate::{
     tunnel::{
         endpoint::TngEndpoint,
         ingress::protocol::ohttp::security::{client::OHttpClient, path_rewrite::PathRewriteGroup},
+        ohttp::protocol::header::OhttpApi,
         ra_context::RaContext,
         utils::direct_forward::DirectForwardTrafficDetector,
     },
@@ -47,6 +48,40 @@ fn is_hop_by_hop(name: &http::header::HeaderName, headers: &http::HeaderMap) -> 
             .any(|t| t.trim().eq_ignore_ascii_case(name.as_str()))
 }
 
+/// Parses `passthrough_headers`. Rejects headers that TNG sets itself on the outer
+/// request or that describe its framing, and headers already in `forward_headers`
+/// (or promoted by `body_field_headers`), which are sent on every request of their
+/// cached client instead.
+fn parse_passthrough_header_names(
+    names: &[String],
+    forward_header_names: &[HeaderName],
+) -> Result<Vec<HeaderName>> {
+    let mut parsed = Vec::with_capacity(names.len());
+    for name in names {
+        let header_name = HeaderName::from_bytes(name.as_bytes())
+            .with_context(|| format!("Invalid passthrough_headers entry: {name}"))?;
+        if HOP_BY_HOP_HEADERS.contains(&header_name)
+            || header_name == header::CONTENT_TYPE
+            || header_name == header::CONTENT_LENGTH
+            || header_name == header::HOST
+            || header_name.as_str() == OhttpApi::HEADER_NAME
+        {
+            anyhow::bail!(
+                "passthrough_headers entry {name} is set by TNG on the outer OHTTP request and cannot be passed through"
+            );
+        }
+        if forward_header_names.contains(&header_name) {
+            anyhow::bail!(
+                "passthrough_headers entry {name} is already forwarded by forward_headers or body_field_headers"
+            );
+        }
+        parsed.push(header_name);
+    }
+    parsed.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    parsed.dedup();
+    Ok(parsed)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct OHttpClientCacheKey {
     base_url: Url,
@@ -62,6 +97,7 @@ pub struct OHttpSecurityLayer {
     ohttp_clients: RwLock<HashMap<OHttpClientCacheKey, Arc<OnceCell<Arc<OHttpClient>>>>>,
     path_rewrite_group: PathRewriteGroup,
     forward_header_names: Vec<HeaderName>,
+    passthrough_header_names: Vec<HeaderName>,
     body_field_headers: Vec<(String, HeaderName)>,
     key_refresh_before_expiry_seconds: Option<u64>,
     direct_forward_detector: Option<DirectForwardTrafficDetector>,
@@ -166,6 +202,10 @@ impl OHttpSecurityLayer {
         forward_header_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
         forward_header_names.dedup();
 
+        let passthrough_header_names =
+            parse_passthrough_header_names(&ohttp_args.passthrough_headers, &forward_header_names)
+                .map_err(TngError::InvalidParameter)?;
+
         let direct_forward_detector = ohttp_args
             .direct_forward
             .as_ref()
@@ -180,6 +220,7 @@ impl OHttpSecurityLayer {
             ohttp_clients: Default::default(),
             path_rewrite_group: PathRewriteGroup::new(&ohttp_args.path_rewrites)?,
             forward_header_names,
+            passthrough_header_names,
             body_field_headers,
             key_refresh_before_expiry_seconds: ohttp_args.key_refresh_before_expiry_seconds,
             direct_forward_detector,
@@ -212,12 +253,16 @@ impl OHttpSecurityLayer {
             let base_url = self.construct_base_url(endpoint, &request)?;
             let (forward_headers, cache_key_forwarded_headers) =
                 Self::extract_forward_headers(&request, &self.forward_header_names);
+            let passthrough_headers =
+                Self::extract_passthrough_headers(&request, &self.passthrough_header_names);
 
             let ohttp_client = self
                 .get_or_create_ohttp_client(base_url, forward_headers, cache_key_forwarded_headers)
                 .await?;
 
-            ohttp_client.forward_request(request).await
+            ohttp_client
+                .forward_request(request, passthrough_headers)
+                .await
         }
         .await
         .map_err(|error| {
@@ -400,6 +445,22 @@ impl OHttpSecurityLayer {
         debug_assert!(cache_key_forwarded_headers.windows(2).all(|w| w[0] <= w[1]));
 
         (forward_headers, cache_key_forwarded_headers)
+    }
+
+    /// Copies the passthrough headers present on the inner request, all values of each.
+    /// The result goes on that request's outer OHTTP request only, never into the client
+    /// cache key.
+    fn extract_passthrough_headers(
+        request: &axum::extract::Request,
+        header_names: &[HeaderName],
+    ) -> reqwest::header::HeaderMap {
+        let mut passthrough_headers = reqwest::header::HeaderMap::new();
+        for header_name in header_names {
+            for header_value in request.headers().get_all(header_name) {
+                passthrough_headers.append(header_name.clone(), header_value.clone());
+            }
+        }
+        passthrough_headers
     }
 }
 
@@ -634,6 +695,112 @@ mod tests {
         };
 
         assert_ne!(key_for_route_a, key_for_route_b);
+    }
+
+    #[test]
+    fn test_extract_passthrough_headers_keeps_every_value() {
+        let request = axum::extract::Request::builder()
+            .uri("http://example.com/v1/embed")
+            .header("x-request-id", "req-1")
+            .header("traceparent", "00-aaaa-bbbb-01")
+            .header("tracestate", "a=1")
+            .header("tracestate", "b=2")
+            .header("authorization", "Bearer secret")
+            .body(Body::empty())
+            .expect("request should be built");
+        let header_names = parse_passthrough_header_names(
+            &[
+                "X-Request-Id".to_owned(),
+                "tracestate".to_owned(),
+                "traceparent".to_owned(),
+                "x-not-present".to_owned(),
+            ],
+            &[],
+        )
+        .expect("names should parse");
+
+        let passthrough = OHttpSecurityLayer::extract_passthrough_headers(&request, &header_names);
+
+        assert_eq!(passthrough.len(), 4);
+        assert_eq!(
+            passthrough
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+            Some("req-1")
+        );
+        assert_eq!(
+            passthrough
+                .get_all("tracestate")
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .collect::<Vec<_>>(),
+            vec!["a=1", "b=2"]
+        );
+        assert!(passthrough.get("authorization").is_none());
+    }
+
+    #[test]
+    fn test_passthrough_headers_do_not_change_the_client_cache_key() {
+        let forward_header_names = vec![HeaderName::from_static("authorization")];
+        let passthrough_header_names =
+            parse_passthrough_header_names(&["x-request-id".to_owned()], &forward_header_names)
+                .expect("names should parse");
+        let request = |request_id: &str| {
+            axum::extract::Request::builder()
+                .uri("http://example.com/v1/embed")
+                .header("authorization", "Bearer key")
+                .header("x-request-id", request_id)
+                .body(Body::empty())
+                .expect("request should be built")
+        };
+
+        let (_, key_a) =
+            OHttpSecurityLayer::extract_forward_headers(&request("req-a"), &forward_header_names);
+        let (_, key_b) =
+            OHttpSecurityLayer::extract_forward_headers(&request("req-b"), &forward_header_names);
+        assert_eq!(key_a, key_b);
+
+        let passthrough_a = OHttpSecurityLayer::extract_passthrough_headers(
+            &request("req-a"),
+            &passthrough_header_names,
+        );
+        assert_eq!(
+            passthrough_a
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok()),
+            Some("req-a")
+        );
+    }
+
+    #[test]
+    fn test_parse_passthrough_header_names_rejects_conflicts() {
+        let forward_header_names = vec![
+            HeaderName::from_static("authorization"),
+            HeaderName::from_static("x-gateway-model-name"),
+        ];
+        for name in [
+            "authorization",
+            "x-gateway-model-name",
+            "content-type",
+            "Content-Length",
+            "host",
+            "transfer-encoding",
+            "x-tng-ohttp-api",
+            "not a header",
+        ] {
+            assert!(
+                parse_passthrough_header_names(&[name.to_owned()], &forward_header_names).is_err(),
+                "{name} should be rejected"
+            );
+        }
+        assert_eq!(
+            parse_passthrough_header_names(
+                &["x-request-id".to_owned(), "X-Request-Id".to_owned()],
+                &forward_header_names,
+            )
+            .expect("names should parse"),
+            vec![HeaderName::from_static("x-request-id")]
+        );
     }
 
     #[tokio::test]
