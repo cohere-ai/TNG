@@ -82,5 +82,5 @@ defaults:
   recommended for production).
 - **`ohttp`** — Defaults include forwarding `authorization` headers and
   promoting the `model` JSON body field to `x-gateway-model-name` via
-  `body_field_headers`, and refreshing OHTTP keys 5 seconds before they expire
+  `body_field_headers`, and refreshing OHTTP keys 10 seconds before they expire
   (`key_refresh_before_expiry_seconds`).

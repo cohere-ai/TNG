@@ -25,7 +25,7 @@
                         "header_name": "x-gateway-model-name"
                     }
                 ],
-                "key_refresh_before_expiry_seconds": 5
+                "key_refresh_before_expiry_seconds": 10
             },
             "verify": [
                 {

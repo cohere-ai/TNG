@@ -23,7 +23,7 @@ _DEFAULT_BODY_FIELD_HEADERS: list = [
     {"field_name": "model", "header_name": "x-gateway-model-name"},
 ]
 
-_DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS = 5
+_DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS = 10
 
 _DEFAULT_VERIFY: list = [
     {
