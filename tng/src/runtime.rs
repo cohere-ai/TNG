@@ -378,3 +378,72 @@ impl TngRuntime {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use anyhow::{Context as _, Result};
+    use serde_json::json;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    use tokio::task::JoinHandle;
+    use tokio_util::sync::CancellationToken;
+
+    use super::TngRuntime;
+
+    async fn start_ohttp(
+        kind: &str,
+        in_port: u16,
+        out_port: u16,
+    ) -> Result<(CancellationToken, JoinHandle<Result<()>>)> {
+        let config = json!({ kind: [{
+            "mapping": {"in": {"port": in_port}, "out": {"host": "127.0.0.1", "port": out_port}},
+            "ohttp": {},
+            "no_ra": true
+        }]});
+        let runtime = TngRuntime::from_config(serde_json::from_value(config)?).await?;
+        let canceller = runtime.canceller();
+        let (ready_sender, ready) = tokio::sync::oneshot::channel();
+        #[allow(clippy::disallowed_methods)]
+        let handle = tokio::spawn(runtime.serve_with_ready(ready_sender));
+        ready.await?;
+        Ok((canceller, handle))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_ohttp_egress_completes_in_flight_request_on_shutdown() -> Result<()> {
+        let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let egress_port = portpicker::pick_unused_port().context("no free port")?;
+        let ingress_port = portpicker::pick_unused_port().context("no free port")?;
+        let (egress_canceller, egress) =
+            start_ohttp("add_egress", egress_port, upstream.local_addr()?.port()).await?;
+        let _ingress = start_ohttp("add_ingress", ingress_port, egress_port).await?;
+
+        // The upstream only answers once the egress has been told to shut down mid-request.
+        let upstream = async {
+            let (mut conn, _) = upstream.accept().await?;
+            let _ = conn.read(&mut [0; 4096]).await?;
+            egress_canceller.cancel();
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            conn.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 4\r\n\r\ndone")
+                .await?;
+            anyhow::Ok(())
+        };
+        let request = async {
+            let response = reqwest::get(format!("http://127.0.0.1:{ingress_port}/")).await?;
+            anyhow::Ok((response.status().as_u16(), response.text().await?))
+        };
+        let (upstream, response) = tokio::time::timeout(
+            Duration::from_secs(10),
+            futures::future::join(upstream, request),
+        )
+        .await?;
+        upstream?;
+        assert_eq!(response?, (200, "done".to_owned()));
+
+        tokio::time::timeout(Duration::from_secs(10), egress)
+            .await
+            .context("the egress did not exit after the request completed")???;
+        Ok(())
+    }
+}

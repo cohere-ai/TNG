@@ -59,12 +59,24 @@ impl OHttpSecurityLayer {
                 },
             );
 
-            hyper_util::server::conn::auto::Builder::new(self.runtime.clone())
-                .serve_connection_with_upgrades(TokioIo::new(stream), hyper_service)
-                .await
-                .map_err(|error| {
-                    anyhow!("failed to serve egress OHTTP security layer connection: {error:?}")
-                })
+            let builder = hyper_util::server::conn::auto::Builder::new(self.runtime.clone());
+            let mut conn = std::pin::pin!(
+                builder.serve_connection_with_upgrades(TokioIo::new(stream), hyper_service)
+            );
+
+            // On shutdown, finish the in-flight request and close the connection, or close it
+            // now if it is idle.
+            let result = tokio::select! {
+                result = conn.as_mut() => result,
+                () = self.runtime.shutdown_guard().cancelled() => {
+                    conn.as_mut().graceful_shutdown();
+                    conn.await
+                }
+            };
+
+            result.map_err(|error| {
+                anyhow!("failed to serve egress OHTTP security layer connection: {error:?}")
+            })
         }
         .instrument(tracing::info_span!("security"))
         .await
