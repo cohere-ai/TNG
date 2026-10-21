@@ -87,7 +87,7 @@ pub fn set_tcp_common_sock_opts(as_fs: impl AsFd) -> Result<()> {
     if let Err(error) = setsockopt(
         &fd,
         nix::sys::socket::sockopt::TcpUserTimeout,
-        &TCP_USER_TIMEOUT_SECS,
+        &(TCP_USER_TIMEOUT_SECS * 1000),
     ) {
         tracing::warn!(?error, "set TCP_USER_TIMEOUT failed")
     };
@@ -147,4 +147,20 @@ where
     }
 
     last_result.unwrap_or_else(|| Err(anyhow!("No address resolved")))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_user_timeout_outlasts_a_lost_keepalive() -> Result<()> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        listener.set_listener_common_sock_opts()?;
+        let user_timeout_ms =
+            nix::sys::socket::getsockopt(&listener, nix::sys::socket::sockopt::TcpUserTimeout)?;
+        // TCP_USER_TIMEOUT is in milliseconds; below one keepalive interval, a single lost reply aborts.
+        assert!(user_timeout_ms > TCP_KEEPALIVE_INTERVAL_SECS * 1000);
+        Ok(())
+    }
 }
