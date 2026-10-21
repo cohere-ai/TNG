@@ -6181,7 +6181,7 @@ dependencies = [
 
 [[package]]
 name = "rats-cert"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "anyhow",
  "as-any",
@@ -8325,7 +8325,7 @@ dependencies = [
 
 [[package]]
 name = "tng"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "again",
  "anyhow",
@@ -8427,7 +8427,7 @@ dependencies = [
 
 [[package]]
 name = "tng-python"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "anyhow",
  "axum",
@@ -8450,7 +8450,7 @@ dependencies = [
 
 [[package]]
 name = "tng-testsuite"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "again",
  "anyhow",
