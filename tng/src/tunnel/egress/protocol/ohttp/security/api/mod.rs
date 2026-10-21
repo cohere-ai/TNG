@@ -79,16 +79,21 @@ impl OhttpServerApi {
 
         let passport_cache: Arc<OnceCell<MaybeCached<_, TngError>>> = Default::default();
 
-        // Register a callback to refresh the passport cache when the advertised keys change
+        // Register a callback to refresh the passport cache when the advertised keys change.
+        //
+        // The callback holds the cache weakly: the cache's refresh closure holds the key manager,
+        // which holds this callback, so a strong reference would form a cycle that is never
+        // freed. The leaked key manager would keep its runtime (and so a shutdown guard) alive,
+        // e.g. the peer-shared key manager's serf node, and a graceful shutdown would hang.
         {
-            let passport_cache_cloned = passport_cache.clone();
+            let passport_cache_weak = Arc::downgrade(&passport_cache);
             key_manager
                 .register_callback(Arc::new(move |event| {
-                    let passport_cache_cloned = passport_cache_cloned.clone();
+                    let passport_cache = passport_cache_weak.upgrade();
                     let refresh = changes_advertised_keys(event);
                     Box::pin(async move {
                         // Only signal: key managers may fire this while holding their key lock
-                        if let Some(cache) = passport_cache_cloned.get() {
+                        if let Some(cache) = passport_cache.as_ref().and_then(|cell| cell.get()) {
                             if refresh {
                                 cache.invalidate();
                             }
@@ -191,6 +196,56 @@ mod tests {
             Ok(())
         })
         .await
+    }
+
+    /// The key manager holds the passport-cache callback, and the cache's refresh closure holds
+    /// the key manager. Unless one side is weak, dropping the API leaks both, and with them the
+    /// runtime's shutdown guards, so a graceful shutdown never completes.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dropping_the_api_releases_the_runtime() -> Result<()> {
+        assert_api_drop_releases_runtime(KeyArgs::SelfGenerated {
+            rotation_interval: 3600,
+        })
+        .await
+    }
+
+    /// The peer-shared key manager owns the serf node, which holds the runtime: leaking it is
+    /// what kept the egress sidecar alive after SIGTERM.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn dropping_the_api_releases_the_runtime_with_peer_shared_keys() -> Result<()> {
+        let key_args = serde_json::from_value(serde_json::json!({
+            "source": "peer_shared",
+            "rotation_interval": 3600,
+            "host": "127.0.0.1",
+            "port": portpicker::pick_unused_port().context("no free port")?,
+            "no_ra": true
+        }))?;
+        assert_api_drop_releases_runtime(key_args).await
+    }
+
+    async fn assert_api_drop_releases_runtime(key_args: KeyArgs) -> Result<()> {
+        let (aa_addr, _listener) = dummy_aa();
+        let shutdown = tokio_graceful::Shutdown::no_signal();
+        let runtime = TokioRuntime::current(shutdown.guard())?;
+        let ra_context = RaContext::from_ra_args(
+            &RaArgs::AttestOnly(AttestArgs::BackgroundCheck {
+                attester: AttesterArgs::Coco(CocoAttesterArgs::Uds { aa_addr }),
+                refresh_interval: Some(3600),
+                max_retries: None,
+            }),
+            &runtime,
+        )
+        .await?;
+        let api = OhttpServerApi::new(Arc::new(ra_context), key_args, runtime.clone()).await?;
+        assert!(api.passport_cache.get().is_some(), "snapshot not built");
+
+        drop(api);
+        drop(runtime);
+        shutdown
+            .shutdown_with_limit(Duration::from_secs(5))
+            .await
+            .context("the dropped API still holds a shutdown guard")?;
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
