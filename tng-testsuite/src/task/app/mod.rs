@@ -55,6 +55,16 @@ pub enum AppType {
         rewrite_to: &'static str,
         required_headers: Vec<(&'static str, &'static str)>,
     },
+    /// Load balancer that requires `tunnel_headers` on OHTTP tunnel requests
+    /// and forbids them on every other request (such as key-config requests).
+    #[allow(dead_code)]
+    LoadBalancerWithTunnelHeaderCheck {
+        listen_port: u16,
+        upstream_servers: Vec<(String, u16)>,
+        path_matcher: &'static str,
+        rewrite_to: &'static str,
+        tunnel_headers: Vec<(&'static str, &'static str)>,
+    },
     #[allow(dead_code)]
     TcpServer { port: u16 },
     #[allow(dead_code)]
@@ -73,9 +83,9 @@ impl Task for AppType {
             AppType::HttpClient { .. }
             | AppType::HttpClientWithReverseProxy { .. }
             | AppType::TcpClient { .. } => "app_client",
-            AppType::LoadBalancer { .. } | AppType::LoadBalancerWithHeaderCheck { .. } => {
-                "load_balancer"
-            }
+            AppType::LoadBalancer { .. }
+            | AppType::LoadBalancerWithHeaderCheck { .. }
+            | AppType::LoadBalancerWithTunnelHeaderCheck { .. } => "load_balancer",
             #[cfg(feature = "js-sdk")]
             AppType::BrowserClient { .. } => "browser_client",
         }
@@ -88,9 +98,9 @@ impl Task for AppType {
             AppType::HttpClient { .. }
             | AppType::HttpClientWithReverseProxy { .. }
             | AppType::TcpClient { .. } => NodeType::Client,
-            AppType::LoadBalancer { .. } | AppType::LoadBalancerWithHeaderCheck { .. } => {
-                NodeType::Middleware
-            }
+            AppType::LoadBalancer { .. }
+            | AppType::LoadBalancerWithHeaderCheck { .. }
+            | AppType::LoadBalancerWithTunnelHeaderCheck { .. } => NodeType::Middleware,
             #[cfg(feature = "js-sdk")]
             AppType::BrowserClient { .. } => NodeType::Client,
         }
@@ -183,6 +193,28 @@ impl Task for AppType {
                     path_matcher,
                     rewrite_to,
                     &required_headers,
+                )
+                .await
+            }
+            AppType::LoadBalancerWithTunnelHeaderCheck {
+                listen_port,
+                upstream_servers,
+                path_matcher,
+                rewrite_to,
+                tunnel_headers,
+            } => {
+                let tunnel_headers = tunnel_headers
+                    .iter()
+                    .map(|(name, value)| (name.to_string(), value.to_string()))
+                    .collect::<Vec<_>>();
+                load_balancer::launch_load_balancer_with_tunnel_headers(
+                    token,
+                    *listen_port,
+                    upstream_servers,
+                    path_matcher,
+                    rewrite_to,
+                    &[],
+                    &tunnel_headers,
                 )
                 .await
             }

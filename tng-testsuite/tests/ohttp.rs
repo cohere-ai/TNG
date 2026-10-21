@@ -189,6 +189,120 @@ async fn test_ingress_mapping_forward_headers_for_multi_route_routing() -> Resul
     Ok(())
 }
 
+/// The load balancer passes a tunnel request only if it carries the inner
+/// request's `x-request-id` in the clear, and a key-config request only if it
+/// carries none, so the test passes only if the ingress copies the passthrough
+/// header onto each outer tunnel request and nowhere else. A request with a
+/// different ID must reach the load balancer with that ID, through the same
+/// cached OHTTP client.
+#[serial]
+#[tokio::test(flavor = "multi_thread", worker_threads = 10)]
+async fn test_ingress_mapping_passthrough_headers() -> Result<()> {
+    run_test(vec![
+        TngInstance::TngServer(
+            r#"
+            {
+                "add_egress": [
+                    {
+                        "netfilter": {
+                            "capture_dst": {
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {},
+                        "no_ra": true
+                    }
+                ]
+            }
+            "#,
+        )
+        .boxed(),
+        TngInstance::TngClient(
+            r#"
+            {
+                "add_ingress": [
+                    {
+                        "mapping": {
+                            "in": {
+                                "port": 10001
+                            },
+                            "out": {
+                                "host": "192.168.1.252",
+                                "port": 30001
+                            }
+                        },
+                        "ohttp": {
+                            "passthrough_headers": [
+                                "x-request-id"
+                            ]
+                        },
+                        "no_ra": true
+                    }
+                ]
+            }
+            "#,
+        )
+        .boxed(),
+        AppType::LoadBalancerWithTunnelHeaderCheck {
+            listen_port: 30001,
+            upstream_servers: vec![("192.168.1.1".into(), 30001)],
+            path_matcher: r"^/$",
+            rewrite_to: r"/",
+            tunnel_headers: vec![("x-request-id", "req-1")],
+        }
+        .boxed(),
+        AppType::HttpServer {
+            port: 30001,
+            expected_host_header: "example.com",
+            expected_path_and_query: "/foo/bar/www?type=1&case=1",
+        }
+        .boxed(),
+        ShellTask {
+            name: "passthrough_header_request".to_owned(),
+            node_type: NodeType::Client,
+            script: r#"
+                set -euo pipefail
+
+                request() {
+                    curl -sS -o /tmp/body -w "%{http_code}" \
+                        "http://127.0.0.1:10001/foo/bar/www?type=1&case=1" \
+                        -H "Host: example.com" "$@"
+                }
+
+                # The first request also fetches the key config, which must not
+                # carry the header; the tunnel request must carry it.
+                code=$(request -H "x-request-id: req-1")
+                [ "$code" = "200" ] && [ "$(cat /tmp/body)" = "Hello World HTTP!" ] || {
+                    echo "Request with x-request-id: req-1 failed: $code $(cat /tmp/body)"
+                    exit 1
+                }
+
+                # A different ID reaches the load balancer with that ID, so it is
+                # rejected there rather than by TNG.
+                code=$(request -H "x-request-id: req-2")
+                [ "$code" != "200" ] || {
+                    echo "Request with x-request-id: req-2 unexpectedly passed the header check"
+                    exit 1
+                }
+
+                # The first ID still passes after the second, on the same OHTTP client.
+                code=$(request -H "x-request-id: req-1")
+                [ "$code" = "200" ] || {
+                    echo "Repeated request with x-request-id: req-1 failed: $code"
+                    exit 1
+                }
+            "#
+            .to_owned(),
+            stop_test_on_finish: true,
+            run_in_foreground: false,
+        }
+        .boxed(),
+    ])
+    .await?;
+
+    Ok(())
+}
+
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
 async fn test_ingress_mapping_direct() -> Result<()> {

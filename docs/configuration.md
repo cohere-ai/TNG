@@ -938,6 +938,15 @@ The OHTTP capability can be enabled by specifying the `ohttp` field in the `add_
 
 - **`forward_headers`** (array [string], optional, default is an empty array): A list of HTTP header names that should be extracted from the inner (plaintext) HTTP request and forwarded in the clear on the outer OHTTP request. This allows L7 gateways to inspect these headers for routing and load balancing without decrypting the request body. Example: `["authorization", "x-custom-routing"]`.
 
+    The ingress keeps a separate OHTTP client, with its own key-config fetch and attestation, for each distinct combination of forwarded header values, and also sends these headers on its key-config requests. Use `forward_headers` only for headers with a small number of distinct values; for per-request values use `passthrough_headers`.
+
+- **`passthrough_headers`** (array [string], optional, default is an empty array): A list of HTTP header names whose values are copied in the clear from each inner request onto that request's outer OHTTP request only. Unlike `forward_headers`, they do not select an OHTTP client and are not sent on key-config requests, so they suit values that change on every request, such as a request ID or W3C trace context. All values of a repeated header are copied. Example: `["x-request-id", "traceparent", "tracestate"]`.
+
+    Names are matched case-insensitively. A name must not also appear in `forward_headers` or as a `body_field_headers` header, and cannot be a header TNG sets on the outer request (`content-type`, `content-length`, `host`, `x-tng-ohttp-api`) or a hop-by-hop header.
+
+> [!WARNING]
+> Headers listed in `forward_headers` and `passthrough_headers` are sent unencrypted and are visible to every hop between the ingress and the egress. List only headers that carry no confidential data.
+
 - **`body_field_headers`** (array [BodyFieldHeader], optional, default is an empty array): A list of rules for promoting top-level fields from a JSON request body into HTTP headers. This is useful when a routing-relevant field (such as `model`) is inside the encrypted request body and needs to be visible to L7 gateways. Each entry specifies a JSON field name and the corresponding header name to set. Promoted headers are automatically added to the `forward_headers` list internally, so they do not need to be listed separately.
 
     - **`field_name`** (string): The name of the top-level JSON field to extract (e.g. `"model"`).
@@ -1048,7 +1057,7 @@ In many Layer 7 gateway scenarios, after TNG protects traffic using the OHTTP pr
 3. The Host (or `:authority`) of the encrypted HTTP request is consistent with the inner protected business HTTP request.
 4. The encrypted HTTP request and response will use `Content-Type: message/ohttp-chunked-req` and `Content-Type: message/ohttp-chunked-res` as `Content-Type` respectively.
 5. The encrypted HTTP request and response will not contain the request headers and response headers in the encrypted HTTP request.
-6. Specific headers from the inner request can be forwarded in the clear using `forward_headers`, and fields from JSON request bodies can be promoted to headers using `body_field_headers`.
+6. Specific headers from the inner request can be forwarded in the clear using `forward_headers` (for routing) or `passthrough_headers` (for per-request values such as request IDs), and fields from JSON request bodies can be promoted to headers using `body_field_headers`.
 
 ### OHttp: Egress Configuration
 

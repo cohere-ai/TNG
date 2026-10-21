@@ -163,6 +163,15 @@ pub struct OHttpArgs {
     #[serde(default)]
     pub forward_headers: Vec<String>,
 
+    /// Headers copied in the clear from each inner request onto its outer OHTTP
+    /// request only. Unlike `forward_headers`, they are not part of the OHTTP
+    /// client cache key and are not sent with key-config requests, so a
+    /// per-request value such as a request ID or trace context does not create
+    /// a new client (and a new attestation) for every request.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub passthrough_headers: Vec<String>,
+
     /// Seconds before key expiry to trigger a background refresh. Prevents the
     /// race where the ingress uses a key that the egress has already evicted.
     /// Defaults to 0 (disabled) when not specified.

@@ -66,6 +66,30 @@ pub async fn launch_load_balancer(
     rewrite_to: &'static str,
     required_headers: &[(String, String)],
 ) -> Result<tokio::task::JoinHandle<Result<()>>> {
+    launch_load_balancer_with_tunnel_headers(
+        token,
+        listen_port,
+        upstream_servers,
+        path_matcher,
+        rewrite_to,
+        required_headers,
+        &[],
+    )
+    .await
+}
+
+/// Like [`launch_load_balancer`], and also checks headers by OHTTP API: each request
+/// tagged `x-tng-ohttp-api: /tng/tunnel` must carry every `tunnel_headers` entry with
+/// that value, and any other request must carry none of those header names.
+pub async fn launch_load_balancer_with_tunnel_headers(
+    token: CancellationToken,
+    listen_port: u16,
+    upstream_servers: &[(String, u16)],
+    path_matcher: &'static str,
+    rewrite_to: &'static str,
+    required_headers: &[(String, String)],
+    tunnel_headers: &[(String, String)],
+) -> Result<tokio::task::JoinHandle<Result<()>>> {
     let path_matcher = Regex::new(path_matcher).context("Invalid regex")?;
 
     if upstream_servers.is_empty() {
@@ -89,6 +113,7 @@ pub async fn launch_load_balancer(
     // Move captured variables into closure
     let path_matcher = std::sync::Arc::new(path_matcher);
     let required_headers = std::sync::Arc::new(required_headers.to_vec());
+    let tunnel_headers = std::sync::Arc::new(tunnel_headers.to_vec());
 
     let app = Router::new()
         .fallback(move |request: Request<Body>| {
@@ -96,8 +121,12 @@ pub async fn launch_load_balancer(
             let client = client.clone();
             let path_matcher = path_matcher.clone();
             let required_headers = required_headers.clone();
+            let tunnel_headers = tunnel_headers.clone();
 
             async move {
+                if let Some(rejection) = check_tunnel_headers(&request, &tunnel_headers) {
+                    return rejection;
+                }
                 handle_request_with_rewrite(
                     request,
                     balancer,
@@ -128,6 +157,34 @@ pub async fn launch_load_balancer(
     });
 
     Ok(handle)
+}
+
+/// Returns a 404 response when `request` breaks the per-OHTTP-API header rules of
+/// [`launch_load_balancer_with_tunnel_headers`].
+fn check_tunnel_headers(
+    request: &Request<Body>,
+    tunnel_headers: &[(String, String)],
+) -> Option<Response<Body>> {
+    if tunnel_headers.is_empty() {
+        return None;
+    }
+    let is_tunnel = request
+        .headers()
+        .get("x-tng-ohttp-api")
+        .is_some_and(|api| api.as_bytes() == b"/tng/tunnel");
+    for (name, value) in tunnel_headers {
+        let actual = request.headers().get(name);
+        let ok = if is_tunnel {
+            actual.is_some_and(|actual| actual.as_bytes() == value.as_bytes())
+        } else {
+            actual.is_none()
+        };
+        if !ok {
+            tracing::info!(header = %name, is_tunnel, ?actual, "Tunnel header check failed");
+            return Some((StatusCode::NOT_FOUND, "Not Found").into_response());
+        }
+    }
+    None
 }
 
 /// Handle incoming request: try to match and rewrite path, then proxy.
