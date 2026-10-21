@@ -23,6 +23,8 @@ _DEFAULT_BODY_FIELD_HEADERS: list = [
     {"field_name": "model", "header_name": "x-gateway-model-name"},
 ]
 
+_DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS = 5
+
 _DEFAULT_VERIFY: list = [
     {
         "model": "passport",
@@ -58,6 +60,7 @@ def _apply_ohttp_defaults(ohttp: Optional[dict]) -> dict:
     ohttp.setdefault("direct_forward", copy.deepcopy(_DEFAULT_DIRECT_FORWARD))
     ohttp.setdefault("forward_headers", list(_DEFAULT_FORWARD_HEADERS))
     ohttp.setdefault("body_field_headers", copy.deepcopy(_DEFAULT_BODY_FIELD_HEADERS))
+    ohttp.setdefault("key_refresh_before_expiry_seconds", _DEFAULT_KEY_REFRESH_BEFORE_EXPIRY_SECONDS)
     return ohttp
 
 

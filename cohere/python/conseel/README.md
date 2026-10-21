@@ -73,12 +73,14 @@ arguments as `cohere_tng.Transport` (see [TNG configuration docs](https://github
 for the full schema). The only difference is that `conseel` provides sensible
 defaults:
 
-- **`verify`** — Defaults to Intel Trust Authority attestation. Accepts one
-  config dict or a list of them. Defaults to a list of two verifiers: Intel Trust Authority
-  passport, and the builtin attestation service in background-check mode
-  fetching `trustee_policy` from the latest integritee release. Pass a single
+- **`verify`** — Accepts one config dict or a list of them, and the server must
+  satisfy one of them. Defaults to two verifiers: an Intel Trust Authority
+  passport, and the builtin attestation service in background-check mode,
+  which requires both CPU and GPU evidence and checks it against
+  `trustee_policy` from the latest signed integritee release. Pass a single
   object to allow only one, or `None` to disable verification (not
   recommended for production).
 - **`ohttp`** — Defaults include forwarding `authorization` headers and
   promoting the `model` JSON body field to `x-gateway-model-name` via
-  `body_field_headers`.
+  `body_field_headers`, and refreshing OHTTP keys 5 seconds before they expire
+  (`key_refresh_before_expiry_seconds`).
