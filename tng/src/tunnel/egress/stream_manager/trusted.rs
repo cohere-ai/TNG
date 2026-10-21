@@ -43,6 +43,8 @@ pub struct TrustedStreamManager {
 
     decoder: Box<dyn ProtocolStreamDecoder + Send + Sync + 'static>,
 
+    is_ohttp: bool,
+
     runtime: TokioRuntime,
 }
 
@@ -72,8 +74,13 @@ impl TrustedStreamManager {
                 ),
                 None => Box::new(RatsTlsStreamDecoder::new(ra_context, runtime.clone()).await?),
             },
+            is_ohttp: common_args.ohttp.is_some(),
             runtime,
         })
+    }
+
+    pub fn is_ohttp(&self) -> bool {
+        self.is_ohttp
     }
 }
 

@@ -141,7 +141,7 @@ impl OhttpServerApi {
             let (response_read, response_write) = tokio::io::duplex(OHTTP_STREAM_BUFFER_SIZE);
             let server_response =
                 server_response_encapsulator.encapsulate_response(response_write.compat())?;
-            context.runtime.spawn_supervised_task_current_span(async {
+            context.runtime.spawn_unsupervised_task_current_span(async {
                 async {
                     let mut server_response = server_response.compat_write();
                     // copy_buf with a 64 KiB reader, not copy's fixed 8 KiB buffer, so each
@@ -235,7 +235,7 @@ impl Drop for DrainOnDrop {
     fn drop(&mut self) {
         if let Some(mut inner) = self.inner.take() {
             let (drain_timeout, drain_max_bytes) = (self.drain_timeout, self.drain_max_bytes);
-            self.runtime.spawn_supervised_task_current_span(async move {
+            self.runtime.spawn_unsupervised_task_current_span(async move {
                 let drain = async {
                     let mut drained = 0;
                     while let Some(Ok(chunk)) = inner.next().await {
