@@ -14,7 +14,9 @@ use crate::config::ra::AttestArgs;
 use crate::config::ra::VerifierArgs;
 use crate::config::ra::{RaArgs, VerifyArgs};
 #[cfg(unix)]
-use crate::tunnel::attestation_metrics::AttestationMetrics;
+use crate::tunnel::attestation_metrics::{
+    AttestationMetrics, AttestationOperation, AttestationProtocol,
+};
 use rats_cert::tee::claims::Claims;
 #[cfg(unix)]
 use rats_cert::tee::{AttesterPipeline, GenericAttester};
@@ -166,6 +168,10 @@ impl RaContext {
         let Self::AttestAndVerify { attest, verify } = self else {
             bail!("self_check requires both attest and verify");
         };
+        // Counted like a peer's verify, so a node that fails its own policy and exits shows up.
+        let attempt = verify
+            .attestation_metrics()
+            .start(AttestationOperation::Verify, AttestationProtocol::Ohttp);
         let (prepared, _) = attest.prepare(self_check_claims).await;
         self_check(
             attest.as_ref(),
@@ -174,6 +180,7 @@ impl RaContext {
             &verify.verifiers(),
         )
         .await?;
+        attempt.mark_succeeded();
         tracing::info!("Self-attestation passed");
         Ok(())
     }
