@@ -85,7 +85,7 @@ pub enum TngError {
     InvalidHttpResponse,
 
     #[error("Http error during forwarding HTTP plain text to upstream")]
-    HttpPlainTextForwardError(#[source] hyper::Error),
+    HttpPlainTextForwardError(#[source] hyper_util::client::legacy::Error),
 
     #[error("Http error during forwarding HTTP cipher text to upstream")]
     HttpCipherTextForwardError(#[source] reqwest::Error),

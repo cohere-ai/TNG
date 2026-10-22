@@ -48,10 +48,7 @@ impl OHttpSecurityLayer {
             let app = self
                 .ohttp_server
                 .create_routes()
-                .with_state(TngStreamContext {
-                    runtime: self.runtime.clone(),
-                    sender,
-                });
+                .with_state(TngStreamContext::new(self.runtime.clone(), sender));
 
             let hyper_service = hyper::service::service_fn(
                 move |request: axum::extract::Request<hyper::body::Incoming>| {
