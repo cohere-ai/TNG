@@ -25,8 +25,8 @@ http-body-util = { workspace = true }
 # `vendored`, which feature unification then applies to the OpenSSL that Trustee's
 # verifiers link transitively.
 openssl = { version = "0.10", features = ["vendored"], optional = true }
-pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"] }
-pyo3-async-runtimes = { version = "0.23", features = ["tokio-runtime"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py38"] }
+pyo3-async-runtimes = { version = "0.29", features = ["tokio-runtime"] }
 rustls = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, default-features = true, features = ["rt-multi-thread", "sync"] }

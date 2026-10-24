@@ -9,6 +9,13 @@ pub mod errors;
 pub mod policy_source;
 pub mod tee;
 
+/// Must run before any jsonwebtoken call. The builtin AS enables jsonwebtoken's `aws_lc_rs`
+/// backend next to our `rust_crypto`, and with both compiled in jsonwebtoken panics on first use
+/// unless a provider was installed.
+pub(crate) fn install_jwt_crypto_provider() {
+    let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
+}
+
 #[cfg(test)]
 mod tests {
 

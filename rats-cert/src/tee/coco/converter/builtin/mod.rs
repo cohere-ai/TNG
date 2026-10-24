@@ -79,6 +79,8 @@ impl CocoBuiltinConverter {
 
         let storage_provider = KvStorageProvider::new(config.storage_backend.clone());
 
+        crate::install_jwt_crypto_provider();
+
         let mut attestation_service = Box::new(
             AttestationService::new(config, storage_provider)
                 .await
@@ -128,9 +130,8 @@ impl CocoBuiltinConverter {
     ) -> Result<crate::tee::coco::verifier::builtin::CocoBuiltinVerifier> {
         let unavailable = |e: anyhow::Error| Error::CocoBuiltinAsSignerKeyUnavailable(Arc::new(e));
 
-        // As JSON, because the service's `jsonwebtoken` is not the one the verifier reads token
-        // headers with, so the two `Jwk` types cannot meet. The broker publishes the single key it
-        // signs with.
+        // As JSON, the form the verifier compares token headers in. The broker publishes the
+        // single key it signs with.
         let signer_key = self
             .attestation_service
             .read()

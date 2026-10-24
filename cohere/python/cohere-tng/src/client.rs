@@ -69,7 +69,7 @@ pub struct TngClient {
 impl TngClient {
     #[new]
     fn new(config: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let json_str: String = Python::with_gil(|py| {
+        let json_str: String = Python::attach(|py| {
             let json_mod = py.import("json")?;
             let s = json_mod.call_method1("dumps", (config,))?;
             s.extract::<String>()
@@ -175,7 +175,7 @@ impl RequestSender {
         let writer = self.body_writer.clone();
         let rt = self.rt.clone();
 
-        py.allow_threads(move || {
+        py.detach(move || {
             rt.block_on(async move {
                 use tokio::io::AsyncWriteExt;
                 maybe_timeout(
@@ -237,7 +237,7 @@ impl RequestSender {
         let writer = self.body_writer.clone();
         let rt = self.rt.clone();
 
-        let (response, attestation_result) = py.allow_threads(|| {
+        let (response, attestation_result) = py.detach(|| {
             rt.block_on(async {
                 drop(writer.lock().await.take());
                 maybe_timeout(
