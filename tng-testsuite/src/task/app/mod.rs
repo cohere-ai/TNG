@@ -54,15 +54,8 @@ pub enum AppType {
         path_matcher: &'static str,
         rewrite_to: &'static str,
         required_headers: Vec<(&'static str, &'static str)>,
-    },
-    /// Load balancer that requires `tunnel_headers` on OHTTP tunnel requests
-    /// and forbids them on every other request (such as key-config requests).
-    #[allow(dead_code)]
-    LoadBalancerWithTunnelHeaderCheck {
-        listen_port: u16,
-        upstream_servers: Vec<(String, u16)>,
-        path_matcher: &'static str,
-        rewrite_to: &'static str,
+        /// Required with these values on OHTTP tunnel requests, and forbidden on
+        /// every other request (such as key-config requests).
         tunnel_headers: Vec<(&'static str, &'static str)>,
     },
     #[allow(dead_code)]
@@ -83,9 +76,9 @@ impl Task for AppType {
             AppType::HttpClient { .. }
             | AppType::HttpClientWithReverseProxy { .. }
             | AppType::TcpClient { .. } => "app_client",
-            AppType::LoadBalancer { .. }
-            | AppType::LoadBalancerWithHeaderCheck { .. }
-            | AppType::LoadBalancerWithTunnelHeaderCheck { .. } => "load_balancer",
+            AppType::LoadBalancer { .. } | AppType::LoadBalancerWithHeaderCheck { .. } => {
+                "load_balancer"
+            }
             #[cfg(feature = "js-sdk")]
             AppType::BrowserClient { .. } => "browser_client",
         }
@@ -98,9 +91,9 @@ impl Task for AppType {
             AppType::HttpClient { .. }
             | AppType::HttpClientWithReverseProxy { .. }
             | AppType::TcpClient { .. } => NodeType::Client,
-            AppType::LoadBalancer { .. }
-            | AppType::LoadBalancerWithHeaderCheck { .. }
-            | AppType::LoadBalancerWithTunnelHeaderCheck { .. } => NodeType::Middleware,
+            AppType::LoadBalancer { .. } | AppType::LoadBalancerWithHeaderCheck { .. } => {
+                NodeType::Middleware
+            }
             #[cfg(feature = "js-sdk")]
             AppType::BrowserClient { .. } => NodeType::Client,
         }
@@ -172,6 +165,7 @@ impl Task for AppType {
                     path_matcher,
                     rewrite_to,
                     &[],
+                    &[],
                 )
                 .await
             }
@@ -181,40 +175,22 @@ impl Task for AppType {
                 path_matcher,
                 rewrite_to,
                 required_headers,
+                tunnel_headers,
             } => {
-                let required_headers = required_headers
-                    .iter()
-                    .map(|(name, value)| (name.to_string(), value.to_string()))
-                    .collect::<Vec<_>>();
+                let to_owned = |headers: &[(&str, &str)]| {
+                    headers
+                        .iter()
+                        .map(|(name, value)| (name.to_string(), value.to_string()))
+                        .collect::<Vec<_>>()
+                };
                 load_balancer::launch_load_balancer(
                     token,
                     *listen_port,
                     upstream_servers,
                     path_matcher,
                     rewrite_to,
-                    &required_headers,
-                )
-                .await
-            }
-            AppType::LoadBalancerWithTunnelHeaderCheck {
-                listen_port,
-                upstream_servers,
-                path_matcher,
-                rewrite_to,
-                tunnel_headers,
-            } => {
-                let tunnel_headers = tunnel_headers
-                    .iter()
-                    .map(|(name, value)| (name.to_string(), value.to_string()))
-                    .collect::<Vec<_>>();
-                load_balancer::launch_load_balancer_with_tunnel_headers(
-                    token,
-                    *listen_port,
-                    upstream_servers,
-                    path_matcher,
-                    rewrite_to,
-                    &[],
-                    &tunnel_headers,
+                    &to_owned(required_headers),
+                    &to_owned(tunnel_headers),
                 )
                 .await
             }

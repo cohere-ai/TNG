@@ -155,6 +155,7 @@ async fn test_ingress_mapping_forward_headers_for_multi_route_routing() -> Resul
             path_matcher: r"^/$",
             rewrite_to: r"/",
             required_headers: vec![("x-routing-key", "route-a")],
+            tunnel_headers: vec![],
         }
         .boxed(),
         AppType::HttpServer {
@@ -243,11 +244,12 @@ async fn test_ingress_mapping_passthrough_headers() -> Result<()> {
             "#,
         )
         .boxed(),
-        AppType::LoadBalancerWithTunnelHeaderCheck {
+        AppType::LoadBalancerWithHeaderCheck {
             listen_port: 30001,
             upstream_servers: vec![("192.168.1.1".into(), 30001)],
             path_matcher: r"^/$",
             rewrite_to: r"/",
+            required_headers: vec![],
             tunnel_headers: vec![("x-request-id", "req-1")],
         }
         .boxed(),

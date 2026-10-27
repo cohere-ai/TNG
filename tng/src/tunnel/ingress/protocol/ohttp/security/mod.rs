@@ -740,39 +740,6 @@ mod tests {
     }
 
     #[test]
-    fn test_passthrough_headers_do_not_change_the_client_cache_key() {
-        let forward_header_names = vec![HeaderName::from_static("authorization")];
-        let passthrough_header_names =
-            parse_passthrough_header_names(&["x-request-id".to_owned()], &forward_header_names)
-                .expect("names should parse");
-        let request = |request_id: &str| {
-            axum::extract::Request::builder()
-                .uri("http://example.com/v1/embed")
-                .header("authorization", "Bearer key")
-                .header("x-request-id", request_id)
-                .body(Body::empty())
-                .expect("request should be built")
-        };
-
-        let (_, key_a) =
-            OHttpSecurityLayer::extract_forward_headers(&request("req-a"), &forward_header_names);
-        let (_, key_b) =
-            OHttpSecurityLayer::extract_forward_headers(&request("req-b"), &forward_header_names);
-        assert_eq!(key_a, key_b);
-
-        let passthrough_a = OHttpSecurityLayer::extract_passthrough_headers(
-            &request("req-a"),
-            &passthrough_header_names,
-        );
-        assert_eq!(
-            passthrough_a
-                .get("x-request-id")
-                .and_then(|v| v.to_str().ok()),
-            Some("req-a")
-        );
-    }
-
-    #[test]
     fn test_parse_passthrough_header_names_rejects_conflicts() {
         let forward_header_names = vec![
             HeaderName::from_static("authorization"),

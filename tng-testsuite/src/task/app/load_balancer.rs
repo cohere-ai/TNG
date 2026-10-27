@@ -57,31 +57,11 @@ impl UpstreamBalancer {
 /// * `upstream_servers` - List of (host, port) upstreams
 /// * `path_matcher` - Regex to match incoming path (should cover full path)
 /// * `rewrite_to` - Replacement string, e.g., "/api/$1"
+/// * `required_headers` - Headers every request must carry with these values
+/// * `tunnel_headers` - Headers every OHTTP tunnel request (`x-tng-ohttp-api: /tng/tunnel`)
+///   must carry with these values, and every other request must not carry at all
 
 pub async fn launch_load_balancer(
-    token: CancellationToken,
-    listen_port: u16,
-    upstream_servers: &[(String, u16)],
-    path_matcher: &'static str,
-    rewrite_to: &'static str,
-    required_headers: &[(String, String)],
-) -> Result<tokio::task::JoinHandle<Result<()>>> {
-    launch_load_balancer_with_tunnel_headers(
-        token,
-        listen_port,
-        upstream_servers,
-        path_matcher,
-        rewrite_to,
-        required_headers,
-        &[],
-    )
-    .await
-}
-
-/// Like [`launch_load_balancer`], and also checks headers by OHTTP API: each request
-/// tagged `x-tng-ohttp-api: /tng/tunnel` must carry every `tunnel_headers` entry with
-/// that value, and any other request must carry none of those header names.
-pub async fn launch_load_balancer_with_tunnel_headers(
     token: CancellationToken,
     listen_port: u16,
     upstream_servers: &[(String, u16)],
@@ -124,9 +104,6 @@ pub async fn launch_load_balancer_with_tunnel_headers(
             let tunnel_headers = tunnel_headers.clone();
 
             async move {
-                if let Some(rejection) = check_tunnel_headers(&request, &tunnel_headers) {
-                    return rejection;
-                }
                 handle_request_with_rewrite(
                     request,
                     balancer,
@@ -134,6 +111,7 @@ pub async fn launch_load_balancer_with_tunnel_headers(
                     path_matcher,
                     &rewrite_to,
                     required_headers,
+                    tunnel_headers,
                 )
                 .await
             }
@@ -159,34 +137,6 @@ pub async fn launch_load_balancer_with_tunnel_headers(
     Ok(handle)
 }
 
-/// Returns a 404 response when `request` breaks the per-OHTTP-API header rules of
-/// [`launch_load_balancer_with_tunnel_headers`].
-fn check_tunnel_headers(
-    request: &Request<Body>,
-    tunnel_headers: &[(String, String)],
-) -> Option<Response<Body>> {
-    if tunnel_headers.is_empty() {
-        return None;
-    }
-    let is_tunnel = request
-        .headers()
-        .get("x-tng-ohttp-api")
-        .is_some_and(|api| api.as_bytes() == b"/tng/tunnel");
-    for (name, value) in tunnel_headers {
-        let actual = request.headers().get(name);
-        let ok = if is_tunnel {
-            actual.is_some_and(|actual| actual.as_bytes() == value.as_bytes())
-        } else {
-            actual.is_none()
-        };
-        if !ok {
-            tracing::info!(header = %name, is_tunnel, ?actual, "Tunnel header check failed");
-            return Some((StatusCode::NOT_FOUND, "Not Found").into_response());
-        }
-    }
-    None
-}
-
 /// Handle incoming request: try to match and rewrite path, then proxy.
 async fn handle_request_with_rewrite(
     request: Request<Body>,
@@ -195,6 +145,7 @@ async fn handle_request_with_rewrite(
     path_matcher: Arc<Regex>,
     rewrite_to: &str,
     required_headers: Arc<Vec<(String, String)>>,
+    tunnel_headers: Arc<Vec<(String, String)>>,
 ) -> Response<Body> {
     for (required_header_name, required_header_value) in required_headers.iter() {
         let Some(actual_header_value) = request.headers().get(required_header_name) else {
@@ -202,6 +153,23 @@ async fn handle_request_with_rewrite(
         };
 
         if actual_header_value.as_bytes() != required_header_value.as_bytes() {
+            return (StatusCode::NOT_FOUND, "Not Found").into_response();
+        }
+    }
+
+    let is_tunnel = request
+        .headers()
+        .get("x-tng-ohttp-api")
+        .is_some_and(|api| api.as_bytes() == b"/tng/tunnel");
+    for (name, value) in tunnel_headers.iter() {
+        let actual = request.headers().get(name);
+        let ok = if is_tunnel {
+            actual.is_some_and(|actual| actual.as_bytes() == value.as_bytes())
+        } else {
+            actual.is_none()
+        };
+        if !ok {
+            tracing::info!(header = %name, is_tunnel, ?actual, "Tunnel header check failed");
             return (StatusCode::NOT_FOUND, "Not Found").into_response();
         }
     }
