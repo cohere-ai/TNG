@@ -135,11 +135,18 @@ impl EgressFlow {
 
         let span = tracing::info_span!("serve", client=?src);
         let runtime_cloned = runtime.clone();
-        runtime.spawn_supervised_task_with_span(span, async move {
+        // Unsupervised so that streams of in-flight requests are still picked up on shutdown. The
+        // stream ends once the protocol layer has closed the connection.
+        runtime.spawn_unsupervised_task_with_span(span, async move {
             tracing::debug!("Start serving new connection from client");
 
-            // Consume streams come from downstream
-            let mut pending = match trusted_stream_manager.consume_stream(stream).await {
+            // Consume streams come from downstream. Waiting for the first bytes is cancelled on
+            // shutdown, so that an idle connection cannot hold it up.
+            let consumed = tokio::select! {
+                consumed = trusted_stream_manager.consume_stream(stream) => consumed,
+                () = runtime_cloned.shutdown_guard().cancelled() => return,
+            };
+            let mut pending = match consumed {
                 Ok(pending) => pending,
                 Err(error) => {
                     tracing::error!(?error, "Failed to consume stream from client");
@@ -157,9 +164,10 @@ impl EgressFlow {
                 };
 
                 let metrics = metrics.clone();
+                let drain = next_stream.is_secured() && trusted_stream_manager.is_ohttp();
 
                 // Spawn a task to handle the connection
-                runtime_cloned.spawn_supervised_task_current_span({
+                let task = {
                     let dst = dst.clone();
 
                     async move {
@@ -203,7 +211,15 @@ impl EgressFlow {
                             tracing::error!(error=?e, "Failed to forward stream");
                         }
                     }
-                });
+                };
+
+                // A decrypted OHTTP stream ends with its request, so let it finish on shutdown.
+                // Other streams are tunnels that may stay open indefinitely.
+                if drain {
+                    runtime_cloned.spawn_unsupervised_task_current_span(task);
+                } else {
+                    runtime_cloned.spawn_supervised_task_current_span(task);
+                }
             }
         });
     }

@@ -49,11 +49,14 @@ impl ProtocolStreamDecoder for OHttpStreamDecoder {
 
         // Should be spawned as background task
         let security_layer = self.security_layer.clone();
-        self.runtime.spawn_supervised_task(async move {
-            if let Err(error) = security_layer.handle_stream(input, sender).await {
-                tracing::error!(?error, "Failed to handle OHTTP stream")
-            }
-        });
+        // Unsupervised so that in-flight requests complete on shutdown; handle_stream closes the
+        // connection gracefully.
+        self.runtime
+            .spawn_unsupervised_task_current_span(async move {
+                if let Err(error) = security_layer.handle_stream(input, sender).await {
+                    tracing::error!(?error, "Failed to handle OHTTP stream")
+                }
+            });
 
         Ok(stream! {
             while let Some(value) = receiver.recv().await {
