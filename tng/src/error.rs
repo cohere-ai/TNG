@@ -251,6 +251,10 @@ impl IntoResponse for TngError {
                 StatusCode::INTERNAL_SERVER_ERROR
             }
         };
+        // Relay a client error the upstream returned for a request forwarded
+        // on the client's behalf (e.g. the gateway's 404 for a route it has no
+        // backend for), rather than reporting it as a TNG failure.
+        let status = self.upstream_client_error().unwrap_or(status);
 
         (
             status,
@@ -260,6 +264,25 @@ impl IntoResponse for TngError {
             }),
         )
             .into_response()
+    }
+}
+
+impl TngError {
+    /// The upstream's 4xx status, if this error is a forwarded request that
+    /// the upstream rejected. 422 is excluded: it asks TNG to fetch a new key
+    /// config (RFC 9458 section 6.4) rather than being the client's error.
+    fn upstream_client_error(&self) -> Option<StatusCode> {
+        let (TngError::RequestKeyConfigFailed(e)
+        | TngError::HttpCipherTextBadResponse(e)
+        | TngError::CreateOHttpClientFailed(e)) = self
+        else {
+            return None;
+        };
+        // check_error_response keeps the reqwest::Error, which has the status.
+        e.chain()
+            .filter_map(|cause| cause.downcast_ref::<reqwest::Error>())
+            .find_map(reqwest::Error::status)
+            .filter(|s| s.is_client_error() && *s != StatusCode::UNPROCESSABLE_ENTITY)
     }
 }
 
@@ -323,5 +346,65 @@ mod tests {
         let unavailable =
             TngError::AttestationUnavailable("attestation unavailable".into()).into_response();
         assert_eq!(unavailable.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// Run an upstream response with `status` through check_error_response,
+    /// as the OHTTP client does, and return the error it produces.
+    async fn upstream_error(status: u16) -> anyhow::Error {
+        let response = http::Response::builder()
+            .status(status)
+            .body("not found")
+            .unwrap();
+        check_error_response(response.into()).await.unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn test_upstream_status_relay() {
+        let cases = [
+            // Key-config fetch rejected by the gateway: relay the 4xx.
+            (
+                TngError::RequestKeyConfigFailed(upstream_error(404).await),
+                404,
+            ),
+            (
+                TngError::RequestKeyConfigFailed(upstream_error(429).await),
+                429,
+            ),
+            // Encrypted request rejected: relay the 4xx.
+            (
+                TngError::HttpCipherTextBadResponse(upstream_error(404).await),
+                404,
+            ),
+            // Upstream 5xx keeps TNG's own mapping.
+            (
+                TngError::RequestKeyConfigFailed(upstream_error(503).await),
+                500,
+            ),
+            (
+                TngError::HttpCipherTextBadResponse(upstream_error(503).await),
+                502,
+            ),
+            // 422 means "refetch the key config", not a client error.
+            (
+                TngError::HttpCipherTextBadResponse(upstream_error(422).await),
+                502,
+            ),
+            // No upstream response at all keeps the mapping.
+            (
+                TngError::CreateOHttpClientFailed(anyhow::anyhow!("bad url")),
+                500,
+            ),
+        ];
+        for (error, expected) in cases {
+            let name = error.as_ref().to_owned();
+            assert_eq!(error.into_response().status().as_u16(), expected, "{name}");
+        }
+
+        // get_or_create_ohttp_client wraps the key-config failure; the status
+        // must survive that, which is the unknown-model case end to end.
+        let wrapped = TngError::CreateOHttpClientFailed(anyhow::Error::new(
+            TngError::RequestKeyConfigFailed(upstream_error(404).await),
+        ));
+        assert_eq!(wrapped.into_response().status(), StatusCode::NOT_FOUND);
     }
 }
