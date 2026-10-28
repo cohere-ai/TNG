@@ -289,7 +289,7 @@ async fn test_ingress_mapping_tunnel_only_forward_headers() -> Result<()> {
                     exit 1
                 }
 
-                # The first ID still passes after the second, on the same OHTTP client.
+                # The first ID still passes after the second.
                 code=$(request -H "x-request-id: req-1")
                 [ "$code" = "200" ] || {
                     echo "Repeated request with x-request-id: req-1 failed: $code"
