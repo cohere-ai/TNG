@@ -279,11 +279,11 @@ async fn test_ingress_mapping_tunnel_only_forward_headers() -> Result<()> {
                     exit 1
                 }
 
-                # A different ID reaches the load balancer with that ID, so it is
-                # rejected there rather than by TNG.
+                # A different ID reaches the load balancer with that ID, so the
+                # load balancer, not TNG, rejects it with its own 404.
                 code=$(request -H "x-request-id: req-2")
-                [ "$code" != "200" ] || {
-                    echo "Request with x-request-id: req-2 unexpectedly passed the header check"
+                [ "$code" = "404" ] && [ "$(cat /tmp/body)" = "Not Found" ] || {
+                    echo "Request with x-request-id: req-2 was not rejected by the load balancer: $code $(cat /tmp/body)"
                     exit 1
                 }
 

@@ -943,16 +943,16 @@ The OHTTP capability can be enabled by specifying the `ohttp` field in the `add_
 
     Example: `["authorization", "x-custom-routing", { "name": "x-request-id", "tunnel_only": true }]`.
 
-    Besides tunnel requests, the ingress sends key-config requests: when it creates an OHTTP client and on background key refreshes, which have no inner request behind them. A plain header name is sent on both, so it needs one value for the client's lifetime: the ingress keeps a separate OHTTP client, with its own key-config fetch and attestation, for each distinct combination of these header values. That keeps routing on the header consistent, but suits only headers with a small number of distinct values.
+    A plain header name is also sent on the key-config requests that fetch the OHTTP key, and the ingress keeps a separate OHTTP client, with its own key fetch and attestation, for each distinct combination of its values. Use plain names only for headers with few distinct values, such as routing headers.
 
-    A `tunnel_only` header has no single value per client, so it does not select a client and is not sent on key-config requests. Use it for values that change per request, such as a request ID or W3C trace context (`traceparent`, `tracestate`). All values of a repeated header are copied. Do not route on a `tunnel_only` header: key-config requests do not carry it, so they may reach a different egress than the tunnel requests that use the key.
+    A `tunnel_only` header is sent only on tunnel requests and does not select a client, so it suits per-request values such as a request ID or `traceparent`. All values of a repeated header are copied. Do not route on it: key-config requests do not carry it.
 
-    A name cannot be listed both with and without `tunnel_only`. A `tunnel_only` entry cannot be a `body_field_headers` header, a header TNG sets on the outer request (`content-type`, `content-length`, `host`, `x-tng-ohttp-api`), or a hop-by-hop header.
+    A `tunnel_only` name cannot also be listed without `tunnel_only`, be a `body_field_headers` header, be a hop-by-hop header, or be one TNG sets on the outer request (`content-type`, `content-length`, `host`, `x-tng-ohttp-api`).
 
 > [!WARNING]
 > Headers listed in `forward_headers` are sent unencrypted and are visible to every hop between the ingress and the egress. List only headers that carry no confidential data.
 
-- **`body_field_headers`** (array [BodyFieldHeader], optional, default is an empty array): A list of rules for promoting top-level fields from a JSON request body into HTTP headers. This is useful when a routing-relevant field (such as `model`) is inside the encrypted request body and needs to be visible to L7 gateways. Each entry specifies a JSON field name and the corresponding header name to set. Promoted headers are automatically added to the `forward_headers` list internally, without `tunnel_only` (routing on them needs key-config requests to carry them), so they do not need to be listed separately.
+- **`body_field_headers`** (array [BodyFieldHeader], optional, default is an empty array): A list of rules for promoting top-level fields from a JSON request body into HTTP headers. This is useful when a routing-relevant field (such as `model`) is inside the encrypted request body and needs to be visible to L7 gateways. Each entry specifies a JSON field name and the corresponding header name to set. Promoted headers are automatically added to the `forward_headers` list internally as plain (not `tunnel_only`) entries, so they do not need to be listed separately.
 
     - **`field_name`** (string): The name of the top-level JSON field to extract (e.g. `"model"`).
     - **`header_name`** (string): The HTTP header name to set with the extracted value (e.g. `"x-gateway-model-name"`).
@@ -1062,7 +1062,7 @@ In many Layer 7 gateway scenarios, after TNG protects traffic using the OHTTP pr
 3. The Host (or `:authority`) of the encrypted HTTP request is consistent with the inner protected business HTTP request.
 4. The encrypted HTTP request and response will use `Content-Type: message/ohttp-chunked-req` and `Content-Type: message/ohttp-chunked-res` as `Content-Type` respectively.
 5. The encrypted HTTP request and response will not contain the request headers and response headers in the encrypted HTTP request.
-6. Specific headers from the inner request can be forwarded in the clear using `forward_headers` (plain entries for routing, `tunnel_only` entries for per-request values such as request IDs), and fields from JSON request bodies can be promoted to headers using `body_field_headers`.
+6. Specific headers from the inner request can be forwarded in the clear using `forward_headers`, and fields from JSON request bodies can be promoted to headers using `body_field_headers`.
 
 ### OHttp: Egress Configuration
 

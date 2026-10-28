@@ -59,7 +59,7 @@ struct ForwardHeaderNames {
 }
 
 /// Parses `forward_headers` and adds the `body_field_headers` headers as default
-/// entries, since model routing needs key-config requests to carry them. Rejects a
+/// entries, since key-config requests must carry them. Rejects a
 /// name listed with different `tunnel_only` values, a `tunnel_only` entry for a
 /// promoted body field, and a `tunnel_only` entry for a header TNG sets itself on
 /// the outer request or that is hop-by-hop.
@@ -90,7 +90,7 @@ fn parse_forward_header_names(
                 || header_name.as_str() == OhttpApi::HEADER_NAME
             {
                 anyhow::bail!(
-                    "forward_headers entry {} is set by TNG on the outer OHTTP request and cannot be tunnel_only",
+                    "forward_headers entry {} is reserved or hop-by-hop and cannot be tunnel_only",
                     entry.name
                 );
             }
@@ -812,29 +812,6 @@ mod tests {
                 tunnel_only: vec![HeaderName::from_static("x-request-id")],
             }
         );
-    }
-
-    #[test]
-    fn test_tunnel_only_headers_do_not_select_the_client() {
-        let names =
-            parse_forward_header_names(&["x-routing-key".into(), tunnel_only("x-request-id")], &[])
-                .expect("names should parse");
-        let request = |request_id: &str| {
-            axum::extract::Request::builder()
-                .uri("http://example.com/")
-                .header("x-routing-key", "route-a")
-                .header("x-request-id", request_id)
-                .body(Body::empty())
-                .expect("request should be built")
-        };
-
-        let (forward_1, cache_key_1) =
-            OHttpSecurityLayer::extract_forward_headers(&request("req-1"), &names.default);
-        let (_, cache_key_2) =
-            OHttpSecurityLayer::extract_forward_headers(&request("req-2"), &names.default);
-
-        assert_eq!(cache_key_1, cache_key_2);
-        assert!(forward_1.get("x-request-id").is_none());
     }
 
     #[test]

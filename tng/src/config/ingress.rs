@@ -173,7 +173,10 @@ impl From<&str> for ForwardHeader {
 }
 
 #[derive(Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(
+    untagged,
+    expecting = "a header name or an object { \"name\", \"tunnel_only\" }"
+)]
 enum ForwardHeaderRepr {
     Name(String),
     Entry(ForwardHeaderEntry),
@@ -530,10 +533,21 @@ mod tests {
             ])
         );
 
-        assert!(serde_json::from_value::<super::OHttpArgs>(json!({
-            "forward_headers": [{ "name": "x-request-id", "per_request": true }]
-        }))
-        .is_err());
+        for entry in [
+            json!({ "name": "x-request-id", "per_request": true }),
+            json!({ "name": "x-request-id", "tunnel_onyl": true }),
+            json!({ "name": "x-request-id", "tunnel_only": "yes" }),
+        ] {
+            let error = serde_json::from_value::<super::OHttpArgs>(json!({
+                "forward_headers": [entry]
+            }))
+            .expect_err("a malformed entry should be rejected")
+            .to_string();
+            assert!(
+                error.contains(r#"a header name or an object { "name", "tunnel_only" }"#),
+                "{error}"
+            );
+        }
         Ok(())
     }
 }
