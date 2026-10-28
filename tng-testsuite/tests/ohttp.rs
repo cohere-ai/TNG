@@ -192,13 +192,13 @@ async fn test_ingress_mapping_forward_headers_for_multi_route_routing() -> Resul
 
 /// The load balancer passes a tunnel request only if it carries the inner
 /// request's `x-request-id` in the clear, and a key-config request only if it
-/// carries none, so the test passes only if the ingress copies the passthrough
+/// carries none, so the test passes only if the ingress copies the tunnel_only
 /// header onto each outer tunnel request and nowhere else. A request with a
 /// different ID must reach the load balancer with that ID, through the same
 /// cached OHTTP client.
 #[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 10)]
-async fn test_ingress_mapping_passthrough_headers() -> Result<()> {
+async fn test_ingress_mapping_tunnel_only_forward_headers() -> Result<()> {
     run_test(vec![
         TngInstance::TngServer(
             r#"
@@ -233,8 +233,8 @@ async fn test_ingress_mapping_passthrough_headers() -> Result<()> {
                             }
                         },
                         "ohttp": {
-                            "passthrough_headers": [
-                                "x-request-id"
+                            "forward_headers": [
+                                { "name": "x-request-id", "tunnel_only": true }
                             ]
                         },
                         "no_ra": true
@@ -260,7 +260,7 @@ async fn test_ingress_mapping_passthrough_headers() -> Result<()> {
         }
         .boxed(),
         ShellTask {
-            name: "passthrough_header_request".to_owned(),
+            name: "tunnel_only_header_request".to_owned(),
             node_type: NodeType::Client,
             script: r#"
                 set -euo pipefail

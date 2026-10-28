@@ -150,6 +150,71 @@ pub struct BodyFieldHeader {
     pub header_name: String,
 }
 
+/// One `forward_headers` entry. A plain header name is forwarded on every outer
+/// request of its OHTTP client, including key-config requests, and its value
+/// selects the client. With `tunnel_only`, the header is copied only onto the
+/// tunnel request of the inner request it came from: it is never sent on
+/// key-config requests and does not select the client, so it suits values that
+/// change per request, such as a request ID or trace context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "ForwardHeaderRepr", into = "ForwardHeaderRepr")]
+pub struct ForwardHeader {
+    pub name: String,
+    pub tunnel_only: bool,
+}
+
+impl From<&str> for ForwardHeader {
+    fn from(name: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            tunnel_only: false,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum ForwardHeaderRepr {
+    Name(String),
+    Entry(ForwardHeaderEntry),
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForwardHeaderEntry {
+    name: String,
+    #[serde(default)]
+    tunnel_only: bool,
+}
+
+impl From<ForwardHeaderRepr> for ForwardHeader {
+    fn from(repr: ForwardHeaderRepr) -> Self {
+        match repr {
+            ForwardHeaderRepr::Name(name) => Self {
+                name,
+                tunnel_only: false,
+            },
+            ForwardHeaderRepr::Entry(ForwardHeaderEntry { name, tunnel_only }) => {
+                Self { name, tunnel_only }
+            }
+        }
+    }
+}
+
+impl From<ForwardHeader> for ForwardHeaderRepr {
+    // A default entry serializes back to a plain name, as existing configs write it.
+    fn from(header: ForwardHeader) -> Self {
+        if header.tunnel_only {
+            Self::Entry(ForwardHeaderEntry {
+                name: header.name,
+                tunnel_only: true,
+            })
+        } else {
+            Self::Name(header.name)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct OHttpArgs {
@@ -160,17 +225,10 @@ pub struct OHttpArgs {
     #[serde(default)]
     pub path_rewrites: Vec<PathRewrite>,
 
+    /// Inner-request headers copied in the clear onto the outer OHTTP request.
+    /// Each entry is a header name, or `{ "name": ..., "tunnel_only": true }`.
     #[serde(default)]
-    pub forward_headers: Vec<String>,
-
-    /// Headers copied in the clear from each inner request onto its outer OHTTP
-    /// request only. Unlike `forward_headers`, they are not part of the OHTTP
-    /// client cache key and are not sent with key-config requests, so a
-    /// per-request value such as a request ID or trace context does not create
-    /// a new client (and a new attestation) for every request.
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub passthrough_headers: Vec<String>,
+    pub forward_headers: Vec<ForwardHeader>,
 
     /// Seconds before key expiry to trigger a background refresh. Prevents the
     /// race where the ingress uses a key that the egress has already evicted.
@@ -437,6 +495,45 @@ mod tests {
         let rules = roundtripped.direct_forward.unwrap();
         assert_eq!(rules.0.len(), 1);
         assert_eq!(rules.0[0].http_path, "/public/.*");
+        Ok(())
+    }
+
+    #[test]
+    fn test_ohttp_args_forward_headers_string_or_entry() -> Result<()> {
+        let input = json!({
+            "forward_headers": [
+                "x-model",
+                { "name": "x-request-id", "tunnel_only": true },
+                { "name": "x-route" }
+            ]
+        });
+        let args: super::OHttpArgs = serde_json::from_value(input)?;
+        assert_eq!(
+            args.forward_headers,
+            vec![
+                super::ForwardHeader::from("x-model"),
+                super::ForwardHeader {
+                    name: "x-request-id".to_owned(),
+                    tunnel_only: true,
+                },
+                super::ForwardHeader::from("x-route"),
+            ]
+        );
+
+        // Default entries round-trip as plain names.
+        assert_eq!(
+            serde_json::to_value(&args)?["forward_headers"],
+            json!([
+                "x-model",
+                { "name": "x-request-id", "tunnel_only": true },
+                "x-route"
+            ])
+        );
+
+        assert!(serde_json::from_value::<super::OHttpArgs>(json!({
+            "forward_headers": [{ "name": "x-request-id", "per_request": true }]
+        }))
+        .is_err());
         Ok(())
     }
 }

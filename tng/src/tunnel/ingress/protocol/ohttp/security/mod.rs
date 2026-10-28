@@ -8,7 +8,7 @@ use crate::tunnel::utils::socket::{
     TCP_KEEPALIVE_IDLE_SECS, TCP_KEEPALIVE_INTERVAL_SECS, TCP_KEEPALIVE_PROBE_COUNT,
 };
 use crate::{
-    config::ingress::OHttpArgs,
+    config::ingress::{ForwardHeader, OHttpArgs},
     error::TngError,
     tunnel::{
         endpoint::TngEndpoint,
@@ -48,38 +48,84 @@ fn is_hop_by_hop(name: &http::header::HeaderName, headers: &http::HeaderMap) -> 
             .any(|t| t.trim().eq_ignore_ascii_case(name.as_str()))
 }
 
-/// Parses `passthrough_headers`. Rejects headers that TNG sets itself on the outer
-/// request or that describe its framing, and headers already in `forward_headers`
-/// (or promoted by `body_field_headers`), which are sent on every request of their
-/// cached client instead.
-fn parse_passthrough_header_names(
-    names: &[String],
-    forward_header_names: &[HeaderName],
-) -> Result<Vec<HeaderName>> {
-    let mut parsed = Vec::with_capacity(names.len());
-    for name in names {
-        let header_name = HeaderName::from_bytes(name.as_bytes())
-            .with_context(|| format!("Invalid passthrough_headers entry: {name}"))?;
-        if HOP_BY_HOP_HEADERS.contains(&header_name)
-            || header_name == header::CONTENT_TYPE
-            || header_name == header::CONTENT_LENGTH
-            || header_name == header::HOST
-            || header_name.as_str() == OhttpApi::HEADER_NAME
+/// Header names from `forward_headers`, split by where each one is sent.
+#[derive(Debug, PartialEq, Eq)]
+struct ForwardHeaderNames {
+    /// Sent on every outer request of the client they select, including
+    /// key-config requests. Includes the `body_field_headers` headers.
+    default: Vec<HeaderName>,
+    /// Sent only on the tunnel request of the inner request they came from.
+    tunnel_only: Vec<HeaderName>,
+}
+
+/// Parses `forward_headers` and adds the `body_field_headers` headers as default
+/// entries, since model routing needs key-config requests to carry them. Rejects a
+/// name listed with different `tunnel_only` values, a `tunnel_only` entry for a
+/// promoted body field, and a `tunnel_only` entry for a header TNG sets itself on
+/// the outer request or that is hop-by-hop.
+fn parse_forward_header_names(
+    entries: &[ForwardHeader],
+    body_field_headers: &[(String, HeaderName)],
+) -> Result<ForwardHeaderNames> {
+    let mut tunnel_only_by_name: Vec<(HeaderName, bool)> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let header_name = HeaderName::from_bytes(entry.name.as_bytes())
+            .with_context(|| format!("Invalid forward_headers entry: {}", entry.name))?;
+        match tunnel_only_by_name
+            .iter()
+            .find(|(name, _)| *name == header_name)
         {
-            anyhow::bail!(
-                "passthrough_headers entry {name} is set by TNG on the outer OHTTP request and cannot be passed through"
-            );
+            Some((_, tunnel_only)) if *tunnel_only != entry.tunnel_only => anyhow::bail!(
+                "forward_headers entry {} is listed both with and without tunnel_only",
+                entry.name
+            ),
+            Some(_) => continue,
+            None => {}
         }
-        if forward_header_names.contains(&header_name) {
-            anyhow::bail!(
-                "passthrough_headers entry {name} is already forwarded by forward_headers or body_field_headers"
-            );
+        if entry.tunnel_only {
+            if HOP_BY_HOP_HEADERS.contains(&header_name)
+                || header_name == header::CONTENT_TYPE
+                || header_name == header::CONTENT_LENGTH
+                || header_name == header::HOST
+                || header_name.as_str() == OhttpApi::HEADER_NAME
+            {
+                anyhow::bail!(
+                    "forward_headers entry {} is set by TNG on the outer OHTTP request and cannot be tunnel_only",
+                    entry.name
+                );
+            }
+            if body_field_headers
+                .iter()
+                .any(|(_, promoted)| *promoted == header_name)
+            {
+                anyhow::bail!(
+                    "forward_headers entry {} is promoted by body_field_headers, which key-config requests must carry, so it cannot be tunnel_only",
+                    entry.name
+                );
+            }
         }
-        parsed.push(header_name);
+        tunnel_only_by_name.push((header_name, entry.tunnel_only));
     }
-    parsed.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-    parsed.dedup();
-    Ok(parsed)
+
+    let mut names = ForwardHeaderNames {
+        default: Vec::new(),
+        tunnel_only: Vec::new(),
+    };
+    for (header_name, tunnel_only) in tunnel_only_by_name {
+        if tunnel_only {
+            names.tunnel_only.push(header_name);
+        } else {
+            names.default.push(header_name);
+        }
+    }
+    for (_, header_name) in body_field_headers {
+        names.default.push(header_name.clone());
+    }
+    for list in [&mut names.default, &mut names.tunnel_only] {
+        list.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        list.dedup();
+    }
+    Ok(names)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -97,7 +143,7 @@ pub struct OHttpSecurityLayer {
     ohttp_clients: RwLock<HashMap<OHttpClientCacheKey, Arc<OnceCell<Arc<OHttpClient>>>>>,
     path_rewrite_group: PathRewriteGroup,
     forward_header_names: Vec<HeaderName>,
-    passthrough_header_names: Vec<HeaderName>,
+    tunnel_only_header_names: Vec<HeaderName>,
     body_field_headers: Vec<(String, HeaderName)>,
     key_refresh_before_expiry_seconds: Option<u64>,
     direct_forward_detector: Option<DirectForwardTrafficDetector>,
@@ -188,23 +234,11 @@ impl OHttpSecurityLayer {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let mut forward_header_names = ohttp_args
-            .forward_headers
-            .iter()
-            .map(|name| {
-                HeaderName::from_bytes(name.as_bytes())
-                    .with_context(|| format!("Invalid forward_headers entry: {name}"))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        for (_, header_name) in &body_field_headers {
-            forward_header_names.push(header_name.clone());
-        }
-        forward_header_names.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-        forward_header_names.dedup();
-
-        let passthrough_header_names =
-            parse_passthrough_header_names(&ohttp_args.passthrough_headers, &forward_header_names)
-                .map_err(TngError::InvalidParameter)?;
+        let ForwardHeaderNames {
+            default: forward_header_names,
+            tunnel_only: tunnel_only_header_names,
+        } = parse_forward_header_names(&ohttp_args.forward_headers, &body_field_headers)
+            .map_err(TngError::InvalidParameter)?;
 
         let direct_forward_detector = ohttp_args
             .direct_forward
@@ -220,7 +254,7 @@ impl OHttpSecurityLayer {
             ohttp_clients: Default::default(),
             path_rewrite_group: PathRewriteGroup::new(&ohttp_args.path_rewrites)?,
             forward_header_names,
-            passthrough_header_names,
+            tunnel_only_header_names,
             body_field_headers,
             key_refresh_before_expiry_seconds: ohttp_args.key_refresh_before_expiry_seconds,
             direct_forward_detector,
@@ -253,15 +287,15 @@ impl OHttpSecurityLayer {
             let base_url = self.construct_base_url(endpoint, &request)?;
             let (forward_headers, cache_key_forwarded_headers) =
                 Self::extract_forward_headers(&request, &self.forward_header_names);
-            let passthrough_headers =
-                Self::extract_passthrough_headers(&request, &self.passthrough_header_names);
+            let tunnel_only_headers =
+                Self::extract_tunnel_only_headers(&request, &self.tunnel_only_header_names);
 
             let ohttp_client = self
                 .get_or_create_ohttp_client(base_url, forward_headers, cache_key_forwarded_headers)
                 .await?;
 
             ohttp_client
-                .forward_request(request, passthrough_headers)
+                .forward_request(request, tunnel_only_headers)
                 .await
         }
         .await
@@ -399,7 +433,7 @@ impl OHttpSecurityLayer {
                 if map.len() > 100 && map.len().is_power_of_two() {
                     tracing::warn!(
                         cache_size = map.len(),
-                        "OHTTP client cache is large; high-cardinality forward_headers may cause unbounded growth"
+                        "OHTTP client cache is large; high-cardinality forward_headers may cause unbounded growth (mark per-request headers tunnel_only)"
                     );
                 }
                 cell
@@ -447,20 +481,20 @@ impl OHttpSecurityLayer {
         (forward_headers, cache_key_forwarded_headers)
     }
 
-    /// Copies the passthrough headers present on the inner request, all values of each.
+    /// Copies the tunnel-only headers present on the inner request, all values of each.
     /// The result goes on that request's outer OHTTP request only, never into the client
     /// cache key.
-    fn extract_passthrough_headers(
+    fn extract_tunnel_only_headers(
         request: &axum::extract::Request,
         header_names: &[HeaderName],
     ) -> reqwest::header::HeaderMap {
-        let mut passthrough_headers = reqwest::header::HeaderMap::new();
+        let mut tunnel_only_headers = reqwest::header::HeaderMap::new();
         for header_name in header_names {
             for header_value in request.headers().get_all(header_name) {
-                passthrough_headers.append(header_name.clone(), header_value.clone());
+                tunnel_only_headers.append(header_name.clone(), header_value.clone());
             }
         }
-        passthrough_headers
+        tunnel_only_headers
     }
 }
 
@@ -698,7 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_passthrough_headers_keeps_every_value() {
+    fn test_extract_tunnel_only_headers_keeps_every_value() {
         let request = axum::extract::Request::builder()
             .uri("http://example.com/v1/embed")
             .header("x-request-id", "req-1")
@@ -708,66 +742,124 @@ mod tests {
             .header("authorization", "Bearer secret")
             .body(Body::empty())
             .expect("request should be built");
-        let header_names = parse_passthrough_header_names(
+        let header_names = parse_forward_header_names(
             &[
-                "X-Request-Id".to_owned(),
-                "tracestate".to_owned(),
-                "traceparent".to_owned(),
-                "x-not-present".to_owned(),
+                tunnel_only("X-Request-Id"),
+                tunnel_only("tracestate"),
+                tunnel_only("traceparent"),
+                tunnel_only("x-not-present"),
             ],
             &[],
         )
-        .expect("names should parse");
+        .expect("names should parse")
+        .tunnel_only;
 
-        let passthrough = OHttpSecurityLayer::extract_passthrough_headers(&request, &header_names);
+        let tunnel_only_headers =
+            OHttpSecurityLayer::extract_tunnel_only_headers(&request, &header_names);
 
-        assert_eq!(passthrough.len(), 4);
+        assert_eq!(tunnel_only_headers.len(), 4);
         assert_eq!(
-            passthrough
+            tunnel_only_headers
                 .get("x-request-id")
                 .and_then(|v| v.to_str().ok()),
             Some("req-1")
         );
         assert_eq!(
-            passthrough
+            tunnel_only_headers
                 .get_all("tracestate")
                 .iter()
                 .filter_map(|v| v.to_str().ok())
                 .collect::<Vec<_>>(),
             vec!["a=1", "b=2"]
         );
-        assert!(passthrough.get("authorization").is_none());
+        assert!(tunnel_only_headers.get("authorization").is_none());
+    }
+
+    fn tunnel_only(name: &str) -> ForwardHeader {
+        ForwardHeader {
+            name: name.to_owned(),
+            tunnel_only: true,
+        }
     }
 
     #[test]
-    fn test_parse_passthrough_header_names_rejects_conflicts() {
-        let forward_header_names = vec![
-            HeaderName::from_static("authorization"),
+    fn test_parse_forward_header_names_splits_entries() {
+        let body_field_headers = vec![(
+            "model".to_owned(),
             HeaderName::from_static("x-gateway-model-name"),
-        ];
-        for name in [
-            "authorization",
-            "x-gateway-model-name",
-            "content-type",
-            "Content-Length",
-            "host",
-            "transfer-encoding",
-            "x-tng-ohttp-api",
-            "not a header",
+        )];
+        let names = parse_forward_header_names(
+            &[
+                "x-routing-key".into(),
+                tunnel_only("x-request-id"),
+                tunnel_only("X-Request-Id"),
+                "authorization".into(),
+                // A promoted header may also be listed as a default entry.
+                "x-gateway-model-name".into(),
+            ],
+            &body_field_headers,
+        )
+        .expect("names should parse");
+
+        assert_eq!(
+            names,
+            ForwardHeaderNames {
+                default: vec![
+                    HeaderName::from_static("authorization"),
+                    HeaderName::from_static("x-gateway-model-name"),
+                    HeaderName::from_static("x-routing-key"),
+                ],
+                tunnel_only: vec![HeaderName::from_static("x-request-id")],
+            }
+        );
+    }
+
+    #[test]
+    fn test_tunnel_only_headers_do_not_select_the_client() {
+        let names =
+            parse_forward_header_names(&["x-routing-key".into(), tunnel_only("x-request-id")], &[])
+                .expect("names should parse");
+        let request = |request_id: &str| {
+            axum::extract::Request::builder()
+                .uri("http://example.com/")
+                .header("x-routing-key", "route-a")
+                .header("x-request-id", request_id)
+                .body(Body::empty())
+                .expect("request should be built")
+        };
+
+        let (forward_1, cache_key_1) =
+            OHttpSecurityLayer::extract_forward_headers(&request("req-1"), &names.default);
+        let (_, cache_key_2) =
+            OHttpSecurityLayer::extract_forward_headers(&request("req-2"), &names.default);
+
+        assert_eq!(cache_key_1, cache_key_2);
+        assert!(forward_1.get("x-request-id").is_none());
+    }
+
+    #[test]
+    fn test_parse_forward_header_names_rejects_conflicts() {
+        let body_field_headers = vec![(
+            "model".to_owned(),
+            HeaderName::from_static("x-gateway-model-name"),
+        )];
+        for entries in [
+            vec![tunnel_only("x-gateway-model-name")],
+            vec![tunnel_only("content-type")],
+            vec![tunnel_only("Content-Length")],
+            vec![tunnel_only("host")],
+            vec![tunnel_only("transfer-encoding")],
+            vec![tunnel_only("x-tng-ohttp-api")],
+            vec![tunnel_only("not a header")],
+            vec!["not a header".into()],
+            vec!["x-request-id".into(), tunnel_only("X-Request-Id")],
+            vec![tunnel_only("x-request-id"), "x-request-id".into()],
         ] {
             assert!(
-                parse_passthrough_header_names(&[name.to_owned()], &forward_header_names).is_err(),
-                "{name} should be rejected"
+                parse_forward_header_names(&entries, &body_field_headers).is_err(),
+                "{entries:?} should be rejected"
             );
         }
-        assert_eq!(
-            parse_passthrough_header_names(
-                &["x-request-id".to_owned(), "X-Request-Id".to_owned()],
-                &forward_header_names,
-            )
-            .expect("names should parse"),
-            vec![HeaderName::from_static("x-request-id")]
-        );
     }
 
     #[tokio::test]
