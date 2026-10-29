@@ -46,6 +46,17 @@ if [ -n "$POLICY_IDS" ]; then
     mv "$tmp" "$CONFIG"
 fi
 
+if [ -n "$TUNNEL_ONLY_FORWARD_HEADERS" ]; then
+    tmp=$(mktemp)
+    jq --arg headers "$TUNNEL_ONLY_FORWARD_HEADERS" '
+        .add_ingress[0].ohttp.forward_headers += (
+            $headers | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))
+            | map({name: ., tunnel_only: true})
+        )
+    ' "$CONFIG" > "$tmp"
+    mv "$tmp" "$CONFIG"
+fi
+
 if [ -n "$TNG_METRIC_OTLP_ENDPOINT" ]; then
     case "$TNG_METRIC_OTLP_ENDPOINT" in
         http://127.0.0.1:*|http://opentelemetry-collector.opentelemetry.svc.cluster.local:4317|https://*)
