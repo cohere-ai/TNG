@@ -280,11 +280,11 @@ async fn test_ingress_mapping_tunnel_only_forward_headers() -> Result<()> {
                 }
 
                 # A different ID reaches the load balancer with that ID and is
-                # rejected there. TNG reports the rejected tunnel request as a
-                # 502 HttpCipherTextBadResponse, unlike a failure inside TNG
-                # such as CreateOHttpClientFailed.
+                # rejected there. TNG relays the load balancer's 404 and its
+                # body, unlike a failure inside TNG such as
+                # CreateOHttpClientFailed.
                 code=$(request -H "x-request-id: req-2")
-                [ "$code" = "502" ] && grep -q '"code":"HttpCipherTextBadResponse"' /tmp/body || {
+                [ "$code" = "404" ] && grep -q '"upstream_body":"Not Found"' /tmp/body || {
                     echo "Request with x-request-id: req-2 was not rejected by the load balancer: $code $(cat /tmp/body)"
                     exit 1
                 }
