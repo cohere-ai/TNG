@@ -141,15 +141,22 @@ impl OHttpClient {
         self.key_store_value.is_stopped()
     }
 
+    /// Encrypts `request` and sends it to the egress. `tunnel_only_headers` are added in the
+    /// clear to this request's outer OHTTP request only.
     pub async fn forward_request(
         &self,
         request: axum::extract::Request,
+        tunnel_only_headers: reqwest::header::HeaderMap,
     ) -> Result<(axum::response::Response, Option<AttestationResult>), TngError> {
         let key_store_value = self.key_store_value.get_latest().await?;
 
         match self
             .inner
-            .send_encrypted_request(&key_store_value.server_key_config_list, request)
+            .send_encrypted_request(
+                &key_store_value.server_key_config_list,
+                request,
+                tunnel_only_headers,
+            )
             .await
         {
             Ok(response) => Ok((response, key_store_value.server_attestation_result.clone())),
@@ -284,6 +291,7 @@ impl OHttpClientInner {
         &self,
         server_key_config_list: &[KeyConfig],
         request: axum::extract::Request,
+        tunnel_only_headers: reqwest::header::HeaderMap,
     ) -> Result<axum::response::Response, TngError> {
         // Encode the request to bhttp message
         let bhttp_encoder = BhttpEncoder::from_request(request);
@@ -401,6 +409,7 @@ impl OHttpClientInner {
             .http_client
             .post(url)
             .headers(self.forward_headers.clone())
+            .headers(tunnel_only_headers)
             .header(OhttpApi::HEADER_NAME, OhttpApi::TUNNEL)
             .header(
                 http::header::CONTENT_TYPE,

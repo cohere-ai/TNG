@@ -936,9 +936,23 @@ The OHTTP capability can be enabled by specifying the `ohttp` field in the `add_
 
 - **`key_refresh_before_expiry_seconds`** (integer, optional, default `0`): If an OHTTP public key stored in the ingress cache is about to expire, this field allows us to trigger a background refresh earlier than the actual expiration time. A non-zero value mitigates a race condition where the ingress sends a request encrypted with a public key whose private key may have already been evicted on the egress by the time the request reaches it. When set to `0` (the default), the refresh asynchronously occurs once the key expires.
 
-- **`forward_headers`** (array [string], optional, default is an empty array): A list of HTTP header names that should be extracted from the inner (plaintext) HTTP request and forwarded in the clear on the outer OHTTP request. This allows L7 gateways to inspect these headers for routing and load balancing without decrypting the request body. Example: `["authorization", "x-custom-routing"]`.
+- **`forward_headers`** (array [string | ForwardHeader], optional, default is an empty array): A list of HTTP headers that should be copied from the inner (plaintext) HTTP request and forwarded in the clear on the outer OHTTP request. This allows L7 gateways to inspect these headers for routing and load balancing without decrypting the request body. Each entry is either a header name or an object:
 
-- **`body_field_headers`** (array [BodyFieldHeader], optional, default is an empty array): A list of rules for promoting top-level fields from a JSON request body into HTTP headers. This is useful when a routing-relevant field (such as `model`) is inside the encrypted request body and needs to be visible to L7 gateways. Each entry specifies a JSON field name and the corresponding header name to set. Promoted headers are automatically added to the `forward_headers` list internally, so they do not need to be listed separately.
+    - **`name`** (string): The header name. Names are matched case-insensitively.
+    - **`tunnel_only`** (boolean, optional, default `false`): Copy the header only onto the tunnel request of the inner request it came from, never onto key-config requests.
+
+    Example: `["authorization", "x-custom-routing", { "name": "x-request-id", "tunnel_only": true }]`.
+
+    A plain header name is also sent on the key-config requests that fetch the OHTTP key, and the ingress keeps a separate OHTTP client, with its own key fetch and attestation, for each distinct combination of its values. Use plain names only for headers with few distinct values, such as routing headers.
+
+    A `tunnel_only` header is sent only on tunnel requests and does not select a client, so it suits per-request values such as a request ID or `traceparent`. All values of a repeated header are copied. Do not route on it: key-config requests do not carry it.
+
+    A `tunnel_only` name cannot also be listed without `tunnel_only`, be a `body_field_headers` header, be a hop-by-hop header, or be one TNG sets on the outer request (`content-type`, `content-length`, `host`, `x-tng-ohttp-api`).
+
+> [!WARNING]
+> Headers listed in `forward_headers` are sent unencrypted and are visible to every hop between the ingress and the egress. List only headers that carry no confidential data.
+
+- **`body_field_headers`** (array [BodyFieldHeader], optional, default is an empty array): A list of rules for promoting top-level fields from a JSON request body into HTTP headers. This is useful when a routing-relevant field (such as `model`) is inside the encrypted request body and needs to be visible to L7 gateways. Each entry specifies a JSON field name and the corresponding header name to set. Promoted headers are automatically added to the `forward_headers` list internally as plain (not `tunnel_only`) entries, so they do not need to be listed separately.
 
     - **`field_name`** (string): The name of the top-level JSON field to extract (e.g. `"model"`).
     - **`header_name`** (string): The HTTP header name to set with the extracted value (e.g. `"x-gateway-model-name"`).

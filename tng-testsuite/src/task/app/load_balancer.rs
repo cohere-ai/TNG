@@ -57,6 +57,9 @@ impl UpstreamBalancer {
 /// * `upstream_servers` - List of (host, port) upstreams
 /// * `path_matcher` - Regex to match incoming path (should cover full path)
 /// * `rewrite_to` - Replacement string, e.g., "/api/$1"
+/// * `required_headers` - Headers every request must carry with these values
+/// * `tunnel_headers` - Headers every OHTTP tunnel request (`x-tng-ohttp-api: /tng/tunnel`)
+///   must carry with these values, and every other request must not carry at all
 
 pub async fn launch_load_balancer(
     token: CancellationToken,
@@ -65,6 +68,7 @@ pub async fn launch_load_balancer(
     path_matcher: &'static str,
     rewrite_to: &'static str,
     required_headers: &[(String, String)],
+    tunnel_headers: &[(String, String)],
 ) -> Result<tokio::task::JoinHandle<Result<()>>> {
     let path_matcher = Regex::new(path_matcher).context("Invalid regex")?;
 
@@ -89,6 +93,7 @@ pub async fn launch_load_balancer(
     // Move captured variables into closure
     let path_matcher = std::sync::Arc::new(path_matcher);
     let required_headers = std::sync::Arc::new(required_headers.to_vec());
+    let tunnel_headers = std::sync::Arc::new(tunnel_headers.to_vec());
 
     let app = Router::new()
         .fallback(move |request: Request<Body>| {
@@ -96,6 +101,7 @@ pub async fn launch_load_balancer(
             let client = client.clone();
             let path_matcher = path_matcher.clone();
             let required_headers = required_headers.clone();
+            let tunnel_headers = tunnel_headers.clone();
 
             async move {
                 handle_request_with_rewrite(
@@ -105,6 +111,7 @@ pub async fn launch_load_balancer(
                     path_matcher,
                     &rewrite_to,
                     required_headers,
+                    tunnel_headers,
                 )
                 .await
             }
@@ -138,6 +145,7 @@ async fn handle_request_with_rewrite(
     path_matcher: Arc<Regex>,
     rewrite_to: &str,
     required_headers: Arc<Vec<(String, String)>>,
+    tunnel_headers: Arc<Vec<(String, String)>>,
 ) -> Response<Body> {
     for (required_header_name, required_header_value) in required_headers.iter() {
         let Some(actual_header_value) = request.headers().get(required_header_name) else {
@@ -145,6 +153,23 @@ async fn handle_request_with_rewrite(
         };
 
         if actual_header_value.as_bytes() != required_header_value.as_bytes() {
+            return (StatusCode::NOT_FOUND, "Not Found").into_response();
+        }
+    }
+
+    let is_tunnel = request
+        .headers()
+        .get("x-tng-ohttp-api")
+        .is_some_and(|api| api.as_bytes() == b"/tng/tunnel");
+    for (name, value) in tunnel_headers.iter() {
+        let actual = request.headers().get(name);
+        let ok = if is_tunnel {
+            actual.is_some_and(|actual| actual.as_bytes() == value.as_bytes())
+        } else {
+            actual.is_none()
+        };
+        if !ok {
+            tracing::info!(header = %name, is_tunnel, ?actual, "Tunnel header check failed");
             return (StatusCode::NOT_FOUND, "Not Found").into_response();
         }
     }

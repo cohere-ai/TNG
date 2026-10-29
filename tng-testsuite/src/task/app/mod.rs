@@ -54,6 +54,9 @@ pub enum AppType {
         path_matcher: &'static str,
         rewrite_to: &'static str,
         required_headers: Vec<(&'static str, &'static str)>,
+        /// Required with these values on OHTTP tunnel requests, and forbidden on
+        /// every other request (such as key-config requests).
+        tunnel_headers: Vec<(&'static str, &'static str)>,
     },
     #[allow(dead_code)]
     TcpServer { port: u16 },
@@ -162,6 +165,7 @@ impl Task for AppType {
                     path_matcher,
                     rewrite_to,
                     &[],
+                    &[],
                 )
                 .await
             }
@@ -171,18 +175,22 @@ impl Task for AppType {
                 path_matcher,
                 rewrite_to,
                 required_headers,
+                tunnel_headers,
             } => {
-                let required_headers = required_headers
-                    .iter()
-                    .map(|(name, value)| (name.to_string(), value.to_string()))
-                    .collect::<Vec<_>>();
+                let to_owned = |headers: &[(&str, &str)]| {
+                    headers
+                        .iter()
+                        .map(|(name, value)| (name.to_string(), value.to_string()))
+                        .collect::<Vec<_>>()
+                };
                 load_balancer::launch_load_balancer(
                     token,
                     *listen_port,
                     upstream_servers,
                     path_matcher,
                     rewrite_to,
-                    &required_headers,
+                    &to_owned(required_headers),
+                    &to_owned(tunnel_headers),
                 )
                 .await
             }
