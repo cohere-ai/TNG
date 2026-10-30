@@ -39,16 +39,19 @@ jobs:
       - name: Wait for all other workflows on this commit to succeed
         id: wait
         run: |
-          mapfile -t run_ids < <(
-            gh run list --repo "$GH_REPO" --commit "$GITHUB_SHA" --event push --limit 50 \
-              --json databaseId --jq '.[].databaseId'
-          )
-          if [ "${#run_ids[@]}" -eq 0 ]; then
-            echo "::error::No CI workflow runs found on commit $GITHUB_SHA"; exit 1
-          fi
-          for id in "${run_ids[@]}"; do
-            echo "Waiting for workflow run $id..."
-            gh run watch "$id" --repo "$GH_REPO" --exit-status --interval 30
+          # Waits on all push runs at once, so any failure stops the release right away.
+          while :; do
+            # A failed request (e.g. a transient HTTP 502) just retries on the next round.
+            runs=$(gh run list --repo "$GH_REPO" --commit "$GITHUB_SHA" --event push --limit 50 \
+              --json workflowName,status,conclusion) || { sleep 30; continue; }
+            failed=$(jq -r 'map(select(.status == "completed" and .conclusion != "success")
+              | "\(.workflowName) (\(.conclusion))") | join(", ")' <<< "$runs")
+            running=$(jq -r 'map(select(.status != "completed") | .workflowName) | join(", ")' <<< "$runs")
+            [ "$runs" != "[]" ] || { echo "::error::No CI workflow runs found on commit $GITHUB_SHA"; exit 1; }
+            [ -z "$failed" ] || { echo "::error::Workflow runs did not succeed: $failed"; exit 1; }
+            [ -n "$running" ] || break
+            echo "Still running: $running"
+            sleep 30
           done
           python_run_id=$(
             gh run list --repo "$GH_REPO" --commit "$GITHUB_SHA" --event push --workflow co-build-python.yml \
