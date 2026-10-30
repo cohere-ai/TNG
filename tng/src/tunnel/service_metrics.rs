@@ -51,28 +51,28 @@ impl ServiceMetrics {
 
         let meter = meter_provider.meter("tng");
         let cx_total = meter
-            .u64_counter("cx_total")
+            .u64_counter("tng_cx_total")
             .with_description("Total number of connections handled since the instance started")
             .build()
             .with_attributes(attributes.clone());
         cx_total.add(0);
 
         let cx_active = meter
-            .i64_up_down_counter("cx_active")
+            .i64_up_down_counter("tng_cx_active")
             .with_description("The number of active connections")
             .build()
             .with_attributes(attributes.clone());
         cx_active.add(0);
 
         let cx_failed = meter
-            .u64_counter("cx_failed")
+            .u64_counter("tng_cx_failed")
             .with_description("Total number of failed connections since the instance started")
             .build()
             .with_attributes(attributes.clone());
         cx_failed.add(0);
 
         let tx_bytes_total = meter
-            .u64_counter("tx_bytes_total")
+            .u64_counter("tng_tx_bytes_total")
             .with_unit("bytes")
             .with_description("The total number of bytes sent")
             .build()
@@ -80,7 +80,7 @@ impl ServiceMetrics {
         tx_bytes_total.add(0);
 
         let rx_bytes_total = meter
-            .u64_counter("rx_bytes_total")
+            .u64_counter("tng_rx_bytes_total")
             .with_unit("bytes")
             .with_description("The total number of bytes received")
             .build()

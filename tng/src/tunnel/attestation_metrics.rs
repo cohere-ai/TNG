@@ -56,11 +56,11 @@ impl AttestationMetrics {
     pub(crate) fn new(meter: &Meter, attributes: Arc<IndexMap<String, String>>) -> Self {
         Self {
             total: meter
-                .u64_counter("attestation_total")
+                .u64_counter("tng_attestation_total")
                 .with_description("Total number of remote attestation operations")
                 .build(),
             failed: meter
-                .u64_counter("attestation_failed")
+                .u64_counter("tng_attestation_failed")
                 .with_description("Total number of failed remote attestation operations")
                 .build(),
             attributes,
@@ -135,7 +135,7 @@ mod tests {
         let exporter: Arc<dyn SimpleMetricExporter + Send + Sync> =
             Arc::new(move |metrics: &[SimpleMetric]| {
                 for metric in metrics {
-                    if metric.name == "attestation_failed" {
+                    if metric.name == "tng_attestation_failed" {
                         let _ = sender.send((metric.value.as_u64(), metric.attributes.clone()));
                     }
                 }

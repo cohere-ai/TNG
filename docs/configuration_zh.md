@@ -1343,35 +1343,35 @@ TNG当前版本默认启用了将日志输出到标准输出的能力，用户�
     </tr>
     <tr>
         <td>实例</td>
-        <td><code>live</code></td>
+        <td><code>tng_live</code></td>
         <td>Gauge</td>
         <td>无</td>
         <td>值为<code>1</code>表示TNG实例存活且健康</td>
     </tr>
     <tr>
         <td rowspan="6">ingress/egress</td>
-        <td><code>tx_bytes_total</code></td>
+        <td><code>tng_tx_bytes_total</code></td>
         <td>Counter</td>
         <td rowspan="6"><a href="#metric_labels">见下表</a></td>
         <td>发送的总字节数</td>
     </tr>
     <tr>
-        <td><code>rx_bytes_total</code></td>
+        <td><code>tng_rx_bytes_total</code></td>
         <td>Counter</td>
         <td>接收的总字节数</td>
     </tr>
     <tr>
-        <td><code>cx_active</code></td>
+        <td><code>tng_cx_active</code></td>
         <td>Gauge</td>
         <td>目前活跃连接数</td>
     </tr>
     <tr>
-        <td><code>cx_total</code></td>
+        <td><code>tng_cx_total</code></td>
         <td>Counter</td>
         <td>从实例启动到目前为止处理的总连接数</td>
     </tr>
     <tr>
-        <td><code>cx_failed</code></td>
+        <td><code>tng_cx_failed</code></td>
         <td>Counter</td>
         <td>从实例启动到目前为止失败的总连接数</td>
     </tr>
