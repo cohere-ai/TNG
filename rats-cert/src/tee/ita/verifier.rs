@@ -31,7 +31,6 @@ pub struct ItaVerifier {
 
 impl ItaVerifier {
     pub fn new(ita_jwks_base_addr: &str, policy_ids: &[String]) -> Result<Self> {
-        crate::install_jwt_crypto_provider();
         Ok(Self {
             jwks_url: format!(
                 "{}{}",
@@ -353,7 +352,6 @@ mod tests {
         let pem = private_key
             .to_pkcs8_pem(rsa::pkcs8::LineEnding::LF)
             .unwrap();
-        crate::install_jwt_crypto_provider();
         let encoding_key = jsonwebtoken::EncodingKey::from_rsa_pem(pem.as_bytes()).unwrap();
         let mut header = jsonwebtoken::Header::new(Algorithm::PS384);
         header.kid = Some(kid.to_string());

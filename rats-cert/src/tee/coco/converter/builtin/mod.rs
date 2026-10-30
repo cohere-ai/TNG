@@ -79,8 +79,6 @@ impl CocoBuiltinConverter {
 
         let storage_provider = KvStorageProvider::new(config.storage_backend.clone());
 
-        crate::install_jwt_crypto_provider();
-
         let mut attestation_service = Box::new(
             AttestationService::new(config, storage_provider)
                 .await

@@ -153,7 +153,6 @@ fn new_http_client() -> reqwest::Client {
 
 impl JwkAttestationTokenVerifier {
     pub async fn new(config: &AttestationTokenVerifierConfig) -> anyhow::Result<Self> {
-        crate::install_jwt_crypto_provider();
         let client = new_http_client();
 
         let mut trusted_jwk_sets = jwk::JwkSet { keys: Vec::new() };

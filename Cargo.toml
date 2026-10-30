@@ -75,7 +75,8 @@ js-sys = "0.3.77"
 # Same rev as `attestation-service`: the AS takes an `Arc<dyn StorageProvider>` it does not
 # construct itself, and does not re-export this crate.
 key-value-storage = {git = "https://github.com/cohere-ai/trustee.git", rev = "5654fa699816ba847bb66f18090e4cf460c81a86", default-features = false}
-jsonwebtoken = {version = "10.3", default-features = false, features = ["rust_crypto"]}
+# The crypto backend is chosen per target in rats-cert.
+jsonwebtoken = {version = "10.3", default-features = false}
 # `std` is off deliberately: it pulls `ear`, which drags in openssl and jsonwebtoken/aws-lc-rs.
 # Only `Tee` is used here, and it is available without it.
 kbs-types = {version = "0.18", default-features = false, features = ["alloc"]}
