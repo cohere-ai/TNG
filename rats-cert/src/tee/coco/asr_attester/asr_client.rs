@@ -1,4 +1,4 @@
-use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use reqwest::Client;
 
@@ -18,8 +18,10 @@ struct AsrInfoResponse {
 /// ttrpc, enabling TNG instances running in containers (without direct access
 /// to the AA Unix socket) to collect attestation evidence through the ASR proxy.
 ///
-/// Conforms to the ASR interface defined in
-/// <https://github.com/cohere-ai/guest-components/pull/2>.
+/// Conforms to the upstream confidential-containers/guest-components ASR
+/// interface (v0.21.0+): `GET /aa/evidence` and `GET /aa/additional-evidence`
+/// take `runtime_data` as URL-safe base64 without padding when
+/// `encoding=base64`.
 pub(crate) struct AsrClient {
     http: Client,
     base_url: String,
@@ -35,7 +37,7 @@ impl AsrClient {
 
     /// Request a TEE evidence quote from the ASR with the given runtime_data_hash bytes.
     pub async fn get_evidence(&self, runtime_data_hash_value: Vec<u8>) -> Result<Vec<u8>> {
-        let runtime_data_b64 = BASE64.encode(&runtime_data_hash_value);
+        let runtime_data_b64 = URL_SAFE_NO_PAD.encode(&runtime_data_hash_value);
         let url = format!("{}/aa/evidence", self.base_url);
 
         let resp = self
@@ -113,8 +115,8 @@ impl AsrClient {
         &self,
         runtime_data_hash_value: Vec<u8>,
     ) -> Option<Vec<u8>> {
-        let runtime_data_b64 = BASE64.encode(&runtime_data_hash_value);
-        let url = format!("{}/aa/additional_evidence", self.base_url);
+        let runtime_data_b64 = URL_SAFE_NO_PAD.encode(&runtime_data_hash_value);
+        let url = format!("{}/aa/additional-evidence", self.base_url);
 
         let resp = match self
             .http
@@ -140,7 +142,7 @@ impl AsrClient {
         if !resp.status().is_success() {
             tracing::warn!(
                 status = %resp.status(),
-                "ASR additional_evidence returned non-success, proceeding without additional evidence"
+                "ASR additional-evidence returned non-success, proceeding without additional evidence"
             );
             return None;
         }
@@ -230,7 +232,7 @@ mod tests {
         let server = MockServer::start().await;
 
         Mock::given(method("GET"))
-            .and(path("/aa/additional_evidence"))
+            .and(path("/aa/additional-evidence"))
             .respond_with(ResponseTemplate::new(404))
             .expect(1)
             .mount(&server)
@@ -246,7 +248,7 @@ mod tests {
         let expected = b"gpu-evidence-blob";
 
         Mock::given(method("GET"))
-            .and(path("/aa/additional_evidence"))
+            .and(path("/aa/additional-evidence"))
             .respond_with(ResponseTemplate::new(200).set_body_bytes(expected.to_vec()))
             .expect(1)
             .mount(&server)
