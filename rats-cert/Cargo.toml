@@ -54,11 +54,16 @@ x509-cert = {workspace = true, optional = true}
 zeroize = {workspace = true}
 
 [target.'cfg(not(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown")))'.dependencies]
+# Exactly one backend per target: jsonwebtoken panics when both are compiled in and no provider
+# is installed. The builtin AS (via Trustee and `ear`) already enables aws-lc on native.
+jsonwebtoken = {workspace = true, features = ["aws_lc_rs"]}
 time = {workspace = true, features = ["std"]}
 tokio = {workspace = true, default-features = true, features = ["fs"]}
 tonic = {workspace = true, default-features = false, features = ["codegen", "channel"], optional = true}
 
 [target.'cfg(all(target_arch = "wasm32", target_vendor = "unknown", target_os = "unknown"))'.dependencies]
+# aws-lc is C and does not build for the browser.
+jsonwebtoken = {workspace = true, features = ["rust_crypto"]}
 time = {workspace = true, features = ["std", "wasm-bindgen"]}
 tokio = {workspace = true, default-features = false}
 tokio_with_wasm = {workspace = true}

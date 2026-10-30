@@ -142,7 +142,7 @@ impl TngResponse {
         let rt = self.rt.clone();
         let timeout = self.read_timeout();
 
-        let data = py.allow_threads(|| {
+        let data = py.detach(|| {
             rt.block_on(async {
                 let mut buf = Vec::new();
                 while let Some(chunk) = recv_with_timeout(&rx, timeout).await? {
@@ -169,7 +169,7 @@ impl TngResponse {
         let rt = self.rt.clone();
         let timeout = self.read_timeout();
 
-        let result = py.allow_threads(|| rt.block_on(recv_with_timeout(&rx, timeout)))?;
+        let result = py.detach(|| rt.block_on(recv_with_timeout(&rx, timeout)))?;
 
         match result {
             Some(Ok(data)) => Ok(Some(PyBytes::new(py, &data))),
@@ -205,7 +205,7 @@ impl TngResponse {
         let rx = self.body_rx.clone();
         let rt = self.rt.clone();
 
-        py.allow_threads(|| {
+        py.detach(|| {
             rt.block_on(async {
                 if let Some(h) = handle.lock().await.take() {
                     h.abort();

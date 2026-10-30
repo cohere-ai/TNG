@@ -55,8 +55,7 @@ impl CocoBuiltinVerifier {
     /// Rejects any token not signed by the converter's own key.
     ///
     /// Compared as raw JSON, which is exact rather than approximate: the service writes the very
-    /// key it publishes into each header it signs. Parsing into a `Jwk` would not help anyway,
-    /// since the service's `jsonwebtoken` is not the one this crate reads headers with.
+    /// key it publishes into each header it signs.
     fn check_signer(&self, token: &str) -> Result<()> {
         let header = token
             .split('.')

@@ -35,6 +35,7 @@ pub use crate::tunnel::utils::tokio::TokioIo;
 mod tests {
 
     use std::future::Future;
+    use std::io::IsTerminal;
 
     use anyhow::Result;
     use once_cell::sync::OnceCell;
@@ -73,7 +74,7 @@ mod tests {
             )
             .with(
                 tracing_subscriber::fmt::layer()
-                    .with_ansi(atty::is(atty::Stream::Stdout))
+                    .with_ansi(std::io::stdout().is_terminal())
                     .with_filter(
                         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(
                             |_| "info,tokio_graceful=off,rats_cert=debug,tng=debug".into(),

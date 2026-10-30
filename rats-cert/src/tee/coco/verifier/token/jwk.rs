@@ -490,10 +490,7 @@ mod tests {
         "{\"keys\":[{\"kty\":\"oct\",\"alg\":\"HS256\",\"kid\":\"coco123\",\"k\":\"foobar\"}]}",
         false
     )]
-    #[case(
-        "{\"keys\":[{\"kty\":\"oct\",\"alg\":\"COCO42\",\"kid\":\"coco123\",\"k\":\"foobar\"}]}",
-        true
-    )]
+    #[case("{\"keys\":[{\"kty\":\"oct\",\"kid\":\"coco123\"", true)]
     #[tokio::test]
     async fn test_source_reads(#[case] json: &str, #[case] expect_error: bool) {
         let client = reqwest::Client::new();
@@ -511,5 +508,40 @@ mod tests {
             expect_error,
             get_jwks_from_file_or_url(&client, &p).await.is_err()
         )
+    }
+
+    /// jsonwebtoken 10 loads JWKs with an unknown `alg`, so the rejection must happen in `verify`.
+    #[rstest]
+    #[case("HS256", true)]
+    #[case("COCO42", false)]
+    #[tokio::test]
+    async fn test_verify_jwk_alg(#[case] alg: &str, #[case] expect_ok: bool) {
+        let tmp_dir = tempfile::tempdir().expect("to get tmpdir");
+        let jwks_file = tmp_dir.path().join("test.jwks");
+        let jwks = serde_json::json!({
+            "keys": [{"kty": "oct", "alg": alg, "kid": "coco123", "k": "Zm9vYmFy"}]
+        });
+        tokio::fs::write(&jwks_file, jwks.to_string())
+            .await
+            .expect("to get testdata written to tmpdir");
+
+        let config = super::super::AttestationTokenVerifierConfig {
+            trusted_jwk_sets: vec![format!("file://{}", jwks_file.display())],
+            ..Default::default()
+        };
+        let verifier = super::JwkAttestationTokenVerifier::new(&config)
+            .await
+            .expect("to load the JWKS");
+
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+        header.kid = Some("coco123".to_owned());
+        let token = jsonwebtoken::encode(
+            &header,
+            &serde_json::json!({"exp": 9999999999u64}),
+            &jsonwebtoken::EncodingKey::from_secret(b"foobar"),
+        )
+        .expect("to sign the token");
+
+        assert_eq!(expect_ok, verifier.verify(token).await.is_ok());
     }
 }
