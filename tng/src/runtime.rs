@@ -286,7 +286,7 @@ impl TngRuntime {
 
         let meter = self.meter_provider.meter("tng");
         let live = meter
-            .u64_gauge("live")
+            .u64_gauge("tng_live")
             .with_description("Indicates the server is alive or not")
             .build();
         live.record(0, &[]);

@@ -1437,35 +1437,35 @@ In TNG, we provide the following Metrics:
     </tr>
     <tr>
         <td>Instance</td>
-        <td><code>live</code></td>
+        <td><code>tng_live</code></td>
         <td>Gauge</td>
         <td>None</td>
         <td><code>1</code> to indicates the server is alive, or <code>0</code> otherwise</td>
     </tr>
     <tr>
         <td rowspan="6">ingress/egress</td>
-        <td><code>tx_bytes_total</code></td>
+        <td><code>tng_tx_bytes_total</code></td>
         <td>Counter</td>
         <td rowspan="6"><a href="#metric_labels">See below table</a></td>
         <td>The total number of bytes sent</td>
     </tr>
     <tr>
-        <td><code>rx_bytes_total</code></td>
+        <td><code>tng_rx_bytes_total</code></td>
         <td>Counter</td>
         <td>The total number of bytes received</td>
     </tr>
     <tr>
-        <td><code>cx_active</code></td>
+        <td><code>tng_cx_active</code></td>
         <td>Gauge</td>
         <td>The number of active connections</td>
     </tr>
     <tr>
-        <td><code>cx_total</code></td>
+        <td><code>tng_cx_total</code></td>
         <td>Counter</td>
         <td>Total number of connections handled since the instance started</td>
     </tr>
     <tr>
-        <td><code>cx_failed</code></td>
+        <td><code>tng_cx_failed</code></td>
         <td>Counter</td>
         <td>Total number of failed connections since the instance started</td>
     </tr>
