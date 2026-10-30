@@ -126,7 +126,7 @@ impl OhttpServerApi {
         );
 
         // Forward the request to the upstream server
-        let response = context.forward_request(request, None).await?;
+        let response = context.forward_request(request).await?;
 
         tracing::debug!(
             status = ?response.status(),
