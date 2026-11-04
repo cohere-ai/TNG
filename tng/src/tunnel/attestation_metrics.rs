@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use opentelemetry::{
-    metrics::{Counter, Meter, MeterProvider},
+    metrics::{Counter, Gauge, Meter, MeterProvider},
     KeyValue,
 };
 
@@ -44,6 +44,7 @@ impl AttestationProtocol {
 pub struct AttestationMetrics {
     total: Counter<u64>,
     failed: Counter<u64>,
+    startup_failed: Gauge<u64>,
     attributes: Arc<IndexMap<String, String>>,
 }
 
@@ -63,6 +64,10 @@ impl AttestationMetrics {
                 .u64_counter("tng_attestation_failed")
                 .with_description("Total number of failed remote attestation operations")
                 .build(),
+            startup_failed: meter
+                .u64_gauge("tng_startup_attestation_failed")
+                .with_description("Startup attestation self-check failed (1) or passed (0)")
+                .build(),
             attributes,
         }
     }
@@ -78,6 +83,16 @@ impl AttestationMetrics {
             protocol,
             succeeded: false,
         }
+    }
+
+    /// Record only a completed self-check, so a restart does not clear an earlier failure.
+    pub fn record_startup_result(&self, success: bool) {
+        let attributes = self
+            .attributes
+            .iter()
+            .map(|(key, value)| KeyValue::new(key.clone(), value.clone()))
+            .collect::<Vec<_>>();
+        self.startup_failed.record(u64::from(!success), &attributes);
     }
 
     pub fn record(
@@ -126,7 +141,7 @@ mod tests {
     use super::*;
     use crate::observability::metric::{
         instance::MetricExporterInstance,
-        simple_exporter::{SimpleMetric, SimpleMetricExporter},
+        simple_exporter::{SimpleMetric, SimpleMetricExporter, ValueType},
     };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -162,5 +177,42 @@ mod tests {
         assert_eq!(attributes.get("operation"), Some(&"verify".to_owned()));
         assert_eq!(attributes.get("protocol"), Some(&"ohttp".to_owned()));
         provider.shutdown().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn exports_startup_attestation_result_on_shutdown() {
+        for success in [false, false, true] {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let exporter: Arc<dyn SimpleMetricExporter + Send + Sync> =
+                Arc::new(move |metrics: &[SimpleMetric]| {
+                    for metric in metrics {
+                        if metric.name == "tng_startup_attestation_failed" {
+                            let _ = sender.send((
+                                metric.value.as_u64(),
+                                metric.value_type,
+                                metric.attributes.clone(),
+                            ));
+                        }
+                    }
+                    Ok(())
+                });
+            // Export only on shutdown, without an earlier zero sample.
+            let provider = MetricExporterInstance::Simple(3600, exporter).into_sdk_meter_provider();
+            let metrics = AttestationMetrics::new(
+                &provider.meter("tng"),
+                Arc::new(IndexMap::from([("egress_id".to_owned(), "0".to_owned())])),
+            );
+            metrics.record_startup_result(success);
+            drop(metrics);
+            drop(provider);
+
+            let (value, value_type, attributes) =
+                receiver.try_recv().expect("startup gauge was not exported");
+            assert_eq!(value, Some(u64::from(!success)));
+            assert_eq!(value_type, ValueType::Gauge);
+            assert_eq!(attributes.get("egress_id"), Some(&"0".to_owned()));
+            assert!(!attributes.contains_key("operation"));
+            assert!(!attributes.contains_key("protocol"));
+        }
     }
 }
