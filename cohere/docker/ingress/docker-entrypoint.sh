@@ -57,6 +57,26 @@ if [ -n "$TUNNEL_ONLY_FORWARD_HEADERS" ]; then
     mv "$tmp" "$CONFIG"
 fi
 
+if [ -n "$CONTROL_PORT" ]; then
+    case "$CONTROL_PORT" in
+        ''|*[!0-9]*)
+            echo "ERROR: CONTROL_PORT must be a port number, got \"$CONTROL_PORT\"" >&2
+            exit 1
+            ;;
+    esac
+
+    tmp=$(mktemp)
+    jq --argjson port "$CONTROL_PORT" '
+        .control_interface = {
+            "restful": {
+                "host": "0.0.0.0",
+                "port": $port
+            }
+        }
+    ' "$CONFIG" > "$tmp"
+    mv "$tmp" "$CONFIG"
+fi
+
 if [ -n "$TNG_METRIC_OTLP_ENDPOINT" ]; then
     case "$TNG_METRIC_OTLP_ENDPOINT" in
         http://127.0.0.1:*|http://opentelemetry-collector.opentelemetry.svc.cluster.local:4317|https://*)

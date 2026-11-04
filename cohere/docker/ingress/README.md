@@ -18,4 +18,5 @@ docker run -e TARGET_URL=https://egress.example.com ghcr.io/cohere-ai/tng-ingres
 | `IN_HOST` | No | `0.0.0.0` | Listen address for the ingress proxy. |
 | `IN_PORT` | No | `18080` | Listen port for the ingress proxy. |
 | `POLICY_IDS` | No | `cbeedffa-e224-4664-b6b4-573fcd4133d3` | Comma-separated ITA attestation policy IDs. Replaces `policy_ids` on the ITA verifier only. |
+| `CONTROL_PORT` | No | — | Port for the REST control interface. When set, the ingress serves `GET /livez` and `GET /readyz` on it, which report process liveness and readiness. Unset leaves the control interface disabled. |
 | `TUNNEL_ONLY_FORWARD_HEADERS` | No | — | Comma-separated header names added to `forward_headers` as `tunnel_only` entries, for per-request values such as `traceparent,tracestate`. They are sent unencrypted on tunnel requests only. Unset leaves `forward_headers` unchanged. |
