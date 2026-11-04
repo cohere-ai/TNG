@@ -168,18 +168,23 @@ impl RaContext {
         let Self::AttestAndVerify { attest, verify } = self else {
             bail!("self_check requires both attest and verify");
         };
-        // Counted like a peer's verify, so a node that fails its own policy and exits shows up.
+        // Keep the operation counter, but export startup state as a gauge as well: a counter
+        // born at 1 on every restart never increases and GMP stores its first value as zero.
         let attempt = verify
             .attestation_metrics()
             .start(AttestationOperation::Verify, AttestationProtocol::Ohttp);
         let (prepared, _) = attest.prepare(self_check_claims).await;
-        self_check(
+        let result = self_check(
             attest.as_ref(),
             &prepared,
             &verify.proposers(),
             &verify.verifiers(),
         )
-        .await?;
+        .await;
+        verify
+            .attestation_metrics()
+            .record_startup_result(result.is_ok());
+        result?;
         attempt.mark_succeeded();
         tracing::info!("Self-attestation passed");
         Ok(())
@@ -808,6 +813,85 @@ mod tests {
     mod unix_tests {
         use super::*;
         use crate::tunnel::utils::maybe_cached::RefreshStrategy;
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn failed_passport_self_check_exports_startup_gauge_on_drop() {
+            use crate::config::ra::ItaVerifierArgs;
+            use crate::observability::metric::{
+                instance::MetricExporterInstance,
+                simple_exporter::{SimpleMetric, SimpleMetricExporter},
+            };
+            use axum::{http::StatusCode, Router};
+            use opentelemetry::metrics::MeterProvider as _;
+            use rats_cert::tee::ita::{ItaAsrAttester, ItaConverter};
+
+            // Fail nonce acquisition locally, so passport preparation returns no token, just as
+            // it does on a policy-matching failure. No real ITA, AA, or workload is involved.
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let app = Router::new().fallback(|| async { StatusCode::SERVICE_UNAVAILABLE });
+            let server = runtime().spawn_unsupervised_task_current_span(async move {
+                axum::serve(listener, app).await.unwrap()
+            });
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let exporter: Arc<dyn SimpleMetricExporter + Send + Sync> =
+                Arc::new(move |metrics: &[SimpleMetric]| {
+                    for metric in metrics {
+                        if metric.name == "tng_startup_attestation_failed" {
+                            sender.send(metric.value.as_u64()).unwrap();
+                        }
+                    }
+                    Ok(())
+                });
+            let provider = MetricExporterInstance::Simple(3600, exporter).into_sdk_meter_provider();
+            let metrics = AttestationMetrics::new(
+                &provider.meter("tng"),
+                Arc::new(indexmap::IndexMap::new()),
+            );
+            let verify = VerifyContextSet::new(
+                &[VerifyArgs::Passport {
+                    verifier: VerifierArgs::Ita(ItaVerifierArgs {
+                        ita_jwks_addr: endpoint.clone(),
+                        policy_ids: vec![],
+                    }),
+                }],
+                metrics.clone(),
+                &runtime(),
+            )
+            .await
+            .unwrap();
+            let ctx = RaContext::AttestAndVerify {
+                attest: Arc::new(AttestContext::Passport {
+                    attester: TngAttester::ItaAsr(ItaAsrAttester::new(&endpoint).unwrap()),
+                    converter: TngConverter::Ita(
+                        ItaConverter::new("test-key", &endpoint, &[])
+                            .unwrap()
+                            .with_max_retries(0),
+                    ),
+                    refresh_strategy: RefreshStrategy::Always,
+                    max_retries: 0,
+                    metrics,
+                    mint_backoff: MintBackoff::default(),
+                }),
+                verify: Arc::new(verify),
+            };
+            let error = ctx.self_check().await.unwrap_err();
+            assert!(
+                error.to_string().contains("attestation unavailable"),
+                "{error}"
+            );
+            assert!(
+                receiver.try_recv().is_err(),
+                "no periodic export should have run"
+            );
+            drop(ctx);
+            drop(provider);
+            assert_eq!(
+                receiver.try_recv().expect("startup failure not exported"),
+                Some(1)
+            );
+            server.abort();
+        }
 
         // Helper functions for Unix tests
 

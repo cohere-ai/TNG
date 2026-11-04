@@ -1469,6 +1469,13 @@ In TNG, we provide the following Metrics:
         <td>Counter</td>
         <td>Total number of failed connections since the instance started</td>
     </tr>
+    <tr>
+        <td>ingress/egress</td>
+        <td><code>tng_startup_attestation_failed</code></td>
+        <td>Gauge</td>
+        <td><a href="#metric_labels">Service labels</a></td>
+        <td>Startup attestation self-check failed (1) or passed (0). Not recorded when the check is disabled.</td>
+    </tr>
 </table>
 
 <span id="metric_labels">Export labels for ingress/egress</span> are as follows:
