@@ -1,6 +1,14 @@
-use std::{io, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    io,
+    marker::PhantomData,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 
-use anyhow::Context;
+use anyhow::Context as _;
 use async_stream::stream;
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt as _};
 use peekable::future::AsyncPeekable;
@@ -224,17 +232,63 @@ pub struct RatsTlsStream<R: Runtime> {
     phantom: PhantomData<R>,
 }
 
+/// Writer returned by [`RatsTlsStream::split`].
+///
+/// Memberlist closes the writer after each push/pull. The peer may already
+/// have closed its side, so make close best-effort instead of surfacing a
+/// write error that memberlist logs as "failed to close connection".
+#[pin_project::pin_project]
+pub struct RatsTlsWriter {
+    #[pin]
+    inner: tokio_util::compat::Compat<tokio::io::WriteHalf<Box<dyn CommonStreamTrait + Sync>>>,
+    peer_addr: SocketAddr,
+}
+
+impl futures::AsyncWrite for RatsTlsWriter {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        self.project().inner.poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.project().inner.poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let this = self.project();
+        match this.inner.poll_close(cx) {
+            Poll::Ready(Err(err)) => {
+                tracing::debug!(
+                    peer = %this.peer_addr,
+                    ?err,
+                    "failed to close rats-tls serf stream; peer likely already closed"
+                );
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
+    }
+}
+
 impl<R: Runtime> serf::net::Connection for RatsTlsStream<R> {
     type Reader = AsyncPeekable<
         tokio_util::compat::Compat<tokio::io::ReadHalf<Box<dyn CommonStreamTrait + Sync>>>,
     >;
 
-    type Writer =
-        tokio_util::compat::Compat<tokio::io::WriteHalf<Box<dyn CommonStreamTrait + Sync>>>;
+    type Writer = RatsTlsWriter;
 
     #[inline]
     fn split(self) -> (Self::Reader, Self::Writer) {
-        (self.reader, self.writer)
+        (
+            self.reader,
+            RatsTlsWriter {
+                inner: self.writer,
+                peer_addr: self.peer_addr,
+            },
+        )
     }
 
     async fn close(&mut self) -> std::io::Result<()> {
