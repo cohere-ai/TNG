@@ -181,13 +181,24 @@ impl<R: Runtime> Listener for RatsTlsListener<R> {
     type Stream = RatsTlsStream<R>;
 
     async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)> {
-        self.incoming
-            .lock()
-            .await
-            .next()
-            .await
-            .context("Failed to get next rats-tls serf stream")
-            .map_err(io::Error::other)?
+        loop {
+            let next = self.incoming.lock().await.next().await;
+            match next {
+                Some(Ok(stream)) => return Ok(stream),
+                Some(Err(err)) => {
+                    // Memberlist opens short-lived TCP connections for pings
+                    // and push/pull. Those can be closed before the RATS-TLS
+                    // handshake completes, which is expected and should not be
+                    // surfaced as a listener error that disturbs memberlist's
+                    // probe scheduling.
+                    tracing::debug!(?err, "skipping rats-tls serf stream that failed to decode");
+                    continue;
+                }
+                None => {
+                    return Err(io::Error::other("rats-tls serf listener stream ended"));
+                }
+            }
+        }
     }
 
     async fn shutdown(&self) -> io::Result<()> {
@@ -227,7 +238,22 @@ impl<R: Runtime> serf::net::Connection for RatsTlsStream<R> {
     }
 
     async fn close(&mut self) -> std::io::Result<()> {
-        AsyncWriteExt::close(&mut self.writer).await
+        // Closing is best-effort: memberlist uses short-lived TCP connections
+        // and the peer may already have closed its side. Returning an error
+        // here makes memberlist log "failed to close connection" and can
+        // delay its probe processing, so log at debug level and let the
+        // caller drop the stream.
+        match AsyncWriteExt::close(&mut self.writer).await {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                tracing::debug!(
+                    peer = %self.peer_addr,
+                    ?err,
+                    "failed to close rats-tls serf stream; peer likely already closed"
+                );
+                Ok(())
+            }
+        }
     }
 
     async fn write_all(&mut self, payload: &[u8]) -> std::io::Result<()> {
