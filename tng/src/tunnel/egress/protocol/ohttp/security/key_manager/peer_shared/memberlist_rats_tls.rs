@@ -88,7 +88,10 @@ impl<R: Runtime> StreamLayer for RatsTls<R> {
             local_addr,
             peer_addr: addr,
             reader: AsyncPeekable::new(reader.compat()),
-            writer: writer.compat_write(),
+            writer: RatsTlsWriter {
+                inner: writer.compat_write(),
+                peer_addr: addr,
+            },
             phantom: Default::default(),
         })
     }
@@ -151,7 +154,10 @@ impl<R: Runtime> RatsTlsListener<R> {
                                         let (reader, writer) = tokio::io::split(stream);
                                         (
                                             RatsTlsStream::<R> {
-                                                writer: writer.compat_write(),
+                                                writer: RatsTlsWriter {
+                                                    inner: writer.compat_write(),
+                                                    peer_addr,
+                                                },
                                                 reader: AsyncPeekable::new(reader.compat()),
                                                 local_addr,
                                                 peer_addr,
@@ -189,24 +195,13 @@ impl<R: Runtime> Listener for RatsTlsListener<R> {
     type Stream = RatsTlsStream<R>;
 
     async fn accept(&self) -> io::Result<(Self::Stream, SocketAddr)> {
-        loop {
-            let next = self.incoming.lock().await.next().await;
-            match next {
-                Some(Ok(stream)) => return Ok(stream),
-                Some(Err(err)) => {
-                    // Memberlist opens short-lived TCP connections for pings
-                    // and push/pull. Those can be closed before the RATS-TLS
-                    // handshake completes, which is expected and should not be
-                    // surfaced as a listener error that disturbs memberlist's
-                    // probe scheduling.
-                    tracing::debug!(?err, "skipping rats-tls serf stream that failed to decode");
-                    continue;
-                }
-                None => {
-                    return Err(io::Error::other("rats-tls serf listener stream ended"));
-                }
-            }
-        }
+        self.incoming
+            .lock()
+            .await
+            .next()
+            .await
+            .context("Failed to get next rats-tls serf stream")
+            .map_err(io::Error::other)?
     }
 
     async fn shutdown(&self) -> io::Result<()> {
@@ -222,7 +217,7 @@ impl<R: Runtime> Listener for RatsTlsListener<R> {
 #[pin_project::pin_project]
 pub struct RatsTlsStream<R: Runtime> {
     #[pin]
-    writer: tokio_util::compat::Compat<tokio::io::WriteHalf<Box<dyn CommonStreamTrait + Sync>>>,
+    writer: RatsTlsWriter,
     #[pin]
     reader: AsyncPeekable<
         tokio_util::compat::Compat<tokio::io::ReadHalf<Box<dyn CommonStreamTrait + Sync>>>,
@@ -234,9 +229,9 @@ pub struct RatsTlsStream<R: Runtime> {
 
 /// Writer returned by [`RatsTlsStream::split`].
 ///
-/// Memberlist closes the writer after each push/pull. The peer may already
-/// have closed its side, so make close best-effort instead of surfacing a
-/// write error that memberlist logs as "failed to close connection".
+/// Memberlist closes each logical HTTP/2 stream after push/pull. Shutdown
+/// can fail after the peer has finished the stream, so keep this cleanup
+/// best-effort. Writes and flushes still propagate errors.
 #[pin_project::pin_project]
 pub struct RatsTlsWriter {
     #[pin]
@@ -264,7 +259,7 @@ impl futures::AsyncWrite for RatsTlsWriter {
                 tracing::debug!(
                     peer = %this.peer_addr,
                     ?err,
-                    "failed to close rats-tls serf stream; peer likely already closed"
+                    "failed to close rats-tls serf stream during cleanup"
                 );
                 Poll::Ready(Ok(()))
             }
@@ -282,32 +277,11 @@ impl<R: Runtime> serf::net::Connection for RatsTlsStream<R> {
 
     #[inline]
     fn split(self) -> (Self::Reader, Self::Writer) {
-        (
-            self.reader,
-            RatsTlsWriter {
-                inner: self.writer,
-                peer_addr: self.peer_addr,
-            },
-        )
+        (self.reader, self.writer)
     }
 
     async fn close(&mut self) -> std::io::Result<()> {
-        // Closing is best-effort: memberlist uses short-lived TCP connections
-        // and the peer may already have closed its side. Returning an error
-        // here makes memberlist log "failed to close connection" and can
-        // delay its probe processing, so log at debug level and let the
-        // caller drop the stream.
-        match AsyncWriteExt::close(&mut self.writer).await {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                tracing::debug!(
-                    peer = %self.peer_addr,
-                    ?err,
-                    "failed to close rats-tls serf stream; peer likely already closed"
-                );
-                Ok(())
-            }
-        }
+        AsyncWriteExt::close(&mut self.writer).await
     }
 
     async fn write_all(&mut self, payload: &[u8]) -> std::io::Result<()> {

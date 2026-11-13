@@ -108,14 +108,7 @@ impl PeerSharedKeyManager {
         inner: Arc<PeerSharedKeyManagerInner>,
         attestation_metrics: AttestationMetrics,
     ) -> Result<(Arc<SerfGracefulShutdown>, String), TngError> {
-        // The peer-shared transport runs across cloud/VPN boundaries and
-        // shares its runtime with the RATS-TLS stream layer. The default LAN
-        // probe timeout (1s) is tight enough that a delayed UDP ack can
-        // produce spurious "unreliable probes failed" warnings. Keep the
-        // LAN-style failure detection but give the probe ack more headroom.
         let memberlist_opts = MemberlistOptions::lan()
-            .with_probe_interval(Duration::from_secs(1))
-            .with_probe_timeout(Duration::from_secs(3))
             .with_push_pull_interval(Duration::from_secs(peer_shared.push_pull_interval));
         let opts = Options::new().with_memberlist_options(memberlist_opts);
         let node_id_str = Uuid::new_v4().to_string();
