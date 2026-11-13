@@ -1,7 +1,7 @@
 # TNG
-[![Test](/../../actions/workflows/co-test.yml/badge.svg)](/../../actions/workflows/co-test.yml)
-[![Docker](/../../actions/workflows/co-build-docker.yml/badge.svg)](/../../actions/workflows/co-build-docker.yml)
-[![Python](/../../actions/workflows/co-build-python.yml/badge.svg)](/../../actions/workflows/co-build-python.yml)
+[![Test](https://github.com/cohere-ai/TNG/actions/workflows/co-test.yml/badge.svg?branch=cohere)](https://github.com/cohere-ai/TNG/actions/workflows/co-test.yml)
+[![Docker](https://github.com/cohere-ai/TNG/actions/workflows/co-build-docker.yml/badge.svg?branch=cohere)](https://github.com/cohere-ai/TNG/actions/workflows/co-build-docker.yml)
+[![Python](https://github.com/cohere-ai/TNG/actions/workflows/co-build-python.yml/badge.svg?branch=cohere)](https://github.com/cohere-ai/TNG/actions/workflows/co-build-python.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![rust version](https://img.shields.io/badge/rustc-1.95.0+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
 
@@ -58,7 +58,7 @@ If you want to understand more specific deployment methods and configuration exa
 
 ## Release Artifacts
 
-Each release (see the [Releases](/../../releases) page) publishes four container images and two Python packages, all built from the same commit. Every image and package carries a build provenance attestation, which you can check with `gh attestation verify <image or file> -R cohere-ai/TNG`.
+Each release (see the [Releases](https://github.com/cohere-ai/TNG/releases) page) publishes four container images and two Python packages, all built from the same commit. Every image and package carries a build provenance attestation, which you can check with `gh attestation verify <image or file> -R cohere-ai/TNG`.
 
 | Artifact | Description |
 | --- | --- |
