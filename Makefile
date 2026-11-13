@@ -33,8 +33,8 @@ install-wasm-build-dependencies:
 	if ! command -v wasm-pack >/dev/null; then \
 		cargo +nightly-2025-07-07 install wasm-pack --locked ; \
 	fi
-	if ! rustup component list --toolchain nightly-2025-07-07-x86_64-unknown-linux-gnu | grep rust-src | grep installed >/dev/null; then \
-		rustup component add rust-src --toolchain nightly-2025-07-07-x86_64-unknown-linux-gnu ; \
+	if ! rustup component list --toolchain nightly-2025-07-07 | grep rust-src | grep installed >/dev/null; then \
+		rustup component add rust-src --toolchain nightly-2025-07-07 ; \
 	fi
 
 .PHONY: wasm-build-release
@@ -48,12 +48,12 @@ wasm-build-debug: install-wasm-build-dependencies
 .PHONY: wasm-pack-release
 wasm-pack-release: wasm-build-release
 	wasm-pack pack ./tng-wasm
-	@echo 'Now you can install with "npm install <tar.gz path>"'
+	@echo 'Now you can install with "npm install <.tgz path>"'
 
 .PHONY: wasm-pack-debug
 wasm-pack-debug: wasm-build-debug
 	wasm-pack pack ./tng-wasm
-	@echo 'Now you can install with "npm install <tar.gz path>"'
+	@echo 'Now you can install with "npm install <.tgz path>"'
 
 .PHONY: wasm-unit-test
 wasm-unit-test: wasm-unit-test-chrome

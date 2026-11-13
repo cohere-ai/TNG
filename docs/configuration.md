@@ -464,7 +464,7 @@ Example:
 <a name="remote-attestation"></a>
 ## Remote Attestation
 
-Remote attestation is one of the core security mechanisms of trusted computing, used to verify the runtime integrity and trusted state of remote systems (such as virtual machines, containers, or edge devices). Through cryptographic means, a system (**Attester**) can generate "evidence" describing its hardware and software configuration, and another system (**Verifier**) can verify this evidence to ensure it comes from a legitimate, untampered trusted execution environment (TEE, such as Intel TDX, AMD SEV-SNP, HYGON CSV, etc.).
+Remote attestation is one of the core security mechanisms of trusted computing, used to verify the runtime integrity and trusted state of remote systems (such as virtual machines, containers, or edge devices). Through cryptographic means, a system (**Attester**) can generate "evidence" describing its hardware and software configuration, and another system (**Verifier**) can verify this evidence to ensure it comes from a legitimate, untampered trusted execution environment (TEE, such as Intel TDX, AMD SEV-SNP, etc.).
 
 In the TNG architecture, we have integrated a standardized remote attestation process that supports flexibly configuring TNG endpoints as either **Attester** or **Verifier** roles, thus achieving bidirectional trusted authentication and establishing secure communication links.
 

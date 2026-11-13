@@ -125,22 +125,20 @@ The integration tests create network namespaces and iptables rules, so the conta
 
 ### Skipped Tests
 
-[.github/test-skip-list.txt](../.github/test-skip-list.txt) lists tests CI skips, one per line, each with a comment saying why. CI passes each entry to `cargo test` as `--skip <name>`. To build the same flags:
-
-```sh
-SKIP_FLAGS=$(sed 's/#.*//' .github/test-skip-list.txt | xargs -n1 printf -- '--skip %s ')
-```
+[.github/test-skip-list.txt](../.github/test-skip-list.txt) lists tests CI skips, one per line, each with a comment saying why. CI passes each entry to `cargo test` as `--skip <name>`. The commands below build these flags inline.
 
 ### Unit Tests
 
 ```sh
-cargo test --workspace --bins --lib --features tng/coco-builtin-as-tdx -- --nocapture $SKIP_FLAGS
+cargo test --workspace --bins --lib --features tng/coco-builtin-as-tdx -- --nocapture \
+  $(sed 's/#.*//' .github/test-skip-list.txt | xargs -n1 printf -- '--skip %s ')
 ```
 
 ### Integration Tests
 
 ```sh
-cargo test --no-default-features --features on-source-code --package tng-testsuite -- --nocapture $SKIP_FLAGS
+cargo test --no-default-features --features on-source-code --package tng-testsuite -- --nocapture \
+  $(sed 's/#.*//' .github/test-skip-list.txt | xargs -n1 printf -- '--skip %s ')
 ```
 
 To run a single scenario, add `--test <name>`, for example `--test tcp_two_way_ra`.

@@ -48,7 +48,7 @@ graph LR
 
 - **Support for Multiple Encryption Protocols**: Provides support for protocols like RA-TLS for arbitrary TCP traffic and Oblivious HTTP (OHTTP) for HTTP message-level encryption, allowing various types of applications to uniformly access the remote attestation-based secure communication system.
 - **Zero Business Intrusiveness**: Through transparent proxy (netfilter) or application-layer proxy (HTTP proxy, Socks5, etc.), TNG avoids changing existing business code and deployment structures, handling plaintext traffic at the network layer into the tunnel with encryption and remote attestation.
-- **Various Deployment Forms**: We provide container images, Python and JavaScript SDKs, and the `tng` binary to flexibly choose deployment plans based on different business architectures, for example:
+- **Various Deployment Forms**: We provide container images, Python and JavaScript SDKs, and the `tng` binary (built from source) to flexibly choose deployment plans based on different business architectures, for example:
   - Running as a daemon in VMs or container instances in IaaS scenarios.
   - Providing transparent encryption for each Pod as a Sidecar container in Kubernetes / Service Mesh.
   - Making OHTTP-encrypted requests directly from Python applications via the `cohere-tng` and `conseel` packages, or from browsers via the JavaScript SDK.
@@ -71,7 +71,7 @@ Each release (see the [Releases](https://github.com/cohere-ai/TNG/releases) page
 
 Images are tagged with the release version (for example `1.6.0`) and `latest`. Builds from the `cohere` branch are also published as `cohere` and `sha-<commit>`.
 
-The egress images listen on port `18080` and forward decrypted traffic to `127.0.0.1:8080`. They collect evidence through an API Server Rest instance at `127.0.0.1:8006`. Their default configuration lives in [cohere/docker/egress/](cohere/docker/egress/). Mount your own at `/etc/tng/conf.json` to replace it, or adjust it with the `POLICY_IDS`, `PEERS` and `TNG_METRIC_OTLP_ENDPOINT` environment variables.
+The egress images listen on port `18080` and forward decrypted traffic to `127.0.0.1:8080`. They collect evidence through an API Server Rest instance at `127.0.0.1:8006`. Their default configuration lives in [cohere/docker/egress/](cohere/docker/egress/). Mount your own at `/etc/tng/conf.json` to replace it, or adjust it with the `PEERS` and `TNG_METRIC_OTLP_ENDPOINT` environment variables and, on `tng-ita` only, `POLICY_IDS` (comma-separated ITA policy IDs, replacing `policy_ids` on the ITA verifiers).
 
 ## Installation and Usage
 

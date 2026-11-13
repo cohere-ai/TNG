@@ -65,8 +65,8 @@ Add the following code to your HTML page to use the TNG SDK:
       await tng_init();
 
       // Configure attestation parameters
-      const asAddr = "http://127.0.0.1:9080/";
-      const policyIds = ["default"];
+      const as_addr = "http://127.0.0.1:9080/";
+      const policy_ids = ["default"];
 
       // Create a wrapped fetch function
       const attested_fetch = (input, init) => {
@@ -75,8 +75,8 @@ Add the following code to your HTML page to use the TNG SDK:
           verify: {
             model: "background_check",
             as_type: "restful",
-            as_addr: asAddr,
-            policy_ids: policyIds,
+            as_addr: as_addr,
+            policy_ids: policy_ids,
           },
         };
         return tng_fetch(input, init, tng_config);
