@@ -4,10 +4,6 @@ help:
 
 # The test targets expect their dependencies to be present already, as they are in
 # the test-runner image (.github/test-deps/Dockerfile.test-runner).
-.PHONY: run-test
-run-test:
-	./tng-testsuite/run-test.sh
-
 .PHONY: run-test-on-bin
 run-test-on-bin:
 	cargo test --no-default-features --features on-bin --package tng-testsuite --tests -- --nocapture
