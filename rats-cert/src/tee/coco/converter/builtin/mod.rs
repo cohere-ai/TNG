@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use attestation_service::config::Config;
 use attestation_service::ear_token::EarTokenConfiguration;
@@ -42,6 +43,9 @@ pub struct CocoBuiltinConverter {
     ///
     /// [`CommonCocoVerifier`]: crate::tee::coco::verifier::common::CommonCocoVerifier
     required_tee_classes: Vec<String>,
+
+    /// From when appraisals are refused, `None` for never.
+    pub(crate) policies_expire_at: Mutex<Option<Instant>>,
 }
 
 impl CocoBuiltinConverter {
@@ -91,7 +95,13 @@ impl CocoBuiltinConverter {
             attestation_service: tokio::sync::RwLock::new(attestation_service),
             policy_id: policy_id.to_owned(),
             required_tee_classes: required_tee_classes.to_owned(),
+            policies_expire_at: Mutex::new(None),
         })
+    }
+
+    /// Refuses appraisals from `at` on, until moved again; `None` never expires.
+    pub fn expire_policies_at(&self, at: Option<Instant>) {
+        *self.policies_expire_at.lock().unwrap() = at;
     }
 
     /// Replaces the installed policies under the same id, all classes under one lock so no
@@ -167,6 +177,15 @@ impl GenericConverter for CocoBuiltinConverter {
     type Nonce = CoCoNonce;
 
     async fn convert(&self, in_evidence: &Self::InEvidence) -> Result<Self::OutEvidence> {
+        if self
+            .policies_expire_at
+            .lock()
+            .unwrap()
+            .is_some_and(|at| Instant::now() >= at)
+        {
+            return Err(Error::CocoBuiltinAsPoliciesExpired);
+        }
+
         let runtime_data_hash_algorithm = Self::hash_algo_to_as(AttestationServiceHashAlgo::from(
             in_evidence.get_aa_runtime_data_hash_algo(),
         ));
@@ -380,6 +399,27 @@ mod tests {
             matches!(err, Error::CocoBuiltinAsPolicyInvalid { .. }),
             "got {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn expired_policies_refuse_appraisal() {
+        let converter = converter().await;
+        let evidence = CocoEvidence::new(
+            kbs_types::Tee::Sample,
+            b"{}".to_vec(),
+            None,
+            "{}".to_owned(),
+            crate::crypto::HashAlgo::Sha256,
+        )
+        .unwrap();
+        let expired = |result: Result<CocoAsToken>| {
+            matches!(result, Err(Error::CocoBuiltinAsPoliciesExpired))
+        };
+
+        converter.expire_policies_at(Some(Instant::now()));
+        assert!(expired(converter.convert(&evidence).await));
+        converter.expire_policies_at(None);
+        assert!(!expired(converter.convert(&evidence).await));
     }
 
     #[tokio::test]

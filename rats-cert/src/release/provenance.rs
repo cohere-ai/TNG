@@ -1,5 +1,5 @@
-//! Checks a policy release's Sigstore bundle offline, the way `gh attestation verify` does for a
-//! GitHub Actions signer.
+//! Checks published files against a Sigstore bundle offline, the way `gh attestation verify` does
+//! for a GitHub Actions signer.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -7,18 +7,19 @@ use std::sync::Arc;
 use anyhow::{bail, ensure, Context as _};
 use serde::{Deserialize, Serialize};
 use sigstore_trust_root::TrustedRoot;
-use sigstore_types::{Bundle, SignatureContent, Statement};
+use sigstore_types::{Artifact, Bundle, SignatureContent, Statement};
 use sigstore_verify::{crypto::sha256, IdentityMatcher, VerificationPolicy, Verifier};
 
 use crate::errors::*;
-use crate::tee::coco::converter::builtin::policy::{TeeClassPolicies, CPU_TEE_CLASS, TEE_CLASSES};
 
 const GITHUB_ACTIONS_ISSUER: &str = "https://token.actions.githubusercontent.com";
 
-/// The GitHub Actions workflow a release has to be signed by.
+/// The Sigstore bundle covering the files, and the GitHub Actions workflow it has to be signed by.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Provenance {
-    /// `owner/name` of the repository the release is built from
+    /// Location of the bundle, resolved like a file entry
+    pub bundle: String,
+    /// `owner/name` of the repository the files are built from
     pub repo: String,
     /// Path of the signing workflow in `repo`, e.g. `.github/workflows/release.yaml`
     pub signer_workflow: String,
@@ -34,44 +35,40 @@ pub struct Provenance {
     pub environment: Option<String>,
 }
 
-/// One policy file of a release, as downloaded.
+impl Provenance {
+    pub(super) fn problem(&self) -> Option<&'static str> {
+        let missing = [
+            &self.bundle,
+            &self.repo,
+            &self.signer_workflow,
+            &self.source_ref,
+            &self.predicate_type,
+        ]
+        .iter()
+        .any(|field| field.is_empty());
+        (missing || self.repo.split('/').count() != 2).then_some(
+            "'provenance' needs 'bundle', 'repo' as owner/name, 'signer_workflow', 'source_ref' and 'predicate_type'",
+        )
+    }
+}
+
+/// A downloaded file, named as a statement subject would name it.
 pub struct ReleaseFile<'a> {
-    pub tee_class: &'a str,
     pub name: &'a str,
     pub bytes: &'a [u8],
 }
 
-#[derive(Debug)]
-pub struct VerifiedRelease {
-    pub policies: TeeClassPolicies,
-    /// Earliest verified timestamp of the signature, in seconds since the Unix epoch.
-    pub signed_at: i64,
-}
-
-/// Identifies a release by its bundle, without verifying anything.
-pub fn bundle_digest(bundle_json: &[u8]) -> String {
-    sha256(bundle_json).to_hex()
-}
-
-/// Lists the policy files a release signs for `policy_id`, as `(tee_class, file name)`, without
-/// verifying anything. Only tells the caller what to download for [`verify_release`].
-pub fn policy_files(bundle_json: &[u8], policy_id: &str) -> Result<Vec<(String, String)>> {
-    parse(bundle_json)
-        .and_then(|(_, statement)| named_policies(&statement, policy_id))
-        .map_err(|e| Error::PolicyProvenanceFailed(Arc::new(e)))
-}
-
-/// Verifies every file against the bundle and returns them as policies. `files` must be exactly
-/// the ones [`policy_files`] lists.
-pub fn verify_release(
+/// Verifies the bundle's signer and that it covers every file, either as a subject with the file's
+/// name and digest, or as JSON equal to the statement's predicate. Returns the earliest verified
+/// signing time, in seconds since the Unix epoch.
+pub fn verify(
     trusted_root: &TrustedRoot,
     bundle_json: &[u8],
-    policy_id: &str,
     files: &[ReleaseFile<'_>],
     provenance: &Provenance,
-) -> Result<VerifiedRelease> {
-    verify(trusted_root, bundle_json, policy_id, files, provenance)
-        .map_err(|e| Error::PolicyProvenanceFailed(Arc::new(e)))
+) -> Result<i64> {
+    check(trusted_root, bundle_json, files, provenance)
+        .map_err(|e| Error::ProvenanceCheckFailed(Arc::new(e)))
 }
 
 fn parse(bundle_json: &[u8]) -> anyhow::Result<(Bundle, Statement)> {
@@ -83,43 +80,13 @@ fn parse(bundle_json: &[u8]) -> anyhow::Result<(Bundle, Statement)> {
     Ok((bundle, statement))
 }
 
-/// Policy files are named like the policy directory's, `{policy_id}_{tee_class}.rego`.
-fn named_policies(statement: &Statement, policy_id: &str) -> anyhow::Result<Vec<(String, String)>> {
-    let named: Vec<_> = TEE_CLASSES
-        .iter()
-        .map(|tee_class| {
-            (
-                tee_class.to_string(),
-                format!("{policy_id}_{tee_class}.rego"),
-            )
-        })
-        .filter(|(_, name)| statement.subject.iter().any(|s| &s.name == name))
-        .collect();
-    ensure!(
-        named
-            .iter()
-            .any(|(tee_class, _)| tee_class == CPU_TEE_CLASS),
-        "release has no {CPU_TEE_CLASS} policy for {policy_id:?}"
-    );
-    Ok(named)
-}
-
-fn verify(
+fn check(
     trusted_root: &TrustedRoot,
     bundle_json: &[u8],
-    policy_id: &str,
     files: &[ReleaseFile<'_>],
     provenance: &Provenance,
-) -> anyhow::Result<VerifiedRelease> {
+) -> anyhow::Result<i64> {
     let (bundle, statement) = parse(bundle_json)?;
-    // Otherwise whoever serves the files could leave out a class the release signed.
-    ensure!(
-        named_policies(&statement, policy_id)?
-            .iter()
-            .map(|(tee_class, name)| (tee_class.as_str(), name.as_str()))
-            .eq(files.iter().map(|f| (f.tee_class, f.name))),
-        "files do not match the release's policies"
-    );
     ensure!(
         statement.predicate_type == provenance.predicate_type,
         "unexpected predicate type {:?}",
@@ -134,60 +101,49 @@ fn verify(
         );
     }
 
-    let verifier = Verifier::new(trusted_root)?;
+    // The signature covers the statement's exact bytes, so it vouches for every subject and
+    // the predicate. `verify` also wants an artifact matching some subject; the first
+    // subject's listed digest satisfies that, and the loop below binds each file instead.
+    let any_subject_digest = statement
+        .subject
+        .iter()
+        .find_map(|s| s.digest.sha256)
+        .context("statement has no sha256 subject")?;
     let identity = format!(
         "https://github.com/{}/{}@{}",
         provenance.repo, provenance.signer_workflow, provenance.source_ref
     );
-    let sigstore_policy =
-        VerificationPolicy::new(IdentityMatcher::Uri(identity), GITHUB_ACTIONS_ISSUER);
+    let result = Verifier::new(trusted_root)?.verify(
+        Artifact::from_digest(any_subject_digest),
+        &bundle,
+        &VerificationPolicy::new(IdentityMatcher::Uri(identity), GITHUB_ACTIONS_ISSUER),
+    )?;
+    ensure!(
+        result.certificate_verified() && result.sct_verified() && result.tlog_verified(),
+        "certificate, SCT or transparency log not verified"
+    );
+    check_claims(
+        &result.certificate().context("no certificate")?.ci_claims,
+        provenance,
+    )?;
 
-    let mut policies = TeeClassPolicies::new();
-    let mut signed_at = None;
     for file in files {
-        let result = verifier.verify(file.bytes, &bundle, &sigstore_policy)?;
-        ensure!(
-            result.certificate_verified() && result.sct_verified() && result.tlog_verified(),
-            "certificate, SCT or transparency log not verified"
-        );
-        signed_at = Some(
-            result
-                .verified_timestamps()
-                .iter()
-                .min()
-                .context("no verified timestamp")?
-                .as_second(),
-        );
-        check_claims(
-            &result.certificate().context("no certificate")?.ci_claims,
-            provenance,
-        )?;
-
-        // The verifier matches the digest against any subject, so bind the file to its own name.
-        let [subject] = statement
+        let digest = sha256(file.bytes);
+        let covered = statement
             .subject
             .iter()
-            .filter(|s| s.name == file.name)
-            .collect::<Vec<_>>()[..]
-        else {
-            bail!("expected exactly one subject named {:?}", file.name);
-        };
-        ensure!(
-            subject.digest.sha256 == Some(sha256(file.bytes)),
-            "{:?} does not match its subject digest",
-            file.name
-        );
-
-        policies.insert(
-            file.tee_class.to_owned(),
-            String::from_utf8(file.bytes.to_vec())?,
-        );
+            .any(|s| s.name == file.name && s.digest.sha256 == Some(digest))
+            || serde_json::from_slice::<serde_json::Value>(file.bytes)
+                .is_ok_and(|json| json == statement.predicate);
+        ensure!(covered, "{:?} is not covered by the bundle", file.name);
     }
 
-    Ok(VerifiedRelease {
-        policies,
-        signed_at: signed_at.context("no files to verify")?,
-    })
+    Ok(result
+        .verified_timestamps()
+        .iter()
+        .min()
+        .context("no verified timestamp")?
+        .as_second())
 }
 
 fn check_claims(
@@ -259,11 +215,13 @@ pub(crate) mod tests {
         };
     }
 
+    pub(crate) const BUNDLE: &str = "attestation-bundle.sigstore.json";
     pub(crate) const A70: Fixture = fixture!("v0.0.1a70");
     pub(crate) const A71: Fixture = fixture!("v0.0.1a71");
 
     pub(crate) fn integritee() -> Provenance {
         Provenance {
+            bundle: BUNDLE.to_owned(),
             repo: "cohere-ai/integritee".to_owned(),
             signer_workflow: ".github/workflows/release-policy.yaml".to_owned(),
             source_ref: "refs/heads/main".to_owned(),
@@ -280,33 +238,26 @@ pub(crate) mod tests {
     fn files<'a>(cpu: &'a [u8], gpu: &'a [u8]) -> [ReleaseFile<'a>; 2] {
         [
             ReleaseFile {
-                tee_class: "cpu",
                 name: "trustee_policy_cpu.rego",
                 bytes: cpu,
             },
             ReleaseFile {
-                tee_class: "gpu",
                 name: "trustee_policy_gpu.rego",
                 bytes: gpu,
             },
         ]
     }
 
-    pub(crate) const POLICY_ID: &str = "trustee_policy";
+    fn predicate(fixture: &Fixture) -> Vec<u8> {
+        serde_json::to_vec_pretty(&parse(fixture.bundle).unwrap().1.predicate).unwrap()
+    }
 
     #[test]
     fn real_releases_verify() {
         let root = production_root();
-        let names = policy_files(A71.bundle, POLICY_ID).unwrap();
-        assert!(names
-            .iter()
-            .map(|(c, n)| (c.as_str(), n.as_str()))
-            .eq(files(&[], &[]).iter().map(|f| (f.tee_class, f.name))));
-
         let a71 = verify(
             &root,
             A71.bundle,
-            POLICY_ID,
             &files(A71.cpu, A71.gpu),
             &Provenance {
                 predicate_claims: BTreeMap::from([("version".into(), "v0.0.1a71".into())]),
@@ -314,18 +265,15 @@ pub(crate) mod tests {
             },
         )
         .unwrap();
-        assert_eq!(a71.policies["cpu"].as_bytes(), A71.cpu);
-        assert_eq!(a71.policies["gpu"].as_bytes(), A71.gpu);
+        let a70 = verify(&root, A70.bundle, &files(A70.cpu, A70.gpu), &integritee()).unwrap();
+        assert!(a70 < a71);
 
-        let a70 = verify(
-            &root,
-            A70.bundle,
-            POLICY_ID,
-            &files(A70.cpu, A70.gpu),
-            &integritee(),
-        )
-        .unwrap();
-        assert!(a70.signed_at < a71.signed_at);
+        let predicate = predicate(&A71);
+        let as_predicate = [ReleaseFile {
+            name: "predicate.json",
+            bytes: &predicate,
+        }];
+        verify(&root, A71.bundle, &as_predicate, &integritee()).unwrap();
     }
 
     #[test]
@@ -338,18 +286,21 @@ pub(crate) mod tests {
             edit(&mut provenance);
             provenance
         };
-        let [cpu_only, _] = files(A71.cpu, A71.gpu);
         let unsigned = [ReleaseFile {
-            tee_class: "cpu",
             name: "unsigned.rego",
             bytes: A71.cpu,
+        }];
+        let other_predicate = predicate(&A70);
+        let other_predicate = [ReleaseFile {
+            name: "predicate.json",
+            bytes: &other_predicate,
         }];
 
         let cases: [(&str, &[ReleaseFile], Provenance); 12] = [
             ("tampered file", &files(&tampered, A71.gpu), integritee()),
             ("swapped files", &files(A71.gpu, A71.cpu), integritee()),
-            ("omitted class", &[cpu_only], integritee()),
             ("unsigned file", &unsigned, integritee()),
+            ("other release's predicate", &other_predicate, integritee()),
             (
                 "wrong predicate claim",
                 &files(A71.cpu, A71.gpu),
@@ -398,7 +349,7 @@ pub(crate) mod tests {
         ];
         for (case, files, provenance) in cases {
             assert!(
-                verify(&root, A71.bundle, POLICY_ID, files, &provenance).is_err(),
+                verify(&root, A71.bundle, files, &provenance).is_err(),
                 "{case} should be rejected"
             );
         }

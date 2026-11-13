@@ -1449,8 +1449,10 @@ mod tests {
                 "as_provider": "coco_builtin",
                 "policy_ids": ["trustee_policy"],
                 "policy_source": {
-                    "url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+                    "base_url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+                    "files": {"cpu": "trustee_policy_cpu.rego"},
                     "provenance": {
+                        "bundle": "attestation-bundle.sigstore.json",
                         "repo": "cohere-ai/integritee",
                         "signer_workflow": ".github/workflows/release-policy.yaml",
                         "source_ref": "refs/heads/main",
@@ -1466,9 +1468,26 @@ mod tests {
 
         with(|_| {}).unwrap();
         with(|v| v["policy_dir"] = json!("/tmp")).unwrap_err();
-        with(|v| v["policy_source"]["url"] = json!("http://example.com")).unwrap_err();
+        with(|v| v["policy_source"]["base_url"] = json!("http://example.com")).unwrap_err();
         with(|v| v["policy_source"]["refresh_interval"] = json!(0)).unwrap();
+        with(|v| v["policy_source"]["max_age"] = json!(86400)).unwrap();
+        with(|v| v["policy_source"]["max_age"] = json!(300)).unwrap_err();
+        with(|v| {
+            v["policy_source"]["max_age"] = json!(0);
+            v["policy_source"]["refresh_interval"] = json!(0);
+        })
+        .unwrap();
         with(|v| v["policy_source"]["provenance"]["repo"] = json!("integritee")).unwrap_err();
+        with(|v| v["policy_source"]["provenance"]["bundle"] = json!("")).unwrap_err();
+        with(|v| v["policy_source"]["files"] = json!({"gpu": "gpu.rego"})).unwrap_err();
+        with(|v| v["policy_source"]["files"]["tpu"] = json!("tpu.rego")).unwrap_err();
+        with(|v| {
+            v["policy_source"]
+                .as_object_mut()
+                .unwrap()
+                .remove("provenance");
+        })
+        .unwrap();
     }
 
     // =====================================================================

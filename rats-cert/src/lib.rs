@@ -7,6 +7,8 @@ pub mod crypto;
 pub mod errors;
 #[cfg(feature = "__coco-builtin-as")]
 pub mod policy_source;
+#[cfg(feature = "provenance")]
+pub mod release;
 pub mod tee;
 
 #[cfg(test)]

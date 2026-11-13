@@ -121,17 +121,22 @@ crypto-rustcrypto = [
 # checking the wiring; each TEE has to be enabled on its own because the verifiers carry
 # native dependencies (openssl, tss-esapi, DCAP).
 __coco-builtin-as = [
+  "provenance",
   "dep:attestation-service",
   "dep:key-value-storage",
   "dep:regorus",
   "dep:sha2",
+  "tokio/time",
+]
+
+# Fetching published files and checking their Sigstore provenance.
+provenance = [
   "dep:sigstore-trust-root",
   "dep:sigstore-types",
   "dep:sigstore-verify",
   "dep:webpki-root-certs",
   "sigstore-trust-root/rustls",
   "sigstore-trust-root/tuf",
-  "tokio/time",
 ]
 coco-builtin-as-azsnp = ["__coco-builtin-as", "attestation-service/az-snp-vtpm-verifier"]
 coco-builtin-as-aztdx = ["__coco-builtin-as", "attestation-service/az-tdx-vtpm-verifier"]
