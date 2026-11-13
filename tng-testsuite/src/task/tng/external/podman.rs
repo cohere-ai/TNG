@@ -5,7 +5,7 @@ use tokio::process::Command;
 impl TngInstance {
     pub(super) async fn get_tokio_command(&self, config_json: &str) -> Result<Command> {
         let image_url = std::env::var("TNG_TESTSUITE_TNG_IMAGE_URL")
-            .unwrap_or("ghcr.io/inclavare-containers/tng:latest".to_string());
+            .unwrap_or("ghcr.io/cohere-ai/tng:latest".to_string());
         tracing::info!("Using TNG image url: {image_url}");
 
         let mut cmd = tokio::process::Command::new("podman");
