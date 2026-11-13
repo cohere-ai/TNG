@@ -227,14 +227,8 @@ pub struct RatsTlsStream<R: Runtime> {
     phantom: PhantomData<R>,
 }
 
-/// Writer returned by [`RatsTlsStream::split`].
-///
-/// Memberlist closes each logical HTTP/2 stream after push/pull. Shutdown
-/// can fail after the peer has finished the stream, so keep this cleanup
-/// best-effort. Writes and flushes still propagate errors.
-#[pin_project::pin_project]
+/// Makes memberlist's logical HTTP/2 stream cleanup best-effort.
 pub struct RatsTlsWriter {
-    #[pin]
     inner: tokio_util::compat::Compat<tokio::io::WriteHalf<Box<dyn CommonStreamTrait + Sync>>>,
     peer_addr: SocketAddr,
 }
@@ -245,26 +239,21 @@ impl futures::AsyncWrite for RatsTlsWriter {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        self.project().inner.poll_write(cx, buf)
+        Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.project().inner.poll_flush(cx)
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let this = self.project();
-        match this.inner.poll_close(cx) {
-            Poll::Ready(Err(err)) => {
-                tracing::debug!(
-                    peer = %this.peer_addr,
-                    ?err,
-                    "failed to close rats-tls serf stream during cleanup"
-                );
-                Poll::Ready(Ok(()))
+        let this = self.get_mut();
+        Pin::new(&mut this.inner).poll_close(cx).map(|result| {
+            if let Err(err) = result {
+                tracing::debug!(peer = %this.peer_addr, ?err, "failed to close rats-tls serf stream");
             }
-            other => other,
-        }
+            Ok(())
+        })
     }
 }
 
