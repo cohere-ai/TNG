@@ -6,81 +6,45 @@ The TNG Client JavaScript SDK provides client functionality for use in browser e
 
 ## Getting the SDK
 
-You can obtain the TNG SDK in two ways:
+The SDK is not published as part of this repository's releases, so build it from source.
 
-### 1. Download from GitHub Packages
+### Install Dependencies
 
-Download the precompiled npm package directly from the GitHub Packages page:
-[https://github.com/inclavare-containers/TNG/pkgs/npm/tng](https://github.com/inclavare-containers/TNG/pkgs/npm/tng)
-
-### 2. Build from Source
-
-#### Docker Environment Preparation
+On Ubuntu:
 
 ```sh
-docker run -it --name tng-dev --privileged --network=host alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/alinux3:latest bash
+sudo apt-get install -y git make clang protobuf-compiler libprotobuf-dev npm
 ```
 
-The above command will create a container named tng-dev based on the Alibaba Cloud Linux distribution, which will serve as the TNG development environment. We will continue the following steps in this container.
-
-Install dependencies:
+Install [rustup](https://rustup.rs), then the nightly toolchain the SDK is built with:
 
 ```sh
-yum install -y git make clang protobuf-devel npm
+rustup toolchain install nightly-2025-07-07
 ```
 
-#### Pull the Source Code
+The build targets install `wasm-pack` and the `rust-src` component for that toolchain if they are missing.
+
+### Get the Source Code
 
 ```sh
-cd /
-git clone https://github.com/inclavare-containers/tng.git
-cd tng
-git submodule update --init
+git clone https://github.com/cohere-ai/TNG.git
+cd TNG
 ```
 
-Now you have the tng repository source code in the `/tng` directory.
-
-#### Install the Rust Toolchain
+### Build the npm Package
 
 ```sh
-cat <<EOF >> ~/.bashrc
-export RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static
-export RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup
-EOF
-
-. ~/.bashrc
-
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-mkdir -p ~/.cargo/
-cat <<EOF > ~/.cargo/config.toml
-[source.crates-io]
-replace-with = 'ustc'
-
-[source.ustc]
-registry = "git://mirrors.ustc.edu.cn/crates.io-index"
-EOF
-
-. "$HOME/.cargo/env"
+make wasm-pack-release
 ```
 
-#### Build the TNG SDK npm Package
-
-```sh
-make wasm-pack-debug
-```
-
-> [!NOTE]
-> If you want to build the final production version, please use `make wasm-pack-release`
-
-The resulting `tar.gz` file will be placed in the `./tng-wasm/pkg/` directory, which you can install into your web project using `npm install`.
+This builds the SDK into `tng-wasm/pkg/` and packs it as `tng-wasm/pkg/tng-wasm-<version>.tgz`, which you can install into your web project with `npm install`. For a debug build, use `make wasm-pack-debug`. To build the `.js` and `.wasm` files without packing them, use `make wasm-build-release` or `make wasm-build-debug`.
 
 ## Using the SDK in Your Project
 
 ### Install the SDK to Your Project
 
 ```bash
-npm install tng-<version>.tgz
+npm install tng-wasm-<version>.tgz
 ```
 
 ### Integrate the SDK in Your HTML
@@ -101,7 +65,7 @@ Add the following code to your HTML page to use the TNG SDK:
       await tng_init();
 
       // Configure attestation parameters
-      const asAddr = "http://127.0.0.1:8080/";
+      const asAddr = "http://127.0.0.1:9080/";
       const policyIds = ["default"];
 
       // Create a wrapped fetch function
@@ -144,10 +108,9 @@ Add the following code to your HTML page to use the TNG SDK:
 
 The main steps include:
 
-1. Add necessary security policy meta tags to the HTML header
-2. Import and initialize the TNG WASM module
-3. Configure the attestation service address and policy ID
-4. Use the wrapped `tng_fetch` function to send encrypted requests
+1. Import and initialize the TNG WASM module
+2. Configure the attestation service address and policy ID
+3. Use the wrapped `tng_fetch` function to send encrypted requests
 
 ### Deployment Configuration
 
@@ -203,40 +166,27 @@ dummyhttp -p 30001 -vvvv
 > [!NOTE]
 > You can use the curl command on the local computer to test direct access to this HTTP server to check network connectivity.
 
-### 2. Compile and Install TNG on the Server Side
+### 2. Build TNG on the Server Side
 
-Build and install TNG from source:
-
-```sh
-cargo install --locked --path ./tng/ --root /usr/local/
-```
-
-Now the `tng` command is available on the server side.
-
-If you want to build the container version of TNG:
+Build TNG from source (see [docs/developer.md](../docs/developer.md) for the build dependencies):
 
 ```sh
-# First install podman
-yum install podman podman-docker -y
-# Build the container image
-docker build -t tng:test .
+make bin-build
+sudo install target/release/tng /usr/local/bin/tng
 ```
 
-This will produce a container image named `tng:test`.
+Now the `tng` command is available on the server side. Alternatively, use the `ghcr.io/cohere-ai/tng` image or build it with `make docker-build`.
 
 ### 3. Run Attestation-Agent on the Server Side
 
-You can choose to install attestation-agent from the yum repository or compile and deploy your own attestation-agent.
+The server must be a TEE guest. The `aa` service in [.github/test-deps/docker-compose.yml](../.github/test-deps/docker-compose.yml) runs an attestation agent built for Intel TDX, listening on `/run/confidential-containers/attestation-agent/attestation-agent.sock`:
 
 ```sh
-yum install -y attestation-agent
+cd .github/test-deps
+docker compose up -d --build --wait aa
 ```
 
-Run
-
-```sh
-RUST_LOG=debug attestation-agent --attestation_sock unix:///run/confidential-containers/attestation-agent/attestation-agent.sock
-```
+For other TEEs, build and run your own [attestation-agent](https://github.com/confidential-containers/guest-components/tree/main/attestation-agent) with the same socket path.
 
 ### 4. Run TNG on the Server Side
 
@@ -267,39 +217,20 @@ tng launch --config-content='
 
 ### 5. Run the Attestation Service Instance
 
-You need to prepare an Attestation Service instance that exposes a RESTful HTTP interface. This can be achieved by installing the `trustee` package from the yum repository or compiling and deploying your own `restful-as`.
-
-A reference run command is as follows:
+You need an Attestation Service instance that exposes a RESTful HTTP interface. The `as` service in [.github/test-deps/docker-compose.yml](../.github/test-deps/docker-compose.yml) runs one on port `8081`:
 
 ```sh
-cat <<EOF > /tmp/config_with_cert.json
-{
-    "work_dir": "/var/lib/attestation-service/",
-    "rvps_config": {
-        "type": "BuiltIn",
-        "storage": {
-            "type": "LocalFs"
-        }
-    },
-    "attestation_token_broker": {
-        "type": "Simple",
-        "duration_min": 5
-    }
-}
-EOF
-
-RUST_LOG=debug restful-as --socket 0.0.0.0:9080 --config-file /tmp/config_with_cert.json
-
-# Since restful-as natively does not support CORS configuration, here we run a CORS proxy service (https://github.com/bulletmark/corsproxy) that forwards requests from port 8080 to the real Attestation Service.
-podman run -it --rm --net=host docker.io/bulletmark/corsproxy:latest 8080=http://127.0.0.1:9080
+cd .github/test-deps
+docker compose up -d --wait as
 ```
 
-The above will expose an Attestation Service on port 8080.
+Since the TNG SDK sends requests to the Attestation Service from the browser, the Attestation Service must answer with CORS headers, which `restful-as` does not do itself. Run a CORS proxy ([corsproxy](https://github.com/bulletmark/corsproxy)) in front of it, forwarding port `9080` to the Attestation Service:
 
-> [!NOTE]
-> Since the TNG SDK needs to initiate requests to the Attestation Service instance in the browser, please ensure you handle the CORS rules properly.
+```sh
+docker run -it --rm --net=host docker.io/bulletmark/corsproxy:latest 9080=http://127.0.0.1:8081
+```
 
-Here is an example:
+The browser then reaches the Attestation Service at `http://<server ip>:9080/`.
 
 ### 6. Compile the TNG SDK
 
@@ -322,8 +253,8 @@ const url = "http://127.0.0.1:30001/foo/bar?baz=qux";
 Attestation Service URL and policy ID for verification:
 
 ```js
-const asAddr = "http://127.0.0.1:8080/";
-const policyIds = ["default"];
+const as_addr = "http://127.0.0.1:9080/";
+const policy_ids = ["default"];
 ```
 
 ### 8. Run the Frontend Service on the Server Side
