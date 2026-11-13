@@ -2,18 +2,6 @@
 help:
 	@echo "Read README.md first"
 
-# The test targets expect their dependencies to be present already, as they are in
-# the test-runner image (.github/test-deps/Dockerfile.test-runner).
-.PHONY: run-test-on-bin
-run-test-on-bin:
-	cargo test --no-default-features --features on-bin --package tng-testsuite --tests -- --nocapture
-
-
-.PHONY: run-test-on-podman
-run-test-on-podman:
-	cargo test --no-default-features --features on-podman --package tng-testsuite --tests -- --nocapture
-
-
 VERSION 	:= $(shell grep '^version' ./Cargo.toml | awk -F' = ' '{print $$2}' | tr -d '"')
 
 .PHONY: bin-build
