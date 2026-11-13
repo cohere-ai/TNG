@@ -107,17 +107,21 @@ pub enum Error {
     #[error("The token was not signed by the builtin attestation service in this process")]
     CocoBuiltinAsForeignTokenSigner,
 
-    #[cfg(feature = "__coco-builtin-as")]
-    #[error("The policy release failed its provenance check")]
-    PolicyProvenanceFailed(#[source] std::sync::Arc<anyhow::Error>),
+    #[cfg(feature = "provenance")]
+    #[error("The published files failed their provenance check")]
+    ProvenanceCheckFailed(#[source] std::sync::Arc<anyhow::Error>),
+
+    #[cfg(feature = "provenance")]
+    #[error("Invalid release configuration: {0}")]
+    InvalidRelease(&'static str),
+
+    #[cfg(feature = "provenance")]
+    #[error("Failed to fetch the published files")]
+    ReleaseFetchFailed(#[source] std::sync::Arc<anyhow::Error>),
 
     #[cfg(feature = "__coco-builtin-as")]
-    #[error("Invalid 'policy_source': {0}")]
-    InvalidPolicySource(&'static str),
-
-    #[cfg(feature = "__coco-builtin-as")]
-    #[error("Failed to fetch the policy release")]
-    PolicySourceFailed(#[source] std::sync::Arc<anyhow::Error>),
+    #[error("The policies are older than 'max_age': no policy fetch succeeded since")]
+    CocoBuiltinAsPoliciesExpired,
 
     #[cfg(feature = "__coco-builtin-as")]
     #[error(

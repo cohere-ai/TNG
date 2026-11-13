@@ -66,7 +66,7 @@ pub async fn create_converter(
             // so failing now surfaces the problem at startup instead of on the first handshake.
             let (policies, source) = match policy_source {
                 Some(args) => {
-                    let source = PolicySource::new(args, policy_id)?;
+                    let source = PolicySource::new(args)?;
                     let (policies, current) = source.fetch_initial().await?;
                     (policies, Some((source, current)))
                 }
