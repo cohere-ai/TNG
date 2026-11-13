@@ -1,14 +1,6 @@
-use std::{
-    io,
-    marker::PhantomData,
-    net::SocketAddr,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{io, marker::PhantomData, net::SocketAddr, sync::Arc, time::Duration};
 
-use anyhow::Context as _;
+use anyhow::Context;
 use async_stream::stream;
 use futures::{AsyncReadExt, AsyncWriteExt, StreamExt as _};
 use peekable::future::AsyncPeekable;
@@ -88,10 +80,7 @@ impl<R: Runtime> StreamLayer for RatsTls<R> {
             local_addr,
             peer_addr: addr,
             reader: AsyncPeekable::new(reader.compat()),
-            writer: RatsTlsWriter {
-                inner: writer.compat_write(),
-                peer_addr: addr,
-            },
+            writer: writer.compat_write(),
             phantom: Default::default(),
         })
     }
@@ -154,10 +143,7 @@ impl<R: Runtime> RatsTlsListener<R> {
                                         let (reader, writer) = tokio::io::split(stream);
                                         (
                                             RatsTlsStream::<R> {
-                                                writer: RatsTlsWriter {
-                                                    inner: writer.compat_write(),
-                                                    peer_addr,
-                                                },
+                                                writer: writer.compat_write(),
                                                 reader: AsyncPeekable::new(reader.compat()),
                                                 local_addr,
                                                 peer_addr,
@@ -217,7 +203,7 @@ impl<R: Runtime> Listener for RatsTlsListener<R> {
 #[pin_project::pin_project]
 pub struct RatsTlsStream<R: Runtime> {
     #[pin]
-    writer: RatsTlsWriter,
+    writer: tokio_util::compat::Compat<tokio::io::WriteHalf<Box<dyn CommonStreamTrait + Sync>>>,
     #[pin]
     reader: AsyncPeekable<
         tokio_util::compat::Compat<tokio::io::ReadHalf<Box<dyn CommonStreamTrait + Sync>>>,
@@ -227,42 +213,13 @@ pub struct RatsTlsStream<R: Runtime> {
     phantom: PhantomData<R>,
 }
 
-/// Makes memberlist's logical HTTP/2 stream cleanup best-effort.
-pub struct RatsTlsWriter {
-    inner: tokio_util::compat::Compat<tokio::io::WriteHalf<Box<dyn CommonStreamTrait + Sync>>>,
-    peer_addr: SocketAddr,
-}
-
-impl futures::AsyncWrite for RatsTlsWriter {
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &[u8],
-    ) -> Poll<io::Result<usize>> {
-        Pin::new(&mut self.get_mut().inner).poll_write(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let this = self.get_mut();
-        Pin::new(&mut this.inner).poll_close(cx).map(|result| {
-            if let Err(err) = result {
-                tracing::debug!(peer = %this.peer_addr, ?err, "failed to close rats-tls serf stream");
-            }
-            Ok(())
-        })
-    }
-}
-
 impl<R: Runtime> serf::net::Connection for RatsTlsStream<R> {
     type Reader = AsyncPeekable<
         tokio_util::compat::Compat<tokio::io::ReadHalf<Box<dyn CommonStreamTrait + Sync>>>,
     >;
 
-    type Writer = RatsTlsWriter;
+    type Writer =
+        tokio_util::compat::Compat<tokio::io::WriteHalf<Box<dyn CommonStreamTrait + Sync>>>;
 
     #[inline]
     fn split(self) -> (Self::Reader, Self::Writer) {
