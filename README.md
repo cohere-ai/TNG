@@ -1,10 +1,12 @@
 # TNG
-[![Docker](/../../actions/workflows/build-docker.yml/badge.svg)](/../../actions/workflows/build-docker.yml)
+[![Test](/../../actions/workflows/co-test.yml/badge.svg)](/../../actions/workflows/co-test.yml)
+[![Docker](/../../actions/workflows/co-build-docker.yml/badge.svg)](/../../actions/workflows/co-build-docker.yml)
+[![Python](/../../actions/workflows/co-build-python.yml/badge.svg)](/../../actions/workflows/co-build-python.yml)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![rust version](https://img.shields.io/badge/rustc-1.95.0+-blue?style=flat-square&logo=rust)](https://www.rust-lang.org)
-[![codecov](https://codecov.io/gh/inclavare-containers/TNG/graph/badge.svg?token=7CUZW26SH6)](https://codecov.io/gh/inclavare-containers/TNG)
 
-[中文文档](README_zh.md)
+> [!NOTE]
+> This repository is Cohere's fork of [inclavare-containers/TNG](https://github.com/inclavare-containers/TNG), forked from upstream v2.6.0. Release versions here are numbered independently of upstream's.
 
 ## What is TNG?
 
@@ -23,7 +25,7 @@ graph LR
         TNG_In[TNG Ingress]
     end
 
-    subgraph TrustedEnv ["TEE(TDX / SEV-SNP / CSV)"]
+    subgraph TrustedEnv ["TEE(TDX / SEV-SNP)"]
         TNG_Eg[TNG Egress]
         Service[Business Service]
     end
@@ -39,20 +41,37 @@ graph LR
 ## Comparison with Other Solutions
 
 - **Traditional TLS (PKI)**: Relies on Certificate Authorities (CA) to issue X.509 certificates for each service, establishing trust through a certificate chain. In practice, certificate application, distribution, installation, and regular rotation are cumbersome. Incorrect configuration or private key leakage can create weak links in the trust chain that are hard to detect promptly. Additionally, these solutions only verify "who the certificate belongs to" and cannot directly reflect whether the current runtime environment is authentic and untampered.
-- **Various RA TLS Implementations (e.g., [rats-tls](https://github.com/inclavare-containers/rats-tls), [attested_tls](https://github.com/openenclave/openenclave/tree/master/samples/attested_tls))**: Usually require manual integration of corresponding libraries into user programs, leading to high integration costs. Configuration can also become very complex when fine-grained verification of the internal software environment is required. TNG can work with the Confidential Containers community's open-source remote attestation components [`guest-components`](https://github.com/confidential-containers/guest-components) and the remote attestation service [`trustee`](https://github.com/confidential-containers/trustee), supporting fine-grained, configurable remote attestation policy definitions. We also provide built-in RA TLS protocol support, implemented in pure Rust for better security. If you are preparing to use or are already using RA TLS, you can switch to this project without integrating RA TLS libraries in your business code.
+- **Various RA TLS Implementations (e.g., [rats-tls](https://github.com/inclavare-containers/rats-tls), [attested_tls](https://github.com/openenclave/openenclave/tree/master/samples/attested_tls))**: Usually require manual integration of corresponding libraries into user programs, leading to high integration costs. Configuration can also become very complex when fine-grained verification of the internal software environment is required. TNG can work with the Confidential Containers community's open-source remote attestation components [`guest-components`](https://github.com/confidential-containers/guest-components) and the remote attestation service [`trustee`](https://github.com/confidential-containers/trustee), as well as [Intel Trust Authority](https://www.intel.com/content/www/us/en/security/trust-authority.html), supporting fine-grained, configurable remote attestation policy definitions. We also provide built-in RA TLS protocol support, implemented in pure Rust for better security. If you are preparing to use or are already using RA TLS, you can switch to this project without integrating RA TLS libraries in your business code.
 - **Service Mesh Gateways**: Some solutions (like Envoy / Istio combined with SPIFFE) can establish end-to-end TLS tunnels between nodes by issuing X.509 certificates to workloads, but they do not incorporate remote attestation into the root of trust, still primarily relying on the validity of the certificates themselves. In contrast, besides supporting TLS-based tunnels, TNG also supports Oblivious HTTP (OHTTP) for message-level encryption and directly verifies whether the peer runtime environment is trustworthy through remote attestation, making it more suitable for scenarios requiring end-to-end "environment trust + data encryption."
 
 ## Key Features
 
 - **Support for Multiple Encryption Protocols**: Provides support for protocols like RA-TLS for arbitrary TCP traffic and Oblivious HTTP (OHTTP) for HTTP message-level encryption, allowing various types of applications to uniformly access the remote attestation-based secure communication system.
 - **Zero Business Intrusiveness**: Through transparent proxy (netfilter) or application-layer proxy (HTTP proxy, Socks5, etc.), TNG avoids changing existing business code and deployment structures, handling plaintext traffic at the network layer into the tunnel with encryption and remote attestation.
-- **Various Deployment Forms**: We provide binary programs, SDKs, and other integration methods to flexibly choose deployment plans based on different business architectures, for example:
+- **Various Deployment Forms**: We provide container images, Python and JavaScript SDKs, and the `tng` binary to flexibly choose deployment plans based on different business architectures, for example:
   - Running as a daemon in VMs or container instances in IaaS scenarios.
   - Providing transparent encryption for each Pod as a Sidecar container in Kubernetes / Service Mesh.
-  - Making encrypted requests directly from the client side for browsers via the SDK.
+  - Making OHTTP-encrypted requests directly from Python applications via the `cohere-tng` and `conseel` packages, or from browsers via the JavaScript SDK.
 - **Flexible Remote Attestation Models**: Supports combinations of unidirectional, bidirectional, and "reverse unidirectional" remote attestation. You can write configuration files based on business trust relationships, freely choosing whether the "client verifies the server," "both sides verify each other," or "server verifies the client."
 
 If you want to understand more specific deployment methods and configuration examples, you can check the typical scenario documentation in the [docs/scenarios/](docs/scenarios/) directory.
+
+## Release Artifacts
+
+Each release (see the [Releases](/../../releases) page) publishes four container images and two Python packages, all built from the same commit. Every image and package carries a build provenance attestation, which you can check with `gh attestation verify <image or file> -R cohere-ai/TNG`.
+
+| Artifact | Description |
+| --- | --- |
+| `ghcr.io/cohere-ai/tng` | Plain TNG with no baked-in configuration. Pass your own with `tng launch`. |
+| `ghcr.io/cohere-ai/tng-ingress` | Pre-configured ingress that encrypts client traffic to a Cohere TNG egress endpoint. See [cohere/docker/ingress/README.md](cohere/docker/ingress/README.md). |
+| `ghcr.io/cohere-ai/tng-ita` | Pre-configured OHTTP egress that attests itself with Intel Trust Authority (passport model). |
+| `ghcr.io/cohere-ai/tng-trustee` | Pre-configured OHTTP egress for the background check model: it presents CoCo evidence that clients appraise with an attestation service such as Trustee. |
+| [`cohere-tng`](https://pypi.org/project/cohere-tng/) | Python SDK: an `httpx` transport that OHTTP-encrypts requests and verifies the server's TEE attestation, built as a native Rust extension. See [cohere/python/cohere-tng/README.md](cohere/python/cohere-tng/README.md). |
+| [`conseel`](https://pypi.org/project/conseel/) | Drop-in encrypted transport for AI SDKs such as Cohere's, built on `cohere-tng`. See [cohere/python/conseel/README.md](cohere/python/conseel/README.md). |
+
+Images are tagged with the release version (for example `1.6.0`) and `latest`. Builds from the `cohere` branch are also published as `cohere` and `sha-<commit>`.
+
+The egress images listen on port `18080` and forward decrypted traffic to `127.0.0.1:8080`. They collect evidence through an API Server Rest instance at `127.0.0.1:8006`. Their default configuration lives in [cohere/docker/egress/](cohere/docker/egress/). Mount your own at `/etc/tng/conf.json` to replace it, or adjust it with the `POLICY_IDS`, `PEERS` and `TNG_METRIC_OTLP_ENDPOINT` environment variables.
 
 ## Installation and Usage
 
@@ -73,55 +92,63 @@ You need to prepare a JSON format configuration file to start TNG.
 
 > [!TIP]
 > Before starting, it is recommended to read [Core Concepts and Workflow](docs/architecture.md) to understand TNG's working model, remote attestation roles, and encryption protocols, then refer to the [Detailed Configuration Manual](docs/configuration.md) to learn how to write configuration files.
-> 
+>
 > Additionally, we provide some [examples](docs/scenarios/) of typical scenarios for your reference.
 
 ### Running TNG with Container Images
 
-You can directly use our provided pre-built images, for example:
+You can directly use the pre-built `tng` image, for example:
 
 ```sh
 docker run -it --rm --privileged --network host --cgroupns=host \
-  ghcr.io/inclavare-containers/tng:latest \
+  ghcr.io/cohere-ai/tng:latest \
   tng launch --config-content='<your config json string>'
 ```
 
-
-### Installing TNG via Binary
-
-You can obtain pre-compiled binary executables from the project's [Releases](https://github.com/inclavare-containers/TNG/releases) page. Simply download and extract the archive, then run it:
+To build the images yourself, use [cohere/docker/Dockerfile](cohere/docker/Dockerfile) with `--target tng`, `--target ingress`, `--target egress-ita` or `--target egress-trustee`:
 
 ```sh
-sudo tng launch --config-file=/etc/tng/config.json
+docker build -f cohere/docker/Dockerfile --target tng -t tng:latest .
 ```
 
-### Getting JavaScript SDK (Browser Side)
+### Building TNG from Source
 
-Browser environments can use the JavaScript SDK provided by `tng-wasm`. See [tng-wasm/README.md](tng-wasm/README.md) for acquisition methods and more complete examples. Below is a simple installation example:
+Building requires the Rust toolchain pinned in [rust-toolchain.toml](rust-toolchain.toml) and the Protocol Buffers compiler (`protoc`):
 
 ```sh
-# Assuming tng-<version>.tgz has been built under tng-wasm/pkg
-npm install tng-<version>.tgz
+make bin-build   # RUSTFLAGS="--cfg tokio_unstable" cargo build --release
+sudo ./target/release/tng launch --config-file=/etc/tng/config.json
 ```
 
+The in-process attestation service (`as_provider: coco_builtin`) is not built by default. Enable it with one or more of the `coco-builtin-as-*` features in [tng/Cargo.toml](tng/Cargo.toml), for example `RUSTFLAGS="--cfg tokio_unstable" cargo build --release --features tng/coco-builtin-as-tdx`. Some of them need extra system libraries; [cohere/docker/Dockerfile](cohere/docker/Dockerfile) lists them.
 
-## Cohere Ingress Image
+### Python SDK
 
-A pre-configured ingress image is available at `ghcr.io/cohere-ai/tng-ingress` for encrypting client traffic to a Cohere TNG egress endpoint. See [cohere/docker/ingress/README.md](cohere/docker/ingress/README.md) for usage and environment variables.
+```sh
+pip install cohere-tng   # httpx transport
+pip install conseel      # drop-in transport for AI SDKs
+```
+
+See [cohere/python/cohere-tng/README.md](cohere/python/cohere-tng/README.md) and [cohere/python/conseel/README.md](cohere/python/conseel/README.md) for usage.
+
+### JavaScript SDK (Browser Side)
+
+Browser environments can use the JavaScript SDK provided by `tng-wasm`. It is not published as part of this repository's releases, so build it from source as described in [tng-wasm/README.md](tng-wasm/README.md).
 
 ## More Documentation
 
 - **Detailed Configuration Manual**: For meanings of each configuration field and common templates, please refer to [docs/configuration.md](docs/configuration.md).
 - **Core Concepts and Workflow**: Detailed introduction to TNG's Ingress/Egress model, remote attestation roles (AA/AS), and encryption protocols like RATS-TLS/OHTTP, please refer to [docs/architecture.md](docs/architecture.md).
+- **RATS-TLS Attestation**: How attestation is carried over RATS-TLS connections, please refer to [docs/rats_tls_attestation.md](docs/rats_tls_attestation.md).
 - **Typical Scenarios**: Scenario documents containing topology diagrams and full configuration instructions, please refer to the [docs/scenarios/](docs/scenarios/) directory.
-- **Developer Guide**: Instructions on building (Docker), deployment, and integration testing, please refer to [docs/developer.md](docs/developer.md).
+- **Developer Guide**: Instructions on building, running attestation dependencies, and integration testing, please refer to [docs/developer.md](docs/developer.md).
 - **Version Compatibility**: Detailed version compatibility notes (including data plane implementation changes between major versions), please refer to [docs/version_compatibility.md](docs/version_compatibility.md).
 - **Integration Test Cases**: For more end-to-end test scenarios, refer to the source code under the [tng-testsuite/](tng-testsuite/) directory.
-- **JavaScript SDK**: For acquisition and usage in browser environments, please refer to [tng-wasm/README.md](tng-wasm/README.md).
+- **JavaScript SDK**: For building and using it in browser environments, please refer to [tng-wasm/README.md](tng-wasm/README.md).
 
 ## Contribution
 
-Community contributions are welcome to make TNG a better tool for confidential computing scenarios! If you have any questions or suggestions, please feel free to submit an Issue or Pull Request.
+If you have any questions or suggestions, please feel free to submit an Issue or Pull Request.
 
 ## License
 

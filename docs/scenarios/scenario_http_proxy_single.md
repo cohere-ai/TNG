@@ -1,7 +1,5 @@
 ## Use Case 1: Client Accessing Single Confidential Computing Node via HTTP Proxy
 
-[中文文档](scenario_http_proxy_single_zh.md)
-
 ### Scenario Overview
 
 - **Goal**: The client already supports HTTP/HTTPS access to backend services and wants to introduce confidential computing and remote attestation to encrypt the end-to-end link and perform environment verification without changing business code.

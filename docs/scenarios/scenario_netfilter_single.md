@@ -1,7 +1,5 @@
 ## Use Case 2: Client Accessing Single Confidential Computing Node via Transparent Proxy
 
-[中文文档](scenario_netfilter_single_zh.md)
-
 ### Scenario Overview
 
 - **Goal**: Existing applications access backend services directly via TCP/HTTP and do not want to change code or configure application-layer proxies. They only want to import traffic into the TNG tunnel "transparently" at the network layer.

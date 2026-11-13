@@ -1,7 +1,5 @@
 # Version Compatibility
 
-[中文文档](version_compatibility_zh.md)
-
 1.0.0 cannot complete a `rats_tls` connection with 0.7.0 or earlier. There is no transitional mode. Upgrade ingress and egress together.
 
 | Compatible Version Range | Description |

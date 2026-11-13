@@ -1,7 +1,5 @@
 # Core Concepts and Workflow
 
-[中文文档](architecture_zh.md)
-
 This page provides a detailed introduction to the core working model of TNG (Trusted Network Gateway), its remote attestation mechanisms, and the encryption protocols it employs. Understanding these concepts will help you better design network topologies and write configuration files before you start configuring and deploying TNG.
 
 ## Tunnel Model and Ingress/Egress
