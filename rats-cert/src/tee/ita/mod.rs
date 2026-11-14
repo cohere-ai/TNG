@@ -11,6 +11,11 @@ mod attester;
 mod attester_common;
 #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
 pub mod converter;
+#[cfg(all(
+    feature = "provenance",
+    any(feature = "attester-ita", feature = "verifier-ita")
+))]
+pub mod policy_id_source;
 #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
 mod retry;
 #[cfg(feature = "verifier-ita")]
