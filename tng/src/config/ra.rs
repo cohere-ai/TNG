@@ -4,6 +4,8 @@ use std::path::Path;
 use anyhow::{anyhow, Context as _, Result};
 #[cfg(feature = "__coco-builtin-as")]
 use rats_cert::policy_source::PolicySourceArgs;
+#[cfg(not(wasm))]
+use rats_cert::tee::ita::policy_id_source::PolicyIdSourceArgs;
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -206,15 +208,7 @@ impl RaArgsUnchecked {
                 ..
             } = attest_args
             {
-                Url::parse(&ita.as_addr)
-                    .with_context(|| format!("Invalid ITA API address: {}", ita.as_addr))
-                    .map_err(TngError::InvalidParameter)?;
-                if ita.api_key.is_none() {
-                    return Err(TngError::InvalidParameter(anyhow!(
-                        "ITA api_key is required: set it in config or via ${} env var",
-                        ITA_API_KEY_ENV
-                    )));
-                }
+                ita.validate()?;
             }
         }
 
@@ -376,17 +370,7 @@ impl RaArgsUnchecked {
                                 .map_err(TngError::InvalidParameter)?;
                         }
                     },
-                    ConverterArgs::Ita(ita) => {
-                        Url::parse(&ita.as_addr)
-                            .with_context(|| format!("Invalid ITA API address: {}", ita.as_addr))
-                            .map_err(TngError::InvalidParameter)?;
-                        if ita.api_key.is_none() {
-                            return Err(TngError::InvalidParameter(anyhow!(
-                                "ITA api_key is required: set it in config or via ${} env var",
-                                ITA_API_KEY_ENV
-                            )));
-                        }
-                    }
+                    ConverterArgs::Ita(ita) => ita.validate()?,
                 }
             }
         }
@@ -547,6 +531,10 @@ pub struct ItaConverterArgs {
     pub api_key: Option<String>,
     #[serde(default)]
     pub policy_ids: Vec<String>,
+    /// Fetch the policy ID to request on every conversion instead; exclusive with `policy_ids`
+    #[cfg(not(wasm))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_id_source: Option<Box<PolicyIdSourceArgs>>,
     /// Max number of retries for ITA API calls (nonce + attest).
     /// When unset, uses the default from `ItaConverter`.
     pub ita_max_retries: Option<usize>,
@@ -561,11 +549,13 @@ pub struct ItaConverterArgs {
 /// Manual impl to redact `api_key` from debug/log output.
 impl std::fmt::Debug for ItaConverterArgs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ItaConverterArgs")
-            .field("as_addr", &self.as_addr)
+        let mut f = f.debug_struct("ItaConverterArgs");
+        f.field("as_addr", &self.as_addr)
             .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
-            .field("policy_ids", &self.policy_ids)
-            .field("ita_max_retries", &self.ita_max_retries)
+            .field("policy_ids", &self.policy_ids);
+        #[cfg(not(wasm))]
+        f.field("policy_id_source", &self.policy_id_source);
+        f.field("ita_max_retries", &self.ita_max_retries)
             .field(
                 "ita_retry_initial_delay_ms",
                 &self.ita_retry_initial_delay_ms,
@@ -576,6 +566,30 @@ impl std::fmt::Debug for ItaConverterArgs {
 }
 
 impl ItaConverterArgs {
+    fn validate(&self) -> Result<(), TngError> {
+        Url::parse(&self.as_addr)
+            .with_context(|| format!("Invalid ITA API address: {}", self.as_addr))
+            .map_err(TngError::InvalidParameter)?;
+        if self.api_key.is_none() {
+            return Err(TngError::InvalidParameter(anyhow!(
+                "ITA api_key is required: set it in config or via ${} env var",
+                ITA_API_KEY_ENV
+            )));
+        }
+        #[cfg(not(wasm))]
+        if let Some(source) = &self.policy_id_source {
+            if !self.policy_ids.is_empty() {
+                return Err(TngError::InvalidParameter(anyhow!(
+                    "'policy_ids' and 'policy_id_source' are mutually exclusive"
+                )));
+            }
+            source
+                .validate()
+                .map_err(|e| TngError::InvalidParameter(e.into()))?;
+        }
+        Ok(())
+    }
+
     pub fn to_converter(&self) -> anyhow::Result<rats_cert::tee::ita::ItaConverter> {
         let api_key = self
             .api_key
@@ -592,6 +606,10 @@ impl ItaConverterArgs {
         }
         if let Some(ms) = self.ita_retry_max_delay_ms {
             converter = converter.with_retry_max_delay(std::time::Duration::from_millis(ms));
+        }
+        #[cfg(not(wasm))]
+        if let Some(source) = &self.policy_id_source {
+            converter = converter.with_policy_id_source(source)?;
         }
         Ok(converter)
     }
@@ -1805,12 +1823,46 @@ mod tests {
     }
 
     #[test]
+    fn test_ita_policy_id_source() {
+        let with = |edit: fn(&mut serde_json::Value)| {
+            let mut json = json!({"attest": {
+                "model": "passport",
+                "aa_provider": "ita",
+                "aa_addr": "unix:///dev/null",
+                "as_provider": "ita",
+                "api_key": "key",
+                "policy_id_source": {
+                    "base_url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+                    "file": "predicate.json",
+                    "provenance": {
+                        "bundle": "attestation-bundle.sigstore.json",
+                        "repo": "cohere-ai/integritee",
+                        "signer_workflow": ".github/workflows/release-policy.yaml",
+                        "source_ref": "refs/heads/main",
+                        "predicate_type": "https://cohere.com/attestation-policy/v1"
+                    }
+                }
+            }});
+            edit(&mut json["attest"]);
+            serde_json::from_value::<RaArgsUnchecked>(json)
+                .unwrap()
+                .into_checked()
+        };
+
+        with(|_| {}).unwrap();
+        with(|v| v["policy_ids"] = json!(["p"])).unwrap_err();
+        with(|v| v["policy_id_source"]["file"] = json!("")).unwrap_err();
+        with(|v| v["policy_id_source"]["provenance"]["bundle"] = json!("")).unwrap_err();
+    }
+
+    #[test]
     fn test_ita_converter_args_debug_redacts_api_key() {
         let secret = "super-secret-key-12345";
         let args = ItaConverterArgs {
             as_addr: "https://api.trustauthority.intel.com".to_string(),
             api_key: Some(secret.to_string()),
             policy_ids: vec![],
+            policy_id_source: None,
             ita_max_retries: None,
             ita_retry_initial_delay_ms: None,
             ita_retry_max_delay_ms: None,

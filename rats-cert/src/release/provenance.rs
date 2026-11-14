@@ -248,7 +248,7 @@ pub(crate) mod tests {
         ]
     }
 
-    fn predicate(fixture: &Fixture) -> Vec<u8> {
+    pub(crate) fn predicate(fixture: &Fixture) -> Vec<u8> {
         serde_json::to_vec_pretty(&parse(fixture.bundle).unwrap().1.predicate).unwrap()
     }
 
