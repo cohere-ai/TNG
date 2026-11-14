@@ -17,8 +17,8 @@ resolver = "2"
 authors = ["Kun Lai <laikun@linux.alibaba.com>", "Cohere"]
 edition = "2021"
 license = "Apache-2.0"
-homepage = "https://github.com/inclavare-containers/tng"
-repository = "https://github.com/cohere-ai/tng"
+homepage = "https://github.com/cohere-ai/TNG"
+repository = "https://github.com/cohere-ai/TNG"
 version = "1.6.0"
 
 [workspace.dependencies]

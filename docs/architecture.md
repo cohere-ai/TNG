@@ -1,7 +1,5 @@
 # Core Concepts and Workflow
 
-[中文文档](architecture_zh.md)
-
 This page provides a detailed introduction to the core working model of TNG (Trusted Network Gateway), its remote attestation mechanisms, and the encryption protocols it employs. Understanding these concepts will help you better design network topologies and write configuration files before you start configuring and deploying TNG.
 
 ## Tunnel Model and Ingress/Egress
@@ -40,7 +38,7 @@ TNG plays a core role in Remote Attestation and can be an **Attester** or a **Ve
 When TNG is configured as an Attester, it is responsible for generating and providing "trusted credentials" or "evidence" of its computing environment. This evidence includes hardware measurement values of the computing platform (e.g., TEE environment), hash values of software components at startup, and runtime configurations.
 
 To achieve this, TNG interacts with a key component:
-*   **Attestation Agent (AA)**: A proxy program running inside the TEE (Trusted Execution Environment). AA is responsible for interacting with the underlying secure hardware (such as Intel TDX, AMD SEV-SNP, CSV, etc.), collecting raw trust measurement data, and formatting this data into standard "evidence" for TNG to retrieve.
+*   **Attestation Agent (AA)**: A proxy program running inside the TEE (Trusted Execution Environment). AA is responsible for interacting with the underlying secure hardware (such as Intel TDX, AMD SEV-SNP, etc.), collecting raw trust measurement data, and formatting this data into standard "evidence" for TNG to retrieve.
 
 In this scenario, the Attester is like a "declarant" holding a "secure hardware-certified ID card" provided by AA to prove its innocence to the other party.
 

@@ -1,13 +1,17 @@
 # Developer Guide
 
-This guide is intended for developers who need to modify the TNG source code or debug/run integration tests locally. It introduces the project structure and how to set up a source code development environment for TNG from scratch.
+This guide is intended for developers who need to modify the TNG source code or debug/run tests locally. It introduces the project structure, how to build TNG and its images, how to run the test suites, and how releases are made.
 
 ## Project Structure Overview
 
 - **tng/**: Core service implementation, including command-line entry, configuration parsing, tunnel (Ingress/Egress), remote attestation, observability, and other main logic.
-- **tng/src/tunnel/provider/**: Pluggable remote-attestation provider layer (evidence, token, attester, converter, and verifier wiring) to support multiple providers for attestation-agent and attestation-service. Currently implements and defaults to CoCo provider. 
-- **tng-testsuite/**: Integration test suite, providing orchestratable "scenario tasks" covering typical usage such as HTTP proxy, transparent proxy, Socks5, and unidirectional/bidirectional remote attestation.
+- **tng/src/tunnel/provider/**: Pluggable remote-attestation provider layer (evidence, token, attester, converter, and verifier wiring) to support multiple providers for attestation-agent and attestation-service, such as CoCo and Intel Trust Authority (ITA).
+- **rats-cert/**: Remote attestation library used by `tng`: evidence collection and verification for the CoCo and ITA providers, the in-process attestation service (`coco-builtin-as-*` features), and fetching signed policies.
+- **tng-testsuite/**: Integration test suite, providing orchestratable "scenario tasks" covering typical usage such as HTTP proxy, transparent proxy, Socks5, OHTTP, and unidirectional/bidirectional remote attestation.
 - **tng-wasm/**: Browser-side JavaScript SDK, providing interfaces like `tng_fetch`, used in conjunction with OHTTP and remote attestation. For specific usage, see `tng-wasm/README.md`.
+- **cohere/docker/**: The Dockerfile for the published container images, plus the default configuration and entrypoints of the ingress and egress images.
+- **cohere/python/cohere-tng/**: The `cohere-tng` Python package, an `httpx` transport built as a native Rust extension with PyO3 and maturin.
+- **cohere/python/conseel/**: The `conseel` Python package, a drop-in encrypted transport for AI SDKs built on `cohere-tng`.
 - **docs/**: User and development documentation, including the configuration manual (`configuration.md`) and this developer guide.
 
 If you only want to compile and run TNG locally, you can focus on the `tng/` directory. If you need to debug a complete end-to-end scenario (e.g., "HTTP proxy + unidirectional remote attestation"), it is recommended to prioritize running the corresponding `tng-testsuite` case for reproduction.
@@ -16,216 +20,183 @@ If you only want to compile and run TNG locally, you can focus on the `tng/` dir
 
 This project requires two versions of the Rust toolchain:
 
-- `1.95.0`: This is the minimum supported Rust version required to build TNG binaries from source.
-- `nightly-2025-07-07`: This is the Rust toolchain required for building the TNG JavaScript SDK. For details, see [tng-wasm/README.md](../tng-wasm/README.md).
+- `1.95.0`: The toolchain used to build TNG from source. It is pinned in [rust-toolchain.toml](../rust-toolchain.toml), so `rustup` selects it automatically inside the repository.
+- `nightly-2025-07-07`: The toolchain required for building the TNG JavaScript SDK. For details, see [tng-wasm/README.md](../tng-wasm/README.md).
 
 ## Setting Up the Development Environment
 
-## Obtaining the Source Code
-
-To avoid dependency differences, we recommend using Docker to set up the development environment and compile TNG. The following steps will introduce the complete process:
-
-1. Docker Environment Preparation
+1. Clone the source code:
 
 ```sh
-docker run -it --name tng-dev --privileged --network=host registry.openanolis.cn/openanolis/anolisos:23 bash
-```
-The above command will create a container named tng-dev based on the Anolis23 distribution, which will serve as the development environment for TNG. We will continue with the subsequent steps inside this container.
-
-If you accidentally exit the container, use the following commands to re-enter:
-```sh
-docker start tng-dev
-docker exec -it tng-dev bash
+git clone https://github.com/cohere-ai/TNG.git
+cd TNG
 ```
 
-2. Clone the Source Code
+The default branch is `cohere`. Release tags are named `vX.Y.Z`.
+
+2. Install [rustup](https://rustup.rs). The first `cargo` command run in the repository installs the toolchain from `rust-toolchain.toml`.
+
+3. Install the build dependencies. On Ubuntu, at minimum:
 
 ```sh
-cd /
-git clone https://github.com/inclavare-containers/tng.git --branch <tag-name>
-cd tng
+sudo apt-get install -y build-essential protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang
 ```
-Now, you have the TNG repository source code in the `/tng` directory.
 
-## Compiling Components
+`protoc` is required: `rats-cert` generates gRPC code at build time. The test-runner image, [.github/test-deps/Dockerfile.test-runner](../.github/test-deps/Dockerfile.test-runner), carries the full set of dependencies used in CI, including the Intel DCAP quote verification library needed by the `coco-builtin-as-tdx` feature and the network tools the integration tests use (`iptables`, `iproute2`, `ipset`, `socat` and others).
 
-### tng Compilation
-
-1. Switch to the tng directory
+4. Build TNG:
 
 ```sh
-cd /tng
+make bin-build   # RUSTFLAGS="--cfg tokio_unstable" cargo build --release
 ```
 
-2. Install Rust
+The binary is written to `target/release/tng`.
+
+The in-process attestation service (`as_provider: coco_builtin`) is not built by default. Enable it with one or more of the `coco-builtin-as-*` features in [tng/Cargo.toml](../tng/Cargo.toml), for example `--features tng/coco-builtin-as-tdx`. Some of them need extra system libraries; [cohere/docker/Dockerfile](../cohere/docker/Dockerfile) lists them.
+
+### Checks Before Committing
+
+CI runs these on every pull request (`co-clippy.yml` and `co-fmt.yml`):
 
 ```sh
-cat <<EOF >> ~/.bashrc
-export RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static
-export RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup
-EOF
-
-. ~/.bashrc
-
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-mkdir -p ~/.cargo/
-cat <<EOF > ~/.cargo/config.toml
-[source.crates-io]
-replace-with = 'ustc'
-
-[source.ustc]
-registry = "git://mirrors.ustc.edu.cn/crates.io-index"
-EOF
-
-. "$HOME/.cargo/env"
-
+make clippy        # cargo clippy --all-targets -- -D warnings
+cargo fmt --check
 ```
-
-3. Compile and Install tng
-```sh
-cargo install --locked --path ./tng/ --root /usr/local/
-```
-
-Now, you can directly use the `tng` command to start a TNG instance.
 
 ## Running Tests
 
-Some tests depend on attestation-agent and attestation-service instances. The following steps will introduce how to set them up.
+Tests run in CI through [.github/workflows/co-test.yml](../.github/workflows/co-test.yml), which creates a GCP `c3-standard-8` Confidential VM with Intel TDX, starts the attestation services, and runs every suite inside the test-runner image. The steps below follow that workflow.
+
+> [!IMPORTANT]
+> Many tests collect real TDX evidence, so they must run on a TDX guest (`/dev/tdx_guest` must exist). The ITA tests also need an Intel Trust Authority API key in the `ITA_API_KEY` environment variable, and are skipped when it is not set.
 
 In this repository, integration tests are mainly concentrated in the `tng-testsuite` crate, covering common scenarios through different test files, such as:
 
 - **`tcp_two_way_ra.rs`**: Verifies TCP scenarios where both the client and server have remote attestation enabled (mutual RA).
 - **`http_encapulation_with_ingress_httpproxy.rs`**: Verifies encrypted HTTP scenarios where the client accesses via HTTP proxy and the server uses netfilter.
+- **`python_sdk.rs`**: Verifies the `cohere-tng` Python SDK against a TNG egress.
 - **`js_sdk_http.rs`**: Verifies scenarios using the browser-side JavaScript SDK (`tng-wasm`) with OHTTP and remote attestation.
 
-### Running attestation-agent
+### Starting the Attestation Services
 
-1. Obtain the latest attestation-agent RPM package from [here](https://github.com/inclavare-containers/guest-components/releases) and install it using yum.
+The test dependencies are defined in [.github/test-deps/docker-compose.yml](../.github/test-deps/docker-compose.yml):
 
-> [!TIP]
-> If you are using the Alibaba Cloud Linux distribution, you can directly install our provided version from the yum repository:
-> ```sh
-> yum install -y attestation-agent
-> ```
+- **keygen**: Generates the attestation service's token-signing certificate chain into `.github/test-deps/.keys/`.
+- **as**: The CoCo attestation service (`restful-as`), on port `8081`.
+- **cert-proxy**: Serves the token-signing certificate at `GET /certificate` and forwards all other requests to the attestation service, on port `8080`. This is the attestation service address the tests use.
+- **aa**: The CoCo attestation agent, built for TDX. It listens on `/run/confidential-containers/attestation-agent/attestation-agent.sock`.
+- **asr**: The CoCo [API Server Rest](https://github.com/confidential-containers/guest-components/tree/main/api-server-rest) (ASR), which proxies HTTP requests to the attestation agent, on `127.0.0.1:8006`.
 
-2. Run
+Start them and copy the certificates to the paths the tests read:
 
 ```sh
-RUST_LOG=debug attestation-agent --attestation_sock unix:///run/confidential-containers/attestation-agent/attestation-agent.sock
+cd .github/test-deps
+docker compose up -d --build --wait --wait-timeout 120
+./setup_test_certs.sh   # copies .keys/ to /tmp/as-full.pem and /tmp/as-ca.pem
+curl -sf http://127.0.0.1:8080/certificate | head -c 200
 ```
-
-This will run an attestation-agent instance and create a ttrpc listener at `/run/confidential-containers/attestation-agent/attestation-agent.sock`.
-
-### Running API Server Rest (ASR)
-
-Some tests (e.g. the `coco_asr` and `ita_asr` e2e tests in `rats-cert`) require a running [API Server Rest](https://github.com/confidential-containers/guest-components/tree/main/api-server-rest) (ASR) instance that proxies HTTP requests to the attestation-agent. The ASR must be reachable at `http://127.0.0.1:8006`.
 
 > [!NOTE]
-> At the time of writing, the upstream ASR is missing two interface features needed by TNG: an `encoding` parameter on `/aa/evidence` for hex-encoded runtime data, and an `/aa/additional_evidence` endpoint for fetching additional evidence (for devices such as GPU). These are implemented in the [Cohere fork](https://github.com/cohere-ai/guest-components/tree/cohere) ([PR](https://github.com/cohere-ai/guest-components/pull/2)).
-
-1. Clone and run the ASR from the Cohere fork with the `attestation` feature enabled:
-
-```sh
-git clone https://github.com/cohere-ai/guest-components.git --branch cohere
-cd guest-components
-cargo run --release -p api-server-rest -- --features attestation
-```
-
-This will listen on `127.0.0.1:8006` by default and connect to the attestation-agent at its default Unix socket path (`/run/confidential-containers/attestation-agent/attestation-agent.sock`). Ensure the attestation-agent is already running before starting the ASR.
+> The upstream ASR is missing two interface features needed by TNG: an `encoding` parameter on `/aa/evidence` for hex-encoded runtime data, and an `/aa/additional_evidence` endpoint for fetching additional evidence (for devices such as GPU). These are implemented in the [Cohere fork](https://github.com/cohere-ai/guest-components/tree/cohere) ([PR](https://github.com/cohere-ai/guest-components/pull/2)), which is what [Dockerfile.asr](../.github/test-deps/Dockerfile.asr) installs.
 
 > [!IMPORTANT]
-> The ASR rejects any request whose source IP is not loopback (`127.0.0.1`), returning `403 Forbidden`. The tests and the ASR must therefore run on the same host.
+> The ASR rejects any request whose source IP is not loopback (`127.0.0.1`), returning `403 Forbidden`. The tests and the ASR must therefore run on the same host, which is why the `asr` service uses host networking.
 
-### Running attestation-service
-
-1. Obtain the latest trustee RPM package from [here](https://github.com/openanolis/trustee/releases) and install it using yum.
-
-> [!TIP]
-> If you are using the Alibaba Cloud Linux distribution, you can directly install our provided version from the yum repository:
-> ```sh
-> yum install -y trustee
-> ```
-
-2. Prepare Certificates
+### Building the Test Runner
 
 ```sh
-openssl ecparam -genkey -name prime256v1 -out /tmp/as-ca.key
-openssl req -x509 -sha256 -nodes -days 365 -key /tmp/as-ca.key -out /tmp/as-ca.pem -subj "/O=Trustee CA" \
-      -addext keyUsage=critical,cRLSign,keyCertSign,digitalSignature
-openssl ecparam -genkey -name prime256v1 -out /tmp/as.key
-openssl req -new -key /tmp/as.key -out /tmp/as.csr -subj "/CN=Trustee/O=Trustee CA"
-openssl x509 -req -in /tmp/as.csr -CA /tmp/as-ca.pem -CAkey /tmp/as-ca.key -CAcreateserial -out /tmp/as.pem -days 365 -extensions v3_req -extfile <(echo -e "[v3_req]\nsubjectKeyIdentifier = hash") -sha256
-
-cat /tmp/as.pem /tmp/as-ca.pem > /tmp/as-full.pem
-
-cat config.json | jq '.attestation_token_broker.signer.cert_path="/tmp/as-full.pem" | .attestation_token_broker.signer.key_path="/tmp/as.key" | .rvps_config={"type":"BuiltIn","storage":{"type":"LocalFs"}}' > config_with_cert.json
+docker build -t test-runner -f .github/test-deps/Dockerfile.test-runner .github/test-deps
 ```
 
-3. Configure Debug Policy (Optional)
-
-If you want to skip strict Attestation checks during development or testing, you can configure a default-allow OPA policy. **Note: This should absolutely not be used in production.**
+The commands below run inside it, with the repository mounted at `/workspace`. Run them from the repository root:
 
 ```sh
-mkdir -p /opt/trustee/attestation-service/policies/opa
-cat <<EOF > /opt/trustee/attestation-service/policies/opa/default.rego
-package policy
-
-default executables := 3
-default hardware := 2
-default configuration := 2
-default file_system := 2
-EOF
+docker run --rm -it --privileged --network host \
+  -e RUST_LOG=warn \
+  -e ITA_API_KEY \
+  -v "$PWD":/workspace \
+  -v /run/confidential-containers/attestation-agent:/run/confidential-containers/attestation-agent \
+  -v /tmp/as-full.pem:/tmp/as-full.pem:ro \
+  -v /tmp/as-ca.pem:/tmp/as-ca.pem:ro \
+  test-runner bash
 ```
 
-4. Run
+The integration tests create network namespaces and iptables rules, so the container must be privileged and use host networking.
+
+### Skipped Tests
+
+[.github/test-skip-list.txt](../.github/test-skip-list.txt) lists tests CI skips, one per line, each with a comment saying why. CI passes each entry to `cargo test` as `--skip <name>`. The commands below build these flags inline.
+
+### Unit Tests
 
 ```sh
-RUST_LOG=debug restful-as --socket 0.0.0.0:8080 --config-file /trustee/attestation-service/config_with_cert.json
+cargo test --workspace --bins --lib --features tng/coco-builtin-as-tdx -- --nocapture \
+  $(sed 's/#.*//' .github/test-skip-list.txt | xargs -n1 printf -- '--skip %s ')
 ```
 
-This will run an attestation-service instance and create an HTTP RESTful listener at `0.0.0.0:8080`.
-
-### Run TNG Tests
-
-1. Install Dependencies
-
-The test-runner image (`.github/test-deps/Dockerfile.test-runner`) carries the full set. Outside it, at minimum:
+### Integration Tests
 
 ```sh
-apt-get update && apt-get install -y curl iptables && update-alternatives --set iptables /usr/sbin/iptables-nft
+cargo test --no-default-features --features on-source-code --package tng-testsuite -- --nocapture \
+  $(sed 's/#.*//' .github/test-skip-list.txt | xargs -n1 printf -- '--skip %s ')
 ```
 
-2. Run Tests
+To run a single scenario, add `--test <name>`, for example `--test tcp_two_way_ra`.
+
+### Python SDK Tests
 
 ```sh
-make run-test
+apt-get update && apt-get install -y --no-install-recommends python3-venv
+python3 -m venv /workspace/.venv
+/workspace/.venv/bin/pip install maturin httpx pytest
+(cd cohere/python/cohere-tng && /workspace/.venv/bin/maturin develop)
+/workspace/.venv/bin/pip install -e cohere/python/conseel
+
+# Unit tests, no network needed
+/workspace/.venv/bin/pytest cohere/python/cohere-tng/tests/ -v
+
+# Integration tests against a TNG egress
+cargo test --no-default-features --features on-source-code,python-sdk \
+  --package tng-testsuite --test python_sdk -- --nocapture
 ```
 
-## Build and Deployment
+## Building the Container Images
 
-TNG is commonly deployed as a container image. The following recommended build process is suitable for release or installation in a target environment.
+All published images are built from [cohere/docker/Dockerfile](../cohere/docker/Dockerfile), with the repository root as the build context. Pick the image with `--target`:
 
-### Build and Deploy TNG as a Container Image
-
-1. Pull the Code
-
-```sh
-git clone git@github.com:inclavare-containers/tng.git --branch <tag-name>
-cd tng
-git submodule update --init
-```
-
-2. Build with Docker
-
-This will completely recompile TNG and its dependencies from source:
+| Target | Published as | Description |
+| --- | --- | --- |
+| `tng` | `ghcr.io/cohere-ai/tng` | Plain TNG with no baked-in configuration. |
+| `ingress` | `ghcr.io/cohere-ai/tng-ingress` | Pre-configured ingress. See [cohere/docker/ingress/README.md](../cohere/docker/ingress/README.md). |
+| `egress-ita` | `ghcr.io/cohere-ai/tng-ita` | Pre-configured OHTTP egress using Intel Trust Authority. |
+| `egress-trustee` | `ghcr.io/cohere-ai/tng-trustee` | Pre-configured OHTTP egress for the background check model. |
 
 ```sh
-docker build -t tng:latest --target release -f Dockerfile .
-```
-
-3. Run TNG as a Container
-
-```sh
+docker build -f cohere/docker/Dockerfile --target tng -t tng:latest .
 docker run -it --rm --privileged --network host --cgroupns=host tng:latest tng launch --config-content='<your config json string>'
 ```
+
+The in-process attestation service verifiers are controlled by the `BUILTIN_AS_TDX`, `BUILTIN_AS_AZSNP` and `BUILTIN_AS_NVIDIA` build arguments, all on by default. Each takes `1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off`. Turning all three off builds TNG with no verifier code and none of their system libraries:
+
+```sh
+docker build -f cohere/docker/Dockerfile --target tng \
+  --build-arg BUILTIN_AS_TDX=0 --build-arg BUILTIN_AS_AZSNP=0 --build-arg BUILTIN_AS_NVIDIA=0 \
+  -t tng:minimal .
+```
+
+The TDX verifier depends on Intel's DCAP library, which is x86_64 only, so an arm64 build must set `BUILTIN_AS_TDX=0`. The comments at the top of the Dockerfile explain each verifier's dependencies.
+
+CI builds all four images on every push to `cohere` (`co-build-docker.yml`), tags them `cohere` and `sha-<commit>`, and attaches build provenance and SBOM attestations.
+
+## Release Process
+
+Releases are driven by the version in the workspace [Cargo.toml](../Cargo.toml):
+
+1. Run the **Cohere Bump Version** workflow (`co-bump-version.yml`) manually. It computes the next version from the conventional commits since the last tag with `git-cliff`, updates `Cargo.toml` and `Cargo.lock`, and pushes a `release/vX.Y.Z` branch. Open a pull request from that branch into `cohere`.
+2. Merging the pull request changes `Cargo.toml` on `cohere`, which triggers **Cohere Auto Release Check** (`co-auto-release-check.yml`). If the version has no tag yet, it dispatches **Cohere Release** (`co-release.yml`).
+3. `co-release.yml` waits for every other workflow on the commit to succeed, then:
+   - publishes the `cohere-tng` and `conseel` wheels that `co-build-python.yml` built for that commit to PyPI,
+   - tags the four images built for that commit with the version and `latest`,
+   - creates the `vX.Y.Z` tag and GitHub release.
+
+PyPI uploads cannot be undone. If a release job fails after publishing, use "Re-run failed jobs" on the same run rather than dispatching a new one.

@@ -1,7 +1,5 @@
 ## Use Case 3: Mutual Remote Attestation between Mesh Cluster Nodes
 
-[中文文档](scenario_mesh_two_way_ra_zh.md)
-
 ### Scenario Overview
 
 - **Goal**: In a cluster composed of multiple confidential computing nodes, establish mutual remote attestation and encrypted channels for communication between nodes, allowing mutual access only when "I trust you, and you trust me."

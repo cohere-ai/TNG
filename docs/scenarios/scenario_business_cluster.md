@@ -1,7 +1,5 @@
 ## Use Case 4: Client Accessing Business Cluster Scenario (OHTTP Support)
 
-[中文文档](scenario_business_cluster_zh.md)
-
 ### Scenario Overview
 
 - **Goal**: The client accesses an existing HTTP business cluster, and the intent is to establish a secure tunnel based on the OHTTP protocol between the client and the cluster without disrupting existing Layer 7 infrastructure such as load balancers and routing rules.

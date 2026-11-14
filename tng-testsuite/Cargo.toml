@@ -20,7 +20,6 @@ http = {workspace = true}
 hyper = {workspace = true}
 itertools = {workspace = true}
 netns-rs = {workspace = true}
-nix = {workspace = true, features = ["signal", "process"]}
 opentelemetry-stdout = {workspace = true}
 portpicker = {workspace = true}
 rand = {workspace = true}
@@ -45,6 +44,4 @@ serial_test = {workspace = true}
 default = ["on-source-code"]
 js-sdk = ["dep:chromedriver-manager", "dep:thirtyfour"]
 python-sdk = []
-on-bin = []
-on-podman = []
 on-source-code = ["dep:tng"]

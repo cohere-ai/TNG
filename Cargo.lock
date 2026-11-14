@@ -8298,7 +8298,6 @@ dependencies = [
  "hyper",
  "itertools 0.14.0",
  "netns-rs",
- "nix 0.30.1",
  "opentelemetry-stdout",
  "portpicker",
  "rand 0.9.5",
