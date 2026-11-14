@@ -688,6 +688,7 @@ When `as_provider` is set to `"ita"`, the Verify configuration uses the followin
 - **`api_key`** (string, optional): Intel Trust Authority API key. Can be set directly in the config or via the **`ITA_API_KEY`** environment variable. If both are set, the config value takes precedence.
 - **`ita_jwks_addr`** (string, optional, default is `"https://portal.trustauthority.intel.com"`): Intel Trust Authority portal URL used to fetch JWKS signing keys for token verification
 - **`policy_ids`** (array [string], optional, default is empty): List of ITA policy IDs that must match for attestation to succeed
+- **`policy_id_source`** (object, optional): Fetch the policy ID from a published release instead of `policy_ids`; the two are mutually exclusive. See [ITA policy ID from a published release](#ita-policy-id-from-a-published-release).
 
 Example:
 
@@ -701,6 +702,28 @@ Example:
 
 > [!NOTE]
 > The `api_key` can be omitted from the config JSON if the `ITA_API_KEY` environment variable is set. TNG automatically reads it from the environment at startup. This is the recommended approach for API key provisioning.
+
+###### ITA policy ID from a published release
+
+With `policy_id_source`, TNG requests a JSON file with a `policy_id` string field on every attestation, and asks ITA to appraise the evidence against that policy. A request takes at most 5 seconds. If it fails, the last ID TNG fetched is used until it is `max_age` seconds old, after which attestation fails until a request succeeds again. With `provenance`, the file is verified as for [Policies from a published release](#policies-from-a-published-release): it must be listed as a subject of the bundle, or be the predicate of the signed statement itself. A release signed before the one in use is rejected.
+
+- **`base_url`**, **`provenance`**: As for [Policies from a published release](#policies-from-a-published-release).
+- **`file`** (string, required): The file carrying the policy ID, as a name under `base_url` or a full URL.
+- **`max_age`** (integer, optional, default is `86400`): Seconds the last fetched ID is used for while requests fail.
+
+```json
+"policy_id_source": {
+    "base_url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+    "file": "predicate.json",
+    "provenance": {
+        "bundle": "attestation-bundle.sigstore.json",
+        "repo": "cohere-ai/integritee",
+        "signer_workflow": ".github/workflows/release-policy.yaml",
+        "source_ref": "refs/heads/main",
+        "predicate_type": "https://cohere.com/attestation-policy/v1"
+    }
+}
+```
 
 <a name="using-the-builtin-attestation-service-provider"></a>
 ##### Using the Builtin Attestation Service Provider
@@ -853,6 +876,7 @@ When `aa_provider` and `as_provider` are set to `"ita"`, the Attest configuratio
 - **`as_addr`** (string, optional, default is `"https://api.trustauthority.intel.com"`): Intel Trust Authority API base URL
 - **`api_key`** (string, optional): Intel Trust Authority API key. Can also be set via the **`ITA_API_KEY`** environment variable.
 - **`policy_ids`** (array [string], optional, default is empty): List of ITA policy IDs that must match for attestation to succeed
+- **`policy_id_source`** (object, optional): See [ITA policy ID from a published release](#ita-policy-id-from-a-published-release).
 - **`max_retries`** (int, optional, default value is 3): Same behavior as described above for the CoCo provider.
 - **`ita_max_retries`** (int, optional, default value is 4): Maximum number of retries for individual ITA API calls (nonce and attest endpoints). These retries only apply to transient server errors (5xx), rate limiting (429), and GPU evidence verification failures; non-retryable errors such as attestation policy denials are not retried.
 - **`ita_retry_initial_delay_ms`** (int, optional, default value is 500): Initial delay in milliseconds between ITA API retries. The delay increases exponentially on subsequent retries.

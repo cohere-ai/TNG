@@ -119,6 +119,10 @@ pub enum Error {
     #[error("Failed to fetch the published files")]
     ReleaseFetchFailed(#[source] std::sync::Arc<anyhow::Error>),
 
+    #[cfg(feature = "provenance")]
+    #[error("No ITA policy ID fetched within 'max_age'")]
+    ItaPolicyIdUnavailable(#[source] std::sync::Arc<anyhow::Error>),
+
     #[cfg(feature = "__coco-builtin-as")]
     #[error("The policies are older than 'max_age': no policy fetch succeeded since")]
     CocoBuiltinAsPoliciesExpired,

@@ -109,7 +109,7 @@ x509-cert = {workspace = true}
 async-tungstenite = {version = "0.25.1", optional = true, features = ["tokio-runtime"]}
 axum = {workspace = true, default-features = true, features = ["tokio", "http1", "http2", "ws"]}
 notify = {workspace = true}
-rats-cert = {path = "../rats-cert", default-features = false, features = ["crypto-rustcrypto", "attester-coco", "verifier-coco", "attester-ita", "verifier-ita"]}
+rats-cert = {path = "../rats-cert", default-features = false, features = ["crypto-rustcrypto", "attester-coco", "verifier-coco", "attester-ita", "verifier-ita", "provenance"]}
 socket2 = {workspace = true}
 tokio = {workspace = true, default-features = true, features = ["rt-multi-thread", "time", "process"]}
 tower-http = {workspace = true, features = ["trace", "set-header", "cors", "compression-br", "compression-gzip", "compression-zstd"]}

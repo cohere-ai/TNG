@@ -72,6 +72,8 @@ pub struct ItaConverter {
     api_key: String,
     base_url: String,
     policy_ids: Vec<String>,
+    #[cfg(feature = "provenance")]
+    policy_id_source: Option<Box<super::policy_id_source::PolicyIdSource>>,
     max_retries: usize,
     retry_initial_delay: Duration,
     retry_max_delay: Duration,
@@ -84,6 +86,8 @@ impl ItaConverter {
             api_key: api_key.to_string(),
             base_url: base_url.trim_end_matches('/').to_string(),
             policy_ids: policy_ids.to_vec(),
+            #[cfg(feature = "provenance")]
+            policy_id_source: None,
             max_retries: ITA_MAX_RETRIES,
             retry_initial_delay: ITA_RETRY_INITIAL_DELAY,
             retry_max_delay: ITA_RETRY_MAX_DELAY,
@@ -105,8 +109,28 @@ impl ItaConverter {
         self
     }
 
-    fn check_policy_matching(&self, token: &ItaToken) -> Result<()> {
-        if self.policy_ids.is_empty() {
+    /// Requests the policy ID fetched from `args` on every conversion, instead of `policy_ids`.
+    #[cfg(feature = "provenance")]
+    pub fn with_policy_id_source(
+        mut self,
+        args: &super::policy_id_source::PolicyIdSourceArgs,
+    ) -> Result<Self> {
+        self.policy_id_source = Some(Box::new(super::policy_id_source::PolicyIdSource::new(
+            args,
+        )?));
+        Ok(self)
+    }
+
+    async fn policy_ids(&self) -> Result<Vec<String>> {
+        #[cfg(feature = "provenance")]
+        if let Some(source) = &self.policy_id_source {
+            return Ok(vec![source.current().await?]);
+        }
+        Ok(self.policy_ids.clone())
+    }
+
+    fn check_policy_matching(token: &ItaToken, policy_ids: &[String]) -> Result<()> {
+        if policy_ids.is_empty() {
             return Ok(());
         }
 
@@ -127,7 +151,7 @@ impl ItaConverter {
             .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
             .collect();
 
-        for expected_id in &self.policy_ids {
+        for expected_id in policy_ids {
             if !matched_ids.contains(expected_id.as_str()) {
                 return Err(Error::ItaError(format!(
                     "Expected policy ID '{expected_id}' not found in policy_ids_matched"
@@ -260,8 +284,9 @@ impl GenericConverter for ItaConverter {
                 arch: gpu.arch.clone(),
             });
 
+        let policy_ids = self.policy_ids().await?;
         let body = ItaAttestRequest {
-            policy_ids: self.policy_ids.clone(),
+            policy_ids: policy_ids.clone(),
             token_signing_alg: "PS384".to_string(),
             policy_must_match: false,
             tdx,
@@ -290,7 +315,7 @@ impl GenericConverter for ItaConverter {
 
         tracing::debug!(token = %attest_resp.token, "ITA attest request succeeded");
         let token = ItaToken::new(attest_resp.token)?;
-        if let Err(e) = self.check_policy_matching(&token) {
+        if let Err(e) = Self::check_policy_matching(&token, &policy_ids) {
             tracing::error!(token = %token.as_str(), error = %e, "Policy matching failed");
             return Err(e);
         }
@@ -494,29 +519,26 @@ mod tests {
 
     #[test]
     fn policy_check_skipped_when_no_ids_configured() {
-        let converter = ItaConverter::new("key", "https://example.com", &[]).unwrap();
         let token = ItaToken::new("not-even-a-jwt".into()).unwrap();
-        converter.check_policy_matching(&token).unwrap();
+        ItaConverter::check_policy_matching(&token, &[]).unwrap();
     }
 
     #[test]
     fn policy_check_passes_when_all_ids_matched() {
         let ids = vec!["p1".into(), "p2".into()];
-        let converter = ItaConverter::new("key", "https://example.com", &ids).unwrap();
         let token = make_token(&serde_json::json!({
             "policy_ids_matched": [{"id": "p1"}, {"id": "p2"}, {"id": "p3"}]
         }));
-        converter.check_policy_matching(&token).unwrap();
+        ItaConverter::check_policy_matching(&token, &ids).unwrap();
     }
 
     #[test]
     fn policy_check_fails_when_expected_id_missing() {
         let ids = vec!["p1".into(), "p2".into()];
-        let converter = ItaConverter::new("key", "https://example.com", &ids).unwrap();
         let token = make_token(&serde_json::json!({
             "policy_ids_matched": [{"id": "p1"}]
         }));
-        let err = converter.check_policy_matching(&token).unwrap_err();
+        let err = ItaConverter::check_policy_matching(&token, &ids).unwrap_err();
         assert!(
             matches!(&err, Error::ItaError(msg) if msg.contains("p2")),
             "expected error about missing p2, got: {err:?}"
@@ -526,9 +548,8 @@ mod tests {
     #[test]
     fn policy_check_fails_when_field_missing() {
         let ids = vec!["p1".into()];
-        let converter = ItaConverter::new("key", "https://example.com", &ids).unwrap();
         let token = make_token(&serde_json::json!({"sub": "test"}));
-        assert!(converter.check_policy_matching(&token).is_err());
+        assert!(ItaConverter::check_policy_matching(&token, &ids).is_err());
     }
 
     #[tokio::test]
@@ -553,6 +574,38 @@ mod tests {
         let converter = ItaConverter::new("test-key", &server.uri(), &policy_ids).unwrap();
         let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
         converter.convert(&evidence).await.unwrap();
+    }
+
+    /// The fetched ID is the one requested, and the one the token must have matched.
+    #[cfg(feature = "provenance")]
+    #[tokio::test]
+    async fn convert_requests_and_checks_the_fetched_policy_id() {
+        use super::super::policy_id_source::tests::test_source;
+        use crate::release::tests::publish;
+        use wiremock::matchers::body_partial_json;
+
+        let server = MockServer::start().await;
+        publish(&server, &[("predicate.json", br#"{"policy_id": "p1"}"#)]).await;
+        let only_p2_matched = make_jwt(&serde_json::json!({"policy_ids_matched": [{"id": "p2"}]}));
+        Mock::given(method("POST"))
+            .and(path(ITA_ATTEST_PATH))
+            .and(body_partial_json(serde_json::json!({"policy_ids": ["p1"]})))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"token": only_p2_matched})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut converter = ItaConverter::new("key", &server.uri(), &[]).unwrap();
+        converter.policy_id_source = Some(Box::new(test_source(server.uri(), false)));
+        let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
+        let err = converter.convert(&evidence).await.unwrap_err();
+        assert!(
+            matches!(&err, Error::ItaError(msg) if msg.contains("'p1'")),
+            "got {err:?}"
+        );
     }
 
     #[tokio::test]
