@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::errors::*;
 use crate::tee::GenericConverter;
 
-use super::evidence::{ItaEvidence, ItaNonce};
+use super::evidence::{ItaEvidence, ItaGpuDevice, ItaNonce};
 use super::token::ItaToken;
 
 /// ITA delegates GPU evidence verification to NVIDIA's Remote Attestation Service
@@ -48,13 +48,14 @@ struct TdxEvidence {
     runtime_data: Option<String>,
 }
 
+/// The deprecated single `evidence` field carries only one GPU, so multi-GPU
+/// guests must use `evidence_list`.
 #[derive(Serialize)]
 struct NvgpuEvidence {
-    evidence: String,
+    evidence_list: Vec<ItaGpuDevice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     verifier_nonce: Option<ItaNonce>,
     gpu_nonce: String,
-    certificate: String,
     arch: String,
 }
 
@@ -253,10 +254,9 @@ impl GenericConverter for ItaConverter {
             .nvgpu_evidence
             .as_ref()
             .map(|gpu| NvgpuEvidence {
-                evidence: gpu.evidence.clone(),
+                evidence_list: gpu.devices.clone(),
                 verifier_nonce: in_evidence.nonce.clone(),
                 gpu_nonce: hex::encode(gpu.runtime_data_hash),
-                certificate: gpu.certificate.clone(),
                 arch: gpu.arch.clone(),
             });
 
@@ -400,6 +400,52 @@ mod tests {
         let evidence = ItaEvidence::new(b"fake-quote".to_vec(), None, b"{}".to_vec(), None);
         let token = converter.convert(&evidence).await.unwrap();
         assert_eq!(token.as_str(), expected_jwt);
+    }
+
+    #[tokio::test]
+    async fn convert_sends_every_gpu_in_evidence_list() {
+        use super::super::evidence::ItaNvgpuEvidence;
+        use wiremock::matchers::body_partial_json;
+
+        let server = MockServer::start().await;
+        let devices: Vec<ItaGpuDevice> = (0..2)
+            .map(|i| ItaGpuDevice {
+                evidence: format!("ev-{i}"),
+                certificate: format!("cert-{i}"),
+            })
+            .collect();
+
+        Mock::given(method("POST"))
+            .and(path(ITA_ATTEST_PATH))
+            .and(body_partial_json(serde_json::json!({
+                "nvgpu": {
+                    "evidence_list": [
+                        {"evidence": "ev-0", "certificate": "cert-0"},
+                        {"evidence": "ev-1", "certificate": "cert-1"}
+                    ],
+                    "gpu_nonce": hex::encode([0xCD; 32]),
+                    "arch": "BLACKWELL"
+                }
+            })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"token": "jwt"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let converter = ItaConverter::new("test-key", &server.uri(), &[]).unwrap();
+        let evidence = ItaEvidence::new(
+            b"fake-quote".to_vec(),
+            None,
+            b"{}".to_vec(),
+            Some(ItaNvgpuEvidence {
+                devices,
+                arch: "BLACKWELL".into(),
+                runtime_data_hash: [0xCD; 32],
+            }),
+        );
+        converter.convert(&evidence).await.unwrap();
     }
 
     // -- wiremock: retry paths --

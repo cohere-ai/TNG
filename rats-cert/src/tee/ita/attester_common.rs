@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256, Sha512};
 
 use crate::errors::*;
 
-use super::evidence::{ItaNonce, ItaNvgpuEvidence};
+use super::evidence::{ItaGpuDevice, ItaNonce, ItaNvgpuEvidence};
 
 /// GPU device evidence as returned by the CoCo AA / ASR `get_additional_evidence()`.
 ///
@@ -48,24 +48,32 @@ pub(crate) fn parse_gpu_evidence(
     let gpu_list: GpuDeviceList =
         serde_json::from_value(nvidia_value).map_err(Error::ParseAdditionalEvidenceJsonFailed)?;
 
-    let device = match gpu_list.device_evidence_list.into_iter().next() {
-        Some(d) => d,
+    let arch = match gpu_list.device_evidence_list.first() {
+        Some(d) => d.arch.clone(),
         None => {
             tracing::warn!("nvidia device_evidence_list is empty; skipping GPU attestation");
             return Ok(None);
         }
     };
 
-    // ITA expects evidence as base64(hex(raw_bytes)), while AA/ASR provides base64(raw_bytes).
-    let raw = BASE64
-        .decode(&device.evidence)
-        .map_err(Error::Base64DecodeFailed)?;
-    let reencoded_evidence = BASE64.encode(hex::encode(&raw).as_bytes());
+    let devices = gpu_list
+        .device_evidence_list
+        .into_iter()
+        .map(|d| {
+            // Reject malformed evidence here rather than at ITA.
+            BASE64
+                .decode(&d.evidence)
+                .map_err(Error::Base64DecodeFailed)?;
+            Ok(ItaGpuDevice {
+                evidence: d.evidence,
+                certificate: d.certificate,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(Some(ItaNvgpuEvidence {
-        evidence: reencoded_evidence,
-        certificate: device.certificate,
-        arch: device.arch,
+        devices,
+        arch,
         runtime_data_hash,
     }))
 }
@@ -151,11 +159,47 @@ mod tests {
             parse_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), hash).unwrap();
 
         let gpu = result.expect("should return Some for valid nvidia blob");
-        assert_eq!(gpu.certificate, cert);
         assert_eq!(gpu.arch, arch);
         assert_eq!(gpu.runtime_data_hash, hash);
-        let expected_evidence = BASE64.encode(hex::encode(&raw_bytes).as_bytes());
-        assert_eq!(gpu.evidence, expected_evidence);
+        assert_eq!(gpu.devices.len(), 1);
+        assert_eq!(gpu.devices[0].certificate, cert);
+        assert_eq!(gpu.devices[0].evidence, input_b64);
+    }
+
+    #[test]
+    fn parse_gpu_evidence_keeps_every_device() {
+        let devices: Vec<_> = (0u8..8)
+            .map(|i| {
+                serde_json::json!({
+                    "evidence": BASE64.encode([i]),
+                    "certificate": format!("cert-{i}"),
+                    "arch": "BLACKWELL"
+                })
+            })
+            .collect();
+        let blob = serde_json::json!({"nvidia": {"device_evidence_list": devices}});
+        let gpu = parse_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), [0u8; 32])
+            .unwrap()
+            .unwrap();
+        assert_eq!(gpu.devices.len(), 8);
+        for (i, d) in gpu.devices.iter().enumerate() {
+            assert_eq!(d.evidence, BASE64.encode([i as u8]));
+            assert_eq!(d.certificate, format!("cert-{i}"));
+        }
+    }
+
+    #[test]
+    fn parse_gpu_evidence_invalid_base64() {
+        let blob = serde_json::json!({
+            "nvidia": {"device_evidence_list": [{
+                "evidence": "!!!not-base64!!!",
+                "certificate": "c",
+                "arch": "BLACKWELL"
+            }]}
+        });
+        assert!(
+            parse_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), [0u8; 32]).is_err()
+        );
     }
 
     #[test]
