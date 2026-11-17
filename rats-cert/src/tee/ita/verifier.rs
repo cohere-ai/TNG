@@ -27,6 +27,9 @@ static JWKS_CACHE: LazyLock<RwLock<HashMap<String, Vec<CachedKey>>>> =
 pub struct ItaVerifier {
     jwks_url: String,
     policy_ids: Vec<String>,
+    policy_hashes: Vec<String>,
+    #[cfg(feature = "verifier-ita-rp-policy")]
+    rp_policy_source: Option<std::sync::Arc<super::rp_policy_source::RpPolicySource>>,
 }
 
 impl ItaVerifier {
@@ -38,7 +41,40 @@ impl ItaVerifier {
                 ITA_JWKS_PATH
             ),
             policy_ids: policy_ids.to_vec(),
+            policy_hashes: vec![],
+            #[cfg(feature = "verifier-ita-rp-policy")]
+            rp_policy_source: None,
         })
+    }
+
+    /// Requires each hash in the token's `policy_ids_matched`, as with `policy_ids`, in an entry
+    /// whose ID is also allowed.
+    pub fn with_policy_hashes(mut self, policy_hashes: &[String]) -> Self {
+        self.policy_hashes = policy_hashes.to_vec();
+        self
+    }
+
+    /// Requires the token claims to be allowed by the RP policy fetched from `args`.
+    #[cfg(feature = "verifier-ita-rp-policy")]
+    pub fn with_rp_policy_source(
+        mut self,
+        args: &super::rp_policy_source::RpPolicySourceArgs,
+    ) -> Result<Self> {
+        self.rp_policy_source = Some(std::sync::Arc::new(
+            super::rp_policy_source::RpPolicySource::new(args)?,
+        ));
+        Ok(self)
+    }
+
+    /// Returns the task keeping the RP policy current while this verifier lives, if it has one.
+    /// The caller decides where to run it.
+    #[cfg(feature = "verifier-ita-rp-policy")]
+    pub fn rp_policy_refresh(
+        &self,
+    ) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
+        super::rp_policy_source::RpPolicySource::keep_current(std::sync::Arc::downgrade(
+            self.rp_policy_source.as_ref()?,
+        ))
     }
 
     async fn verify_jwt(&self, token: &str) -> Result<Value> {
@@ -235,33 +271,47 @@ impl ItaVerifier {
             }
         }
 
-        if self.policy_ids.is_empty() {
+        if self.policy_ids.is_empty() && self.policy_hashes.is_empty() {
             return Ok(());
         }
 
-        if let Some(matched) = claims.get("policy_ids_matched") {
-            if let Some(arr) = matched.as_array() {
-                let matched_ids: std::collections::HashSet<&str> = arr
-                    .iter()
-                    .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
-                    .collect();
-
-                for expected_id in &self.policy_ids {
-                    if !matched_ids.contains(expected_id.as_str()) {
-                        return Err(Error::ItaError(format!(
-                            "Expected policy ID '{expected_id}' not found in policy_ids_matched"
-                        )));
-                    }
-                }
-            } else {
-                return Err(Error::ItaError(
-                    "policy_ids_matched is not an array".to_string(),
-                ));
-            }
-        } else {
+        let Some(matched) = claims.get("policy_ids_matched") else {
             return Err(Error::ItaError(
-                "ITA token missing policy_ids_matched, but policy_ids are configured".to_string(),
+                "ITA token missing policy_ids_matched, but policy_ids or policy_hashes are configured"
+                    .to_string(),
             ));
+        };
+        let Some(arr) = matched.as_array() else {
+            return Err(Error::ItaError(
+                "policy_ids_matched is not an array".to_string(),
+            ));
+        };
+        // An entry only counts if both its ID and hash are allowed, so that an allowed ID and an
+        // allowed hash can't come from different policies.
+        let allowed = |entry: &Value, field: &str, expected: &[String]| {
+            expected.is_empty()
+                || entry
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| expected.iter().any(|e| e == value))
+        };
+        let arr: Vec<&Value> = arr
+            .iter()
+            .filter(|entry| {
+                allowed(entry, "id", &self.policy_ids)
+                    && allowed(entry, "hash", &self.policy_hashes)
+            })
+            .collect();
+        for (field, expected) in [("id", &self.policy_ids), ("hash", &self.policy_hashes)] {
+            let matched: std::collections::HashSet<&str> = arr
+                .iter()
+                .filter_map(|v| v.get(field).and_then(|value| value.as_str()))
+                .collect();
+            if let Some(missing) = expected.iter().find(|e| !matched.contains(e.as_str())) {
+                return Err(Error::ItaError(format!(
+                    "Expected policy {field} '{missing}' not found in policy_ids_matched"
+                )));
+            }
         }
 
         Ok(())
@@ -279,6 +329,10 @@ impl GenericVerifier for ItaVerifier {
         let claims = self.verify_jwt(token).await?;
         Self::check_runtime_data_binding(&claims, report_data)?;
         self.check_policy_matching(&claims)?;
+        #[cfg(feature = "verifier-ita-rp-policy")]
+        if let Some(source) = &self.rp_policy_source {
+            source.check(&claims).await?;
+        }
 
         Ok(())
     }
@@ -471,6 +525,25 @@ mod tests {
             "policy_ids_matched": [{"id": "p1"}]
         });
         assert!(v.check_policy_matching(&claims).is_err());
+    }
+
+    #[test]
+    fn policy_hashes_checked_like_ids() {
+        let v = verifier(&[]).with_policy_hashes(&["h1".into()]);
+        v.check_policy_matching(&json!({"policy_ids_matched": [{"id": "p1", "hash": "h1"}]}))
+            .unwrap();
+        assert!(v
+            .check_policy_matching(&json!({"policy_ids_matched": [{"id": "p1", "hash": "h2"}]}))
+            .is_err());
+        assert!(v.check_policy_matching(&json!({})).is_err());
+
+        let v = verifier(&["p1"]).with_policy_hashes(&["h1".into()]);
+        assert!(v
+            .check_policy_matching(&json!({"policy_ids_matched": [
+                {"id": "p1", "hash": "h2"},
+                {"id": "p2", "hash": "h1"},
+            ]}))
+            .is_err());
     }
 
     #[test]

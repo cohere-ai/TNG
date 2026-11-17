@@ -18,6 +18,8 @@ pub mod converter;
 pub mod policy_id_source;
 #[cfg(any(feature = "attester-ita", feature = "verifier-ita"))]
 mod retry;
+#[cfg(feature = "verifier-ita-rp-policy")]
+pub mod rp_policy_source;
 #[cfg(feature = "verifier-ita")]
 pub mod verifier;
 

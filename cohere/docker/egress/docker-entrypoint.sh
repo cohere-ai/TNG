@@ -18,7 +18,7 @@ if [ -n "$POLICY_IDS" ]; then
     jq --arg pid "$POLICY_IDS" '($pid | split(",")) as $ids |
         (.add_egress[] | (.attest, .ohttp.key.attest, .ohttp.key.verify)
             | if type == "array" then .[] else . end
-            | select(.as_provider? == "ita")) |= (.policy_ids = $ids | del(.policy_id_source))
+            | select(.as_provider? == "ita")) |= (.policy_ids = $ids | del(.policy_id_source, .rp_policy_source))
     ' "$CONFIG" > "$tmp"
     mv "$tmp" "$CONFIG"
 fi
