@@ -30,7 +30,21 @@ _DEFAULT_VERIFY: list = [
         "model": "passport",
         "as_provider": "ita",
         "ita_jwks_addr": "https://portal.trustauthority.intel.com",
-        "policy_ids": ["cbeedffa-e224-4664-b6b4-573fcd4133d3"],
+        "rp_policy_source": {
+            "base_url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+            "policy": "ita_rp_policy.rego",
+            "data": ["ita_rims.json"],
+            "refresh_interval": 300,
+            "valid_for": 86400,
+            "provenance": {
+                "bundle": "attestation-bundle.sigstore.json",
+                "repo": "cohere-ai/integritee",
+                "signer_workflow": ".github/workflows/release-policy.yaml",
+                "source_ref": "refs/heads/main",
+                "predicate_type": "https://cohere.com/attestation-policy/v1",
+                "environment": "release",
+            },
+        },
     },
     {
         "model": "background_check",

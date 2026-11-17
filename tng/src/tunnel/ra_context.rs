@@ -587,7 +587,7 @@ impl VerifyContext {
             VerifyArgs::Passport {
                 verifier: verifier_args,
             } => Ok(Self::Passport {
-                verifier: create_verifier(verifier_args).await?,
+                verifier: create_verifier(verifier_args, runtime).await?,
             }),
             VerifyArgs::BackgroundCheck {
                 converter: converter_args,
@@ -612,7 +612,7 @@ impl VerifyContext {
                     });
                 }
 
-                let verifier = create_verifier(verifier_args).await?;
+                let verifier = create_verifier(verifier_args, runtime).await?;
                 Ok(Self::BackgroundCheck {
                     converter,
                     verifier,
@@ -853,6 +853,8 @@ mod tests {
                     verifier: VerifierArgs::Ita(ItaVerifierArgs {
                         ita_jwks_addr: endpoint.clone(),
                         policy_ids: vec![],
+                        policy_hashes: vec![],
+                        rp_policy_source: None,
                     }),
                 }],
                 metrics.clone(),

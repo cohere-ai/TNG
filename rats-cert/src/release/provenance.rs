@@ -201,6 +201,10 @@ pub(crate) mod tests {
         pub bundle: &'static [u8],
         pub cpu: &'static [u8],
         pub gpu: &'static [u8],
+        #[cfg_attr(not(feature = "verifier-ita-rp-policy"), allow(dead_code))]
+        pub rp_policy: &'static [u8],
+        #[cfg_attr(not(feature = "verifier-ita-rp-policy"), allow(dead_code))]
+        pub rims: &'static [u8],
     }
 
     macro_rules! fixture {
@@ -213,6 +217,8 @@ pub(crate) mod tests {
                 )),
                 cpu: include_bytes!(concat!("test_cases/", $version, "/trustee_policy_cpu.rego")),
                 gpu: include_bytes!(concat!("test_cases/", $version, "/trustee_policy_gpu.rego")),
+                rp_policy: include_bytes!(concat!("test_cases/", $version, "/ita_rp_policy.rego")),
+                rims: include_bytes!(concat!("test_cases/", $version, "/ita_rims.json")),
             }
         };
     }
