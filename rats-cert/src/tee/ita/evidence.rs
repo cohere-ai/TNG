@@ -43,51 +43,6 @@ pub struct ItaGpuDevice {
     pub(crate) certificate: String,
 }
 
-/// Single-GPU `evidence` encoding (`base64(hex(raw))`) that TNG releases
-/// before multi-GPU support send and expect.
-fn legacy_fields(devices: &[ItaGpuDevice]) -> (Option<String>, Option<String>) {
-    let Some(first) = devices.first() else {
-        return (None, None);
-    };
-    match BASE64_STANDARD.decode(&first.evidence) {
-        Ok(raw) => (
-            Some(BASE64_STANDARD.encode(hex::encode(raw))),
-            Some(first.certificate.clone()),
-        ),
-        Err(_) => (None, None),
-    }
-}
-
-fn device_from_legacy_evidence(evidence: &str, certificate: String) -> Result<ItaGpuDevice> {
-    let hex_bytes = BASE64_STANDARD
-        .decode(evidence)
-        .map_err(Error::Base64DecodeFailed)?;
-    let raw = hex::decode(hex_bytes)
-        .map_err(|e| Error::ItaError(format!("Failed to decode legacy nvgpu evidence hex: {e}")))?;
-    Ok(ItaGpuDevice {
-        evidence: BASE64_STANDARD.encode(raw),
-        certificate,
-    })
-}
-
-/// Rebuilds the device list from a wire helper. Peers without multi-GPU
-/// support send only the single legacy `evidence`/`certificate` pair.
-fn devices_from_wire(
-    evidence_list: Vec<ItaGpuDevice>,
-    legacy_evidence: Option<String>,
-    legacy_certificate: Option<String>,
-) -> Result<Vec<ItaGpuDevice>> {
-    if !evidence_list.is_empty() {
-        return Ok(evidence_list);
-    }
-    match (legacy_evidence, legacy_certificate) {
-        (Some(e), Some(c)) => Ok(vec![device_from_legacy_evidence(&e, c)?]),
-        _ => Err(Error::ItaError(
-            "nvgpu evidence has neither evidence_list nor evidence/certificate".to_string(),
-        )),
-    }
-}
-
 /// Evidence produced by an ITA-compatible attester and consumed by `ItaConverter`.
 ///
 /// Contains all fields needed to build the ITA `/appraisal/v2/attest` request.
@@ -176,11 +131,6 @@ impl GenericEvidence for ItaEvidence {
 
 #[derive(Serialize, Deserialize)]
 struct ItaNvgpuEvidenceCborHelper {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    evidence: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    certificate: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     evidence_list: Vec<ItaGpuDevice>,
     arch: String,
     runtime_data_hash: ByteBuf,
@@ -202,16 +152,14 @@ impl ItaEvidence {
             tdx_quote: ByteBuf::from(self.tdx_quote.clone()),
             nonce: self.nonce.clone(),
             runtime_data: ByteBuf::from(self.runtime_data.clone()),
-            nvgpu_evidence: self.nvgpu_evidence.as_ref().map(|g| {
-                let (evidence, certificate) = legacy_fields(&g.devices);
-                ItaNvgpuEvidenceCborHelper {
-                    evidence,
-                    certificate,
+            nvgpu_evidence: self
+                .nvgpu_evidence
+                .as_ref()
+                .map(|g| ItaNvgpuEvidenceCborHelper {
                     evidence_list: g.devices.clone(),
                     arch: g.arch.clone(),
                     runtime_data_hash: ByteBuf::from(g.runtime_data_hash.to_vec()),
-                }
-            }),
+                }),
         }
     }
 
@@ -229,7 +177,7 @@ impl ItaEvidence {
                             ))
                         })?;
                 Some(ItaNvgpuEvidence {
-                    devices: devices_from_wire(g.evidence_list, g.evidence, g.certificate)?,
+                    devices: g.evidence_list,
                     arch: g.arch,
                     runtime_data_hash: hash,
                 })
@@ -251,11 +199,6 @@ impl ItaEvidence {
 
 #[derive(Serialize, Deserialize)]
 struct ItaNvgpuEvidenceJsonHelper {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    evidence: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    certificate: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     evidence_list: Vec<ItaGpuDevice>,
     arch: String,
     runtime_data_hash: String,
@@ -277,16 +220,14 @@ impl ItaEvidence {
             tdx_quote: BASE64_STANDARD.encode(&self.tdx_quote),
             nonce: self.nonce.clone(),
             runtime_data: BASE64_STANDARD.encode(&self.runtime_data),
-            nvgpu_evidence: self.nvgpu_evidence.as_ref().map(|g| {
-                let (evidence, certificate) = legacy_fields(&g.devices);
-                ItaNvgpuEvidenceJsonHelper {
-                    evidence,
-                    certificate,
+            nvgpu_evidence: self
+                .nvgpu_evidence
+                .as_ref()
+                .map(|g| ItaNvgpuEvidenceJsonHelper {
                     evidence_list: g.devices.clone(),
                     arch: g.arch.clone(),
                     runtime_data_hash: hex::encode(g.runtime_data_hash),
-                }
-            }),
+                }),
         }
     }
 
@@ -303,7 +244,7 @@ impl ItaEvidence {
                     ))
                 })?;
                 Some(ItaNvgpuEvidence {
-                    devices: devices_from_wire(g.evidence_list, g.evidence, g.certificate)?,
+                    devices: g.evidence_list,
                     arch: g.arch,
                     runtime_data_hash: hash,
                 })
@@ -421,65 +362,5 @@ mod tests {
             arch: "BLACKWELL".into(),
             runtime_data_hash: [0xAB; 32],
         }
-    }
-
-    #[test]
-    fn cbor_with_nvgpu_round_trips() {
-        let ev = ItaEvidence::new(b"q".to_vec(), None, b"rt".to_vec(), Some(two_gpus()));
-        let raw = ev.get_dice_raw_evidence().unwrap();
-        let DiceParseEvidenceOutput::Ok(back) =
-            ItaEvidence::create_evidence_from_dice(OCBR_TAG_EVIDENCE_ITA_EVIDENCE, &raw)
-        else {
-            panic!("expected DiceParseEvidenceOutput::Ok");
-        };
-        assert_eq!(back.nvgpu_evidence.unwrap().devices, two_gpus().devices);
-    }
-
-    #[test]
-    fn json_keeps_legacy_fields_for_older_peers() {
-        let ev = ItaEvidence::new(b"q".to_vec(), None, b"rt".to_vec(), Some(two_gpus()));
-        let json = ev.serialize_to_json().unwrap();
-        let gpu = &json["nvgpu_evidence"];
-        assert_eq!(gpu["evidence"], BASE64_STANDARD.encode("11e0"));
-        assert_eq!(gpu["certificate"], "cert-0");
-        assert_eq!(gpu["evidence_list"].as_array().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn json_from_older_peer_yields_one_device() {
-        let json = serde_json::json!({
-            "tdx_quote": BASE64_STANDARD.encode(b"q"),
-            "runtime_data": BASE64_STANDARD.encode(b"rt"),
-            "nvgpu_evidence": {
-                "evidence": BASE64_STANDARD.encode("11e0"),
-                "certificate": "cert-0",
-                "arch": "hopper",
-                "runtime_data_hash": hex::encode([0xAB; 32]),
-            }
-        });
-        let gpu = ItaEvidence::deserialize_from_json(json)
-            .unwrap()
-            .nvgpu_evidence
-            .unwrap();
-        assert_eq!(
-            gpu.devices,
-            vec![ItaGpuDevice {
-                evidence: BASE64_STANDARD.encode([0x11, 0xe0]),
-                certificate: "cert-0".into(),
-            }]
-        );
-    }
-
-    #[test]
-    fn json_without_any_gpu_evidence_is_rejected() {
-        let json = serde_json::json!({
-            "tdx_quote": BASE64_STANDARD.encode(b"q"),
-            "runtime_data": BASE64_STANDARD.encode(b"rt"),
-            "nvgpu_evidence": {
-                "arch": "hopper",
-                "runtime_data_hash": hex::encode([0xAB; 32]),
-            }
-        });
-        assert!(ItaEvidence::deserialize_from_json(json).is_err());
     }
 }
