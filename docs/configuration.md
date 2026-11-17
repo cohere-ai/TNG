@@ -499,7 +499,7 @@ In the TNG architecture, the Verifier can be part of the control plane or servic
 
 > **Current Implementation Notes**:  
 > For the **CoCo** provider, the Verifier relies on the [CoCo Attestation Service](https://github.com/confidential-containers/trustee/tree/main/attestation-service) to verify received Evidence. It provides a unified interface for parsing and verifying attestation data of different TEE types, and supports integration with the Trustee Server to achieve centralized policy management and root of trust distribution.  
-> For the **ITA** provider, the Verifier relies on the Intel Trust Authority attestation service (https://www.intel.com/content/www/us/en/security/trust-authority.html) to verify received Evidence. It can parse and verify attestation data for TDX Confidential VMs and Nvidia GPUs, and supports policy management and enforcement.
+> For the **ITA** provider, the Verifier relies on the Intel Trust Authority attestation service (https://www.intel.com/content/www/us/en/security/trust-authority.html) to verify received Evidence. It can parse and verify attestation data for TDX Confidential VMs and Nvidia GPUs, and supports policy management and enforcement. All GPUs reported by the attestation agent are sent to ITA in one request (ITA accepts up to 8). NVSwitch evidence is not appraised on the ITA path.
 
 #### Multiple Verifiers
 

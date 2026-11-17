@@ -7,13 +7,15 @@ use sha2::{Digest, Sha256, Sha512};
 
 use crate::errors::*;
 
-use super::evidence::{ItaNonce, ItaNvgpuEvidence};
+use super::evidence::{ItaGpuDevice, ItaNonce, ItaNvgpuEvidence};
+
+const NVSWITCH_ARCH: &str = "LS10";
 
 /// GPU device evidence as returned by the CoCo AA / ASR `get_additional_evidence()`.
 ///
 /// The response is a JSON map keyed by [`kbs_types::Tee`] variant, e.g.:
 /// ```json
-/// { "nvidia": { "device_evidence_list": [{ "evidence": "<b64>", "certificate": "<pem>", "arch": "hopper" }] } }
+/// { "nvidia": { "device_evidence_list": [{ "evidence": "<b64>", "certificate": "<b64 pem>", "arch": "hopper" }] } }
 /// ```
 #[derive(serde::Deserialize)]
 struct GpuDeviceList {
@@ -48,24 +50,45 @@ pub(crate) fn parse_gpu_evidence(
     let gpu_list: GpuDeviceList =
         serde_json::from_value(nvidia_value).map_err(Error::ParseAdditionalEvidenceJsonFailed)?;
 
-    let device = match gpu_list.device_evidence_list.into_iter().next() {
-        Some(d) => d,
+    // NVSwitch (LS10) evidence is skipped: ITA only appraises GPUs. Hopper
+    // multi-GPU PPCIe routes plaintext NVLink through the switches, so that
+    // topology needs switch attestation and is not supported on this path.
+    let (gpus, switches): (Vec<_>, Vec<_>) = gpu_list
+        .device_evidence_list
+        .into_iter()
+        .partition(|d| !d.arch.eq_ignore_ascii_case(NVSWITCH_ARCH));
+    if !switches.is_empty() {
+        tracing::warn!(
+            count = switches.len(),
+            "Skipping NVSwitch evidence; ITA appraises GPUs only"
+        );
+    }
+
+    let arch = match gpus.first() {
+        Some(d) => d.arch.clone(),
         None => {
-            tracing::warn!("nvidia device_evidence_list is empty; skipping GPU attestation");
+            tracing::warn!("nvidia device_evidence_list has no GPUs; skipping GPU attestation");
             return Ok(None);
         }
     };
 
-    // ITA expects evidence as base64(hex(raw_bytes)), while AA/ASR provides base64(raw_bytes).
-    let raw = BASE64
-        .decode(&device.evidence)
-        .map_err(Error::Base64DecodeFailed)?;
-    let reencoded_evidence = BASE64.encode(hex::encode(&raw).as_bytes());
+    let devices = gpus
+        .into_iter()
+        .map(|d| {
+            // Reject malformed evidence here rather than at ITA.
+            BASE64
+                .decode(&d.evidence)
+                .map_err(Error::Base64DecodeFailed)?;
+            Ok(ItaGpuDevice {
+                evidence: d.evidence,
+                certificate: d.certificate,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(Some(ItaNvgpuEvidence {
-        evidence: reencoded_evidence,
-        certificate: device.certificate,
-        arch: device.arch,
+        devices,
+        arch,
         runtime_data_hash,
     }))
 }
@@ -132,30 +155,50 @@ mod tests {
     // -- parse_gpu_evidence --
 
     #[test]
-    fn parse_gpu_evidence_valid_nvidia_blob() {
-        let raw_bytes = vec![1u8, 2, 3];
-        let input_b64 = BASE64.encode(&raw_bytes);
-        let cert = "test-cert-pem";
-        let arch = "hopper";
+    fn parse_gpu_evidence_keeps_gpus_and_skips_nvswitch() {
         let blob = serde_json::json!({
             "nvidia": {
-                "device_evidence_list": [{
-                    "evidence": input_b64,
-                    "certificate": cert,
-                    "arch": arch
-                }]
+                "device_evidence_list": [
+                    {"evidence": BASE64.encode([0]), "certificate": "cert-0", "arch": "HOPPER"},
+                    {"evidence": BASE64.encode([9]), "certificate": "cert-sw", "arch": "LS10"},
+                    {"evidence": BASE64.encode([1]), "certificate": "cert-1", "arch": "HOPPER"}
+                ]
             }
         });
         let hash = [0xABu8; 32];
-        let result =
-            parse_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), hash).unwrap();
+        let gpu = parse_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), hash)
+            .unwrap()
+            .expect("should return Some for valid nvidia blob");
 
-        let gpu = result.expect("should return Some for valid nvidia blob");
-        assert_eq!(gpu.certificate, cert);
-        assert_eq!(gpu.arch, arch);
+        assert_eq!(gpu.arch, "HOPPER");
         assert_eq!(gpu.runtime_data_hash, hash);
-        let expected_evidence = BASE64.encode(hex::encode(&raw_bytes).as_bytes());
-        assert_eq!(gpu.evidence, expected_evidence);
+        assert_eq!(
+            gpu.devices,
+            vec![
+                ItaGpuDevice {
+                    evidence: BASE64.encode([0]),
+                    certificate: "cert-0".into(),
+                },
+                ItaGpuDevice {
+                    evidence: BASE64.encode([1]),
+                    certificate: "cert-1".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_gpu_evidence_invalid_base64() {
+        let blob = serde_json::json!({
+            "nvidia": {"device_evidence_list": [{
+                "evidence": "!!!not-base64!!!",
+                "certificate": "c",
+                "arch": "BLACKWELL"
+            }]}
+        });
+        assert!(
+            parse_gpu_evidence(serde_json::to_vec(&blob).unwrap().as_slice(), [0u8; 32]).is_err()
+        );
     }
 
     #[test]

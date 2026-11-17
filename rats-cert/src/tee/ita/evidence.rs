@@ -26,16 +26,21 @@ pub struct ItaNonce {
 /// attester's evidence source format.
 #[derive(Clone)]
 pub struct ItaNvgpuEvidence {
-    /// GPU attestation evidence, already re-encoded as `base64(hex(raw_bytes))`
-    /// per ITA's expected format.
-    pub(crate) evidence: String,
-    /// PEM certificate chain for the GPU device.
-    pub(crate) certificate: String,
+    /// One entry per GPU, in the attester's order. ITA accepts at most 8.
+    pub(crate) devices: Vec<ItaGpuDevice>,
     /// GPU architecture identifier (e.g. "hopper").
     pub(crate) arch: String,
     /// Hash of the runtime data used during GPU evidence collection:
     /// `SHA-256(decode(nonce.val) || decode(nonce.iat))`.
     pub(crate) runtime_data_hash: [u8; 32],
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ItaGpuDevice {
+    /// `base64(raw SPDM GET_MEASUREMENTS request || response)`, as the AA returns it.
+    pub(crate) evidence: String,
+    /// `base64(PEM certificate chain)` for the GPU.
+    pub(crate) certificate: String,
 }
 
 /// Evidence produced by an ITA-compatible attester and consumed by `ItaConverter`.
@@ -126,8 +131,7 @@ impl GenericEvidence for ItaEvidence {
 
 #[derive(Serialize, Deserialize)]
 struct ItaNvgpuEvidenceCborHelper {
-    evidence: String,
-    certificate: String,
+    evidence_list: Vec<ItaGpuDevice>,
     arch: String,
     runtime_data_hash: ByteBuf,
 }
@@ -152,8 +156,7 @@ impl ItaEvidence {
                 .nvgpu_evidence
                 .as_ref()
                 .map(|g| ItaNvgpuEvidenceCborHelper {
-                    evidence: g.evidence.clone(),
-                    certificate: g.certificate.clone(),
+                    evidence_list: g.devices.clone(),
                     arch: g.arch.clone(),
                     runtime_data_hash: ByteBuf::from(g.runtime_data_hash.to_vec()),
                 }),
@@ -174,8 +177,7 @@ impl ItaEvidence {
                             ))
                         })?;
                 Some(ItaNvgpuEvidence {
-                    evidence: g.evidence,
-                    certificate: g.certificate,
+                    devices: g.evidence_list,
                     arch: g.arch,
                     runtime_data_hash: hash,
                 })
@@ -197,8 +199,7 @@ impl ItaEvidence {
 
 #[derive(Serialize, Deserialize)]
 struct ItaNvgpuEvidenceJsonHelper {
-    evidence: String,
-    certificate: String,
+    evidence_list: Vec<ItaGpuDevice>,
     arch: String,
     runtime_data_hash: String,
 }
@@ -223,8 +224,7 @@ impl ItaEvidence {
                 .nvgpu_evidence
                 .as_ref()
                 .map(|g| ItaNvgpuEvidenceJsonHelper {
-                    evidence: g.evidence.clone(),
-                    certificate: g.certificate.clone(),
+                    evidence_list: g.devices.clone(),
                     arch: g.arch.clone(),
                     runtime_data_hash: hex::encode(g.runtime_data_hash),
                 }),
@@ -244,8 +244,7 @@ impl ItaEvidence {
                     ))
                 })?;
                 Some(ItaNvgpuEvidence {
-                    evidence: g.evidence,
-                    certificate: g.certificate,
+                    devices: g.evidence_list,
                     arch: g.arch,
                     runtime_data_hash: hash,
                 })
@@ -337,12 +336,7 @@ mod tests {
             tdx_quote: b"q".to_vec(),
             nonce: None,
             runtime_data: b"rt".to_vec(),
-            nvgpu_evidence: Some(ItaNvgpuEvidence {
-                evidence: "gpu-ev".into(),
-                certificate: "gpu-cert".into(),
-                arch: "hopper".into(),
-                runtime_data_hash: [0xAB; 32],
-            }),
+            nvgpu_evidence: Some(two_gpus()),
         };
         let json = ev.serialize_to_json().unwrap();
         let back = ItaEvidence::deserialize_from_json(json).unwrap();
@@ -350,5 +344,23 @@ mod tests {
         let gpu = back.nvgpu_evidence.unwrap();
         assert_eq!(gpu.arch, orig.arch);
         assert_eq!(gpu.runtime_data_hash, orig.runtime_data_hash);
+        assert_eq!(gpu.devices, orig.devices);
+    }
+
+    fn two_gpus() -> ItaNvgpuEvidence {
+        ItaNvgpuEvidence {
+            devices: vec![
+                ItaGpuDevice {
+                    evidence: BASE64_STANDARD.encode([0x11, 0xe0]),
+                    certificate: "cert-0".into(),
+                },
+                ItaGpuDevice {
+                    evidence: BASE64_STANDARD.encode([0x11, 0xe1]),
+                    certificate: "cert-1".into(),
+                },
+            ],
+            arch: "BLACKWELL".into(),
+            runtime_data_hash: [0xAB; 32],
+        }
     }
 }
