@@ -1,6 +1,3 @@
-# WARNING: this policy pins no NVIDIA driver version, because no manifest target
-# reached it. Every generated section is empty, so it admits nothing.
-
 # Trustee GPU appraisal policy.
 #
 # Written for the REMOTE verifier (NRAS).
@@ -60,12 +57,20 @@ trust_claims := {
 	"sourced-data": sourced_data,
 }
 
+extensions := [
+	{
+		"name": "cohere.policy-version",
+		"key": -72000,
+		"value": "v0.0.27",
+	},
+]
+
 gpu := input.nvidia
 
 # One entry per distinct driver version across the manifest's PodVM images.
 # An empty set denies, since indexing it is undefined.
 accepted_gpu_driver_versions := {
-
+	"580.178.04",
 }
 
 # 2: "An Attester has passed its hardware and/or firmware verifications
@@ -98,13 +103,26 @@ hardware := 2 if {
 # 3: "Only a recognized genuine set of approved executables have been
 #     loaded."
 executables := 3 if {
+	rims_verified
+
+	# The comparison itself came out clean.
+	gpu.measres == "success"
+	gpu["x-nvidia-overall-att-result"] == true
+}
+
+executables := 3 if {
+	rims_verified
+	firmware_mismatch_waived
+}
+
+# NRAS compared the device's measurements against the driver and VBIOS
+# RIMs. Each RIM has to have been fetched, schema checked, signed by a
+# chain that is neither invalid nor revoked, matched to the running
+# version, and actually carry measurements, otherwise the verdict on the
+# comparison would be vacuous.
+rims_verified if {
 	gpu
 
-	# NRAS compared the device's measurements against the driver and VBIOS
-	# RIMs. Each RIM has to have been fetched, schema checked, signed by a
-	# chain that is neither invalid nor revoked, matched to the running
-	# version, and actually carry measurements, otherwise "success" below
-	# would be vacuous.
 	gpu["x-nvidia-gpu-driver-rim-fetched"] == true
 	gpu["x-nvidia-gpu-driver-rim-measurements-available"] == true
 	gpu["x-nvidia-gpu-driver-rim-schema-validated"] == true
@@ -120,10 +138,6 @@ executables := 3 if {
 	gpu["x-nvidia-gpu-vbios-rim-version-match"] == true
 	gpu["x-nvidia-gpu-vbios-rim-cert-chain"]["x-nvidia-cert-status"] == "valid"
 	gpu["x-nvidia-gpu-vbios-rim-cert-chain"]["x-nvidia-cert-ocsp-status"] == "good"
-
-	# The comparison itself came out clean.
-	gpu.measres == "success"
-	gpu["x-nvidia-overall-att-result"] == true
 }
 
 # 2: "The configuration is a known and approved config."
@@ -138,13 +152,43 @@ executables := 3 if {
 # no VM SKU or cloud to scope one by.
 configuration := 2 if {
 	gpu
-
-	# Secure boot on and debug off: without both, the measurements above say
-	# nothing about what the device will do next.
-	gpu.secboot == true
-	gpu.dbgstat == "disabled"
+	device_locked_down
 
 	# NRAS reports the upstream driver version, without the Ubuntu packaging
 	# suffix that measurements.json records.
 	gpu["x-nvidia-gpu-driver-version"] in accepted_gpu_driver_versions
+}
+
+# Secure boot on and debug off: without both, the measurements above say
+# nothing about what the device will do next.
+device_locked_down if {
+	gpu.secboot == true
+	gpu.dbgstat == "disabled"
+}
+
+# NVIDIA's verifiers do not read these from the device: they emit both only
+# when measres is "success" and omit them otherwise. Under the waiver their
+# absence is accepted, but never a reported bad value.
+device_locked_down if {
+	firmware_mismatch_waived
+	not "secboot" in object.keys(gpu)
+	not "dbgstat" in object.keys(gpu)
+}
+
+# Narrow workaround for a deterministic firmware mismatch on Azure H100
+# peer pods, the same index ITA policy waives on GCP with differing values:
+# https://github.com/NVIDIA/nvtrust/issues/132
+firmware_mismatch_waived if {
+	gpu["x-nvidia-overall-att-result"] == false
+	{"fail", "comparison-fail"}[gpu.measres]
+
+	records := gpu["x-nvidia-mismatch-measurement-records"]
+	count(records) == 1
+	record := records[0]
+	record.index == 9
+	record.measurementSource == "Firmware"
+	record.goldenSize == 48
+	record.goldenValue == "059b32e712a153f490dbfb7976a9e275d789e28bd4803c357def2b6123327c430526bfaecc200f496d4e149fc5eade03"
+	record.runtimeSize == 48
+	record.runtimeValue == "a88ad47656c234338b2bc2055d04d61e07f08f2deecab303f2f7309fdeae239728d4ec1fa0279eb36c6ab782a289bdbd"
 }
