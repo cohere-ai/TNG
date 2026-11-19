@@ -951,7 +951,7 @@ Example:
 
 With `rp_policy_source`, TNG accepts a verified ITA token only if the `allow` rule of a published Rego policy is `true` for its claims. With `provenance`, a release signed no later than the newest accepted one is rejected; that signing time is kept in memory only, so after a restart any signed release is accepted.
 
-TNG fetches the latest release at startup and every `refresh_interval`. Fetched releases stay accepted for `valid_for`, which covers peers still on an older release and outages. A denied token also triggers a fetch, unless one finished in the last 5 seconds; tokens denied while a fetch runs wait for it and are evaluated again. Each request times out after 5 seconds, and a failed fetch is not retried. Not available in the wasm build.
+TNG fetches the latest release at startup, and fails to start if that fetch fails, then every `refresh_interval`. Fetched releases stay accepted for `valid_for`, which covers peers still on an older release and outages. A denied token also triggers a fetch, unless one finished in the last 5 seconds; tokens denied while a fetch runs wait for it and are evaluated again. Each request times out after 5 seconds, and a failed fetch is not retried. Not available in the wasm build.
 
 - **`base_url`**, **`provenance`**, **`no_provenance`**: As for [Policies from a published release](#policies-from-a-published-release).
 - **`policy`** (string, required): The Rego policy, as a name under `base_url` or a full URL.

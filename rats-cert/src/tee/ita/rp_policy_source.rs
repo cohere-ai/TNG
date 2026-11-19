@@ -1,7 +1,7 @@
 //! Evaluates a relying-party policy, fetched from a published release, against ITA token claims.
 
 use std::future::Future;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context as _};
@@ -138,15 +138,24 @@ impl RpPolicySource {
         })
     }
 
-    /// Returns a task that fetches the latest release now and every `refresh_interval` until
-    /// `source` is dropped, or `None` if the interval is 0. The caller decides where to run it.
-    pub fn keep_current(source: Weak<Self>) -> Option<impl Future<Output = ()> + Send + 'static> {
-        let period = source.upgrade()?.refresh_interval;
+    /// Fetches the latest release, failing if that fails, and returns a task that fetches it again
+    /// every `refresh_interval` until `source` is dropped, or `None` if the interval is 0. The
+    /// caller decides where to run the task.
+    pub async fn keep_current(
+        source: &Arc<Self>,
+    ) -> Result<Option<impl Future<Output = ()> + Send + 'static>> {
+        source
+            .fetch_unless_fresh(Duration::ZERO)
+            .await
+            .map_err(Error::ItaRpPolicyUnavailable)?;
+        let period = source.refresh_interval;
         if period.is_zero() {
-            return None;
+            return Ok(None);
         }
-        Some(async move {
-            let mut interval = tokio::time::interval(period);
+        let source = Arc::downgrade(source);
+        Ok(Some(async move {
+            let mut interval =
+                tokio::time::interval_at(tokio::time::Instant::now() + period, period);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 interval.tick().await;
@@ -156,7 +165,7 @@ impl RpPolicySource {
                 // A failure is logged by the fetch, and the cached releases stay.
                 let _ = source.fetch_unless_fresh(Duration::ZERO).await;
             }
-        })
+        }))
     }
 
     /// Accepts claims any release fetched within `valid_for` allows. Otherwise fetches the latest
@@ -365,26 +374,28 @@ mod tests {
         ));
     }
 
-    /// The task fetches right away, and ends once the source is dropped.
+    /// The first fetch must succeed, and the task ends once the source is dropped.
     #[tokio::test]
-    async fn keep_current_fetches_until_dropped() {
+    async fn keep_current_fetches_first_and_until_dropped() {
         let server = MockServer::start().await;
-        release(&server, &V0_0_28).await;
         let mut source = test_source(server.uri(), false);
         source.refresh_interval = Duration::from_secs(1);
         let source = Arc::new(source);
-        let task = RpPolicySource::keep_current(Arc::downgrade(&source)).unwrap();
-        let drop_once_fetched = async move {
-            while source.snapshot().is_empty() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        };
+        assert!(matches!(
+            RpPolicySource::keep_current(&source).await,
+            Err(Error::ItaRpPolicyUnavailable(_))
+        ));
 
-        tokio::time::timeout(Duration::from_secs(5), async {
-            tokio::join!(task, drop_once_fetched)
-        })
-        .await
-        .unwrap();
+        release(&server, &V0_0_28).await;
+        let task = RpPolicySource::keep_current(&source)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!source.snapshot().is_empty());
+        drop(source);
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap();
     }
 
     /// A token denied while another one's fetch runs waits for it and uses its result.

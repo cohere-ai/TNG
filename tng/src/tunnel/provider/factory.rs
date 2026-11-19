@@ -170,7 +170,7 @@ pub async fn create_verifier(config: &VerifierArgs, runtime: &TokioRuntime) -> R
         VerifierArgs::Ita(args) => {
             let verifier = args.to_verifier()?;
             #[cfg(not(wasm))]
-            if let Some(task) = verifier.rp_policy_refresh() {
+            if let Some(task) = verifier.keep_rp_policy_current().await? {
                 runtime.spawn_supervised_task_current_span(task);
             }
             #[cfg(wasm)]

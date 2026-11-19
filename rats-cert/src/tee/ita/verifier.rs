@@ -66,15 +66,16 @@ impl ItaVerifier {
         Ok(self)
     }
 
-    /// Returns the task keeping the RP policy current while this verifier lives, if it has one.
-    /// The caller decides where to run it.
+    /// Fetches the RP policy, if this verifier has one, failing if that fails, and returns the
+    /// task keeping it current while this verifier lives. The caller decides where to run it.
     #[cfg(feature = "verifier-ita-rp-policy")]
-    pub fn rp_policy_refresh(
+    pub async fn keep_rp_policy_current(
         &self,
-    ) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
-        super::rp_policy_source::RpPolicySource::keep_current(std::sync::Arc::downgrade(
-            self.rp_policy_source.as_ref()?,
-        ))
+    ) -> Result<Option<impl std::future::Future<Output = ()> + Send + 'static>> {
+        match &self.rp_policy_source {
+            Some(source) => super::rp_policy_source::RpPolicySource::keep_current(source).await,
+            None => Ok(None),
+        }
     }
 
     async fn verify_jwt(&self, token: &str) -> Result<Value> {
