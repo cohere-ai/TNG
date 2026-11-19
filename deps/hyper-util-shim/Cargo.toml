@@ -21,6 +21,10 @@ hyper-util-wasm = {git = "https://github.com/r58Playz/hyper-util-wasm.git", rev 
 [features]
 client = ["hyper-util/client", "hyper-util-wasm/client"]
 client-legacy = ["hyper-util/client-legacy", "hyper-util-wasm/client-legacy"]
+# Requested by reqwest 0.13 (via sigstore, native only), which is never built for wasm. Without
+# them Cargo skips this patch and resolves stock hyper-util, which doesn't build for wasm.
+client-proxy = []
+client-proxy-system = []
 default = ["hyper-util/default", "hyper-util-wasm/default"]
 full = ["hyper-util/full", "hyper-util-wasm/full"]
 http1 = ["hyper-util/http1", "hyper-util-wasm/http1"]
