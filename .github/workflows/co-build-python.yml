@@ -33,16 +33,29 @@ jobs:
         with:
           working-directory: cohere/python/cohere-tng
           target: ${{ matrix.target }}
-          args: --release --out dist --features builtin-verifier-azsnp,builtin-verifier-nvidia
+          args: --release --out dist --features builtin-verifier-azsnp,builtin-verifier-nvidia,builtin-verifier-tdx
           manylinux: ${{ matrix.manylinux || 'auto' }}
           before-script-linux: |
             # The verifiers link OpenSSL statically via `openssl/vendored`, and
             # OpenSSL 3.x's Configure needs IPC::Cmd. Debian's `perl` bundles the
             # core modules; the RPM-based manylinux images split them out.
+            #
+            # The TDX verifier compiles Intel's quote verification library, whose
+            # Rust bindings bindgen generates with libclang. manylinux2014's own
+            # clang is 3.4, too old for bindgen, so take Red Hat's llvm-toolset-7
+            # (clang 5) there; its clang binary goes on PATH because libclang finds
+            # its own headers (stddef.h, ...) through it.
             if command -v yum >/dev/null 2>&1; then
-              yum install -y perl-core perl-IPC-Cmd
+              yum install -y perl-core perl-IPC-Cmd llvm-toolset-7-clang
+              export LIBCLANG_PATH=/opt/rh/llvm-toolset-7/root/usr/lib64
+              export PATH="$PATH:/opt/rh/llvm-toolset-7/root/usr/bin"
             elif command -v apt-get >/dev/null 2>&1; then
-              apt-get update && apt-get install -y perl
+              apt-get update && apt-get install -y perl libclang-dev clang
+            fi
+            # Cross images (aarch64): bindgen has to read the target's C headers,
+            # not the build host's.
+            if [ -n "${TARGET_SYSROOT:-}" ]; then
+              export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$TARGET_SYSROOT"
             fi
             perl -MIPC::Cmd -e 'print "IPC::Cmd ok\n"'
 

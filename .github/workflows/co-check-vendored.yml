@@ -1,0 +1,31 @@
+name: Cohere Vendored Crate Check
+
+# deps/intel-tee-quote-verification-sys/generated/ must be exactly Intel's crate plus
+# patches/series. Regenerate it and fail if anything differs.
+on:
+  push:
+    branches:
+      - cohere
+    tags:
+      - "v*.*.*"
+  pull_request:
+
+jobs:
+  intel-tee-quote-verification-sys:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Regenerate from Intel's crate and the patches
+        run: deps/intel-tee-quote-verification-sys/update.sh
+
+      - name: Fail if generated/ is out of date
+        run: |
+          dir=deps/intel-tee-quote-verification-sys/generated
+          if [ -n "$(git status --porcelain -- "$dir")" ]; then
+            git status --short -- "$dir"
+            git diff -- "$dir"
+            echo "::error::$dir does not match Intel's crate plus patches/series. Edit the patches and run update.sh rather than editing $dir."
+            exit 1
+          fi

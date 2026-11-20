@@ -3658,10 +3658,10 @@ dependencies = [
 [[package]]
 name = "intel-tee-quote-verification-sys"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "773f9c797d4b99e99841bd95ed60b374e3fdf7570a2ae7f2c3856af716fd6115"
 dependencies = [
  "bindgen",
+ "cc",
+ "openssl-sys",
 ]
 
 [[package]]

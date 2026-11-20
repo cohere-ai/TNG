@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shariq Khalil Ahmed <shariq.ahmed@cohere.com>
+Date: Fri, 20 Nov 2026 21:48:32 +0000
+Subject: [PATCH] Link OpenSSL through openssl-sys
+
+Intel's packaged libsgx_dcap_quoteverify.so links the system OpenSSL
+itself. A statically built copy needs OpenSSL from whoever links it, and
+should use the same one as the rest of the process: in the cohere-tng
+wheel, the copy openssl/vendored builds and links statically.
+
+Depend on openssl-sys for that, which also gives the build script
+OpenSSL's headers (DEP_OPENSSL_INCLUDE). Name the crate in lib.rs, since
+rustc does not link a dependency no Rust code refers to.
+---
+ Cargo.toml | 4 ++++
+ src/lib.rs | 4 ++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 5e4c1cc..b05b66c 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -12,6 +12,10 @@ homepage = "https://github.com/intel/confidential-computing.tee.dcap"
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+ 
+ [dependencies]
++# Not called from Rust: the library calls OpenSSL, and linking it through openssl-sys puts it
++# on the same OpenSSL as the rest of the process (vendored in the wheel). openssl-sys also
++# hands its include directory to build.rs as DEP_OPENSSL_INCLUDE.
++openssl-sys = "0.9"
+ 
+ [build-dependencies]
+ bindgen = "0.70.1"
+diff --git a/src/lib.rs b/src/lib.rs
+index 8ba7aae..7189a05 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -51,4 +51,8 @@
+ // `# Safety` doc sections; suppress the lint for the generated file.
+ #![allow(clippy::missing_safety_doc)]
+ 
++// Only the C library uses OpenSSL, and rustc drops a dependency no Rust code names, which
++// would leave OpenSSL off the link line.
++use openssl_sys as _;
++
+ include!(concat!(env!("OUT_DIR"), "/bindings.rs"));

@@ -180,6 +180,13 @@ zeroize = "1.8.1"
 git = "https://github.com/virtee/sev"
 rev = "d487809188c3c92e397bc92e2cb2a85eb982c980"
 
+# Trustee's TDX verifier reaches Intel's quote verification library through this crate,
+# which on crates.io links the copy Intel packages for x86-64 Linux only. The local one
+# builds it from Intel's source, so the TDX verifier builds on every wheel target. See
+# deps/intel-tee-quote-verification-sys/README.md.
+[patch.crates-io.intel-tee-quote-verification-sys]
+path = "deps/intel-tee-quote-verification-sys/generated"
+
 # The native build uses stock reqwest and hyper-util. The inclavare reqwest fork adds
 # set_mark() (see the netfilter note in tng/src/config/ingress.rs) plus wasm stream
 # support; only the latter is still needed, so the fork is patched in by the tng-wasm

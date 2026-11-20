@@ -17,8 +17,8 @@
 # and share it across layers.
 #
 # TNG has verifier features for raw SEV-SNP, SGX and Azure TDX as well. They are deliberately not
-# wired up here; adding one means adding its packages too, since SGX and Azure TDX need the DCAP
-# library and Azure TDX needs the TPM libraries on top of it.
+# wired up here; adding one means checking its packages too, since Azure TDX needs the TPM
+# libraries.
 #
 # Azure SEV-SNP subsumes the raw SEV-SNP verifier upstream, so a peer reporting through
 # /dev/sev-guest rather than a paravisor's vTPM is covered without naming that feature.
@@ -33,17 +33,12 @@ ARG BUILTIN_AS_TDX=1
 ARG BUILTIN_AS_AZSNP=1
 ARG BUILTIN_AS_NVIDIA=1
 
-# Ubuntu rather than the official Rust image, which is Debian based: Intel publishes the DCAP
-# quote verification library for Ubuntu only, and matching the runtime stage keeps the glibc that
-# library was built against consistent across both stages. Rust comes from rustup, pinned by
-# rust-toolchain.toml.
-FROM ubuntu:24.04 AS builder
+# The official Rust image at the version rust-toolchain.toml pins, which already carries git and a
+# C/C++ toolchain. Bookworm, not trixie: its glibc (2.36) is older than the Ubuntu 24.04 runtime's
+# (2.39), and a binary only runs on a glibc at least as new as the one it was built against.
+FROM rust:1.95.0-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    curl \
-    git \
     libprotobuf-dev \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
@@ -63,10 +58,8 @@ ARG BUILTIN_AS_NVIDIA
 # az-cvm-vtpm and so needs the TPM libraries at build time. tss-esapi-sys locates them with
 # pkg-config, which is not part of build-essential.
 #
-# The Intel DCAP quote verification library is for the TDX verifier. The armored key is dropped in
-# as-is so this needs no gnupg, and only the quote verification library is needed, not the quote
-# provider: the verifier fetches DCAP collateral itself over HTTPS from Intel's PCS. It is x86_64
-# only, since Intel publishes no arm64 packages, so an arm64 image has to turn TDX off.
+# The TDX verifier needs nothing extra: deps/intel-tee-quote-verification-sys fetches Intel's quote
+# verification library source with git and compiles it into the binary, on any architecture.
 RUN set -eu; \
     bool() { case "$(echo "${2-}" | tr 'A-Z' 'a-z')" in \
         1|true|yes|on) echo 1 ;; \
@@ -80,22 +73,7 @@ RUN set -eu; \
     apt-get update; \
     apt-get install -y --no-install-recommends clang perl; \
     [ -z "$azsnp" ] || apt-get install -y --no-install-recommends libtss2-dev pkg-config; \
-    if [ -n "$tdx" ]; then \
-        curl --proto '=https' --tlsv1.2 -fsSL https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key \
-            -o /etc/apt/keyrings/intel-sgx.asc; \
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/intel-sgx.asc] https://download.01.org/intel-sgx/sgx_repo/ubuntu noble main" \
-            > /etc/apt/sources.list.d/intel-sgx.list; \
-        apt-get update; \
-        apt-get install -y --no-install-recommends libsgx-dcap-quote-verify-dev; \
-    fi; \
     rm -rf /var/lib/apt/lists/*
-
-ENV RUSTUP_HOME=/usr/local/rustup \
-    CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:$PATH
-
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --no-modify-path --default-toolchain none
 
 WORKDIR /src
 
@@ -134,19 +112,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-minimal \
     && rm -rf /var/lib/apt/lists/*
 
-ARG BUILTIN_AS_TDX
 ARG BUILTIN_AS_AZSNP
 
-# Runtime halves of the build dependencies above: the tss2 libraries for Azure SEV-SNP, and
-# libsgx_dcap_quoteverify.so.1 for TDX. NVIDIA needs nothing here, being pure Rust that checks the
-# GPU's SPDM report against the certificate chain in the evidence.
+# Runtime half of the build dependencies above: the tss2 libraries for Azure SEV-SNP. TDX needs
+# nothing here, its quote verification library being linked in statically, and neither does NVIDIA,
+# being pure Rust that checks the GPU's SPDM report against the certificate chain in the evidence.
 RUN set -eu; \
     bool() { case "$(echo "${2-}" | tr 'A-Z' 'a-z')" in \
         1|true|yes|on) echo 1 ;; \
         ""|0|false|no|off) ;; \
         *) echo "$1: expected a boolean, got '$2'" >&2; exit 1 ;; \
     esac; }; \
-    tdx=$(bool BUILTIN_AS_TDX "$BUILTIN_AS_TDX"); \
     azsnp=$(bool BUILTIN_AS_AZSNP "$BUILTIN_AS_AZSNP"); \
     if [ -n "$azsnp" ]; then \
         apt-get update; \
@@ -155,17 +131,12 @@ RUN set -eu; \
             libtss2-mu-4.0.1-0t64 \
             libtss2-tctildr0t64; \
     fi; \
-    if [ -n "$tdx" ]; then \
-        curl --proto '=https' --tlsv1.2 -fsSL https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key \
-            -o /etc/apt/keyrings/intel-sgx.asc; \
-        echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/intel-sgx.asc] https://download.01.org/intel-sgx/sgx_repo/ubuntu noble main" \
-            > /etc/apt/sources.list.d/intel-sgx.list; \
-        apt-get update; \
-        apt-get install -y --no-install-recommends libsgx-dcap-quote-verify; \
-    fi; \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/bin/tng /usr/local/bin/tng
+# Notices for the third-party code the TDX verifier compiles into tng. Copied whether or not TDX
+# is built, as a COPY cannot depend on a build argument.
+COPY deps/intel-tee-quote-verification-sys/generated/licenses/ /usr/share/licenses/tng/intel-tee-quote-verification-sys/
 
 FROM runtime-base AS tng
 
