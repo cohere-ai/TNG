@@ -206,8 +206,11 @@ fn main() {
         builder = builder.clang_arg(format!("-I{}", inc.display()));
     }
 
-    // Identical to the crates.io crate's bindgen configuration.
+    // The crates.io crate's bindgen configuration, plus the formatter: bindgen otherwise
+    // formats with whatever rustfmt binary is installed, and leaves the output on one line
+    // where there is none, so the committed bindings could not be compared across machines.
     let bindings = builder
+        .formatter(bindgen::Formatter::Prettyplease)
         .header("bindings.h")
         .newtype_enum("_quote3_error_t")
         .newtype_enum("_sgx_ql_qv_result_t")

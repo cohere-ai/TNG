@@ -254,7 +254,9 @@ pub struct __fsid_t {
 const _: () = {
     ["Size of __fsid_t"][::std::mem::size_of::<__fsid_t>() - 8usize];
     ["Alignment of __fsid_t"][::std::mem::align_of::<__fsid_t>() - 4usize];
-    ["Offset of field: __fsid_t::__val"][::std::mem::offset_of!(__fsid_t, __val) - 0usize];
+    [
+        "Offset of field: __fsid_t::__val",
+    ][::std::mem::offset_of!(__fsid_t, __val) - 0usize];
 };
 pub type __clock_t = ::std::os::raw::c_long;
 pub type __rlim_t = ::std::os::raw::c_ulong;
@@ -312,9 +314,12 @@ pub struct _attributes_t {
 const _: () = {
     ["Size of _attributes_t"][::std::mem::size_of::<_attributes_t>() - 16usize];
     ["Alignment of _attributes_t"][::std::mem::align_of::<_attributes_t>() - 8usize];
-    ["Offset of field: _attributes_t::flags"]
-        [::std::mem::offset_of!(_attributes_t, flags) - 0usize];
-    ["Offset of field: _attributes_t::xfrm"][::std::mem::offset_of!(_attributes_t, xfrm) - 8usize];
+    [
+        "Offset of field: _attributes_t::flags",
+    ][::std::mem::offset_of!(_attributes_t, flags) - 0usize];
+    [
+        "Offset of field: _attributes_t::xfrm",
+    ][::std::mem::offset_of!(_attributes_t, xfrm) - 8usize];
 };
 pub type sgx_attributes_t = _attributes_t;
 pub type sgx_misc_select_t = u32;
@@ -326,13 +331,18 @@ pub struct _sgx_misc_attribute_t {
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_misc_attribute_t"][::std::mem::size_of::<_sgx_misc_attribute_t>() - 24usize];
-    ["Alignment of _sgx_misc_attribute_t"]
-        [::std::mem::align_of::<_sgx_misc_attribute_t>() - 8usize];
-    ["Offset of field: _sgx_misc_attribute_t::secs_attr"]
-        [::std::mem::offset_of!(_sgx_misc_attribute_t, secs_attr) - 0usize];
-    ["Offset of field: _sgx_misc_attribute_t::misc_select"]
-        [::std::mem::offset_of!(_sgx_misc_attribute_t, misc_select) - 16usize];
+    [
+        "Size of _sgx_misc_attribute_t",
+    ][::std::mem::size_of::<_sgx_misc_attribute_t>() - 24usize];
+    [
+        "Alignment of _sgx_misc_attribute_t",
+    ][::std::mem::align_of::<_sgx_misc_attribute_t>() - 8usize];
+    [
+        "Offset of field: _sgx_misc_attribute_t::secs_attr",
+    ][::std::mem::offset_of!(_sgx_misc_attribute_t, secs_attr) - 0usize];
+    [
+        "Offset of field: _sgx_misc_attribute_t::misc_select",
+    ][::std::mem::offset_of!(_sgx_misc_attribute_t, misc_select) - 16usize];
 };
 pub type sgx_misc_attribute_t = _sgx_misc_attribute_t;
 pub type sgx_key_128bit_t = [u8; 16usize];
@@ -348,7 +358,9 @@ pub struct _sgx_cpu_svn_t {
 const _: () = {
     ["Size of _sgx_cpu_svn_t"][::std::mem::size_of::<_sgx_cpu_svn_t>() - 16usize];
     ["Alignment of _sgx_cpu_svn_t"][::std::mem::align_of::<_sgx_cpu_svn_t>() - 1usize];
-    ["Offset of field: _sgx_cpu_svn_t::svn"][::std::mem::offset_of!(_sgx_cpu_svn_t, svn) - 0usize];
+    [
+        "Offset of field: _sgx_cpu_svn_t::svn",
+    ][::std::mem::offset_of!(_sgx_cpu_svn_t, svn) - 0usize];
 };
 pub type sgx_cpu_svn_t = _sgx_cpu_svn_t;
 #[repr(C)]
@@ -360,7 +372,9 @@ pub struct _sgx_key_id_t {
 const _: () = {
     ["Size of _sgx_key_id_t"][::std::mem::size_of::<_sgx_key_id_t>() - 32usize];
     ["Alignment of _sgx_key_id_t"][::std::mem::align_of::<_sgx_key_id_t>() - 1usize];
-    ["Offset of field: _sgx_key_id_t::id"][::std::mem::offset_of!(_sgx_key_id_t, id) - 0usize];
+    [
+        "Offset of field: _sgx_key_id_t::id",
+    ][::std::mem::offset_of!(_sgx_key_id_t, id) - 0usize];
 };
 pub type sgx_key_id_t = _sgx_key_id_t;
 #[repr(C)]
@@ -381,26 +395,36 @@ pub struct _key_request_t {
 const _: () = {
     ["Size of _key_request_t"][::std::mem::size_of::<_key_request_t>() - 512usize];
     ["Alignment of _key_request_t"][::std::mem::align_of::<_key_request_t>() - 8usize];
-    ["Offset of field: _key_request_t::key_name"]
-        [::std::mem::offset_of!(_key_request_t, key_name) - 0usize];
-    ["Offset of field: _key_request_t::key_policy"]
-        [::std::mem::offset_of!(_key_request_t, key_policy) - 2usize];
-    ["Offset of field: _key_request_t::isv_svn"]
-        [::std::mem::offset_of!(_key_request_t, isv_svn) - 4usize];
-    ["Offset of field: _key_request_t::reserved1"]
-        [::std::mem::offset_of!(_key_request_t, reserved1) - 6usize];
-    ["Offset of field: _key_request_t::cpu_svn"]
-        [::std::mem::offset_of!(_key_request_t, cpu_svn) - 8usize];
-    ["Offset of field: _key_request_t::attribute_mask"]
-        [::std::mem::offset_of!(_key_request_t, attribute_mask) - 24usize];
-    ["Offset of field: _key_request_t::key_id"]
-        [::std::mem::offset_of!(_key_request_t, key_id) - 40usize];
-    ["Offset of field: _key_request_t::misc_mask"]
-        [::std::mem::offset_of!(_key_request_t, misc_mask) - 72usize];
-    ["Offset of field: _key_request_t::config_svn"]
-        [::std::mem::offset_of!(_key_request_t, config_svn) - 76usize];
-    ["Offset of field: _key_request_t::reserved2"]
-        [::std::mem::offset_of!(_key_request_t, reserved2) - 78usize];
+    [
+        "Offset of field: _key_request_t::key_name",
+    ][::std::mem::offset_of!(_key_request_t, key_name) - 0usize];
+    [
+        "Offset of field: _key_request_t::key_policy",
+    ][::std::mem::offset_of!(_key_request_t, key_policy) - 2usize];
+    [
+        "Offset of field: _key_request_t::isv_svn",
+    ][::std::mem::offset_of!(_key_request_t, isv_svn) - 4usize];
+    [
+        "Offset of field: _key_request_t::reserved1",
+    ][::std::mem::offset_of!(_key_request_t, reserved1) - 6usize];
+    [
+        "Offset of field: _key_request_t::cpu_svn",
+    ][::std::mem::offset_of!(_key_request_t, cpu_svn) - 8usize];
+    [
+        "Offset of field: _key_request_t::attribute_mask",
+    ][::std::mem::offset_of!(_key_request_t, attribute_mask) - 24usize];
+    [
+        "Offset of field: _key_request_t::key_id",
+    ][::std::mem::offset_of!(_key_request_t, key_id) - 40usize];
+    [
+        "Offset of field: _key_request_t::misc_mask",
+    ][::std::mem::offset_of!(_key_request_t, misc_mask) - 72usize];
+    [
+        "Offset of field: _key_request_t::config_svn",
+    ][::std::mem::offset_of!(_key_request_t, config_svn) - 76usize];
+    [
+        "Offset of field: _key_request_t::reserved2",
+    ][::std::mem::offset_of!(_key_request_t, reserved2) - 78usize];
 };
 impl Default for _key_request_t {
     fn default() -> Self {
@@ -464,8 +488,12 @@ pub struct timespec {
 const _: () = {
     ["Size of timespec"][::std::mem::size_of::<timespec>() - 16usize];
     ["Alignment of timespec"][::std::mem::align_of::<timespec>() - 8usize];
-    ["Offset of field: timespec::tv_sec"][::std::mem::offset_of!(timespec, tv_sec) - 0usize];
-    ["Offset of field: timespec::tv_nsec"][::std::mem::offset_of!(timespec, tv_nsec) - 8usize];
+    [
+        "Offset of field: timespec::tv_sec",
+    ][::std::mem::offset_of!(timespec, tv_sec) - 0usize];
+    [
+        "Offset of field: timespec::tv_nsec",
+    ][::std::mem::offset_of!(timespec, tv_nsec) - 8usize];
 };
 pub type clockid_t = __clockid_t;
 pub type timer_t = __timer_t;
@@ -479,10 +507,12 @@ pub struct itimerspec {
 const _: () = {
     ["Size of itimerspec"][::std::mem::size_of::<itimerspec>() - 32usize];
     ["Alignment of itimerspec"][::std::mem::align_of::<itimerspec>() - 8usize];
-    ["Offset of field: itimerspec::it_interval"]
-        [::std::mem::offset_of!(itimerspec, it_interval) - 0usize];
-    ["Offset of field: itimerspec::it_value"]
-        [::std::mem::offset_of!(itimerspec, it_value) - 16usize];
+    [
+        "Offset of field: itimerspec::it_interval",
+    ][::std::mem::offset_of!(itimerspec, it_interval) - 0usize];
+    [
+        "Offset of field: itimerspec::it_value",
+    ][::std::mem::offset_of!(itimerspec, it_value) - 16usize];
 };
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -503,16 +533,21 @@ pub struct __locale_struct {
 const _: () = {
     ["Size of __locale_struct"][::std::mem::size_of::<__locale_struct>() - 232usize];
     ["Alignment of __locale_struct"][::std::mem::align_of::<__locale_struct>() - 8usize];
-    ["Offset of field: __locale_struct::__locales"]
-        [::std::mem::offset_of!(__locale_struct, __locales) - 0usize];
-    ["Offset of field: __locale_struct::__ctype_b"]
-        [::std::mem::offset_of!(__locale_struct, __ctype_b) - 104usize];
-    ["Offset of field: __locale_struct::__ctype_tolower"]
-        [::std::mem::offset_of!(__locale_struct, __ctype_tolower) - 112usize];
-    ["Offset of field: __locale_struct::__ctype_toupper"]
-        [::std::mem::offset_of!(__locale_struct, __ctype_toupper) - 120usize];
-    ["Offset of field: __locale_struct::__names"]
-        [::std::mem::offset_of!(__locale_struct, __names) - 128usize];
+    [
+        "Offset of field: __locale_struct::__locales",
+    ][::std::mem::offset_of!(__locale_struct, __locales) - 0usize];
+    [
+        "Offset of field: __locale_struct::__ctype_b",
+    ][::std::mem::offset_of!(__locale_struct, __ctype_b) - 104usize];
+    [
+        "Offset of field: __locale_struct::__ctype_tolower",
+    ][::std::mem::offset_of!(__locale_struct, __ctype_tolower) - 112usize];
+    [
+        "Offset of field: __locale_struct::__ctype_toupper",
+    ][::std::mem::offset_of!(__locale_struct, __ctype_toupper) - 120usize];
+    [
+        "Offset of field: __locale_struct::__names",
+    ][::std::mem::offset_of!(__locale_struct, __names) - 128usize];
 };
 impl Default for __locale_struct {
     fn default() -> Self {
@@ -621,13 +656,22 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
-    pub fn clock_getres(__clock_id: clockid_t, __res: *mut timespec) -> ::std::os::raw::c_int;
+    pub fn clock_getres(
+        __clock_id: clockid_t,
+        __res: *mut timespec,
+    ) -> ::std::os::raw::c_int;
 }
 extern "C" {
-    pub fn clock_gettime(__clock_id: clockid_t, __tp: *mut timespec) -> ::std::os::raw::c_int;
+    pub fn clock_gettime(
+        __clock_id: clockid_t,
+        __tp: *mut timespec,
+    ) -> ::std::os::raw::c_int;
 }
 extern "C" {
-    pub fn clock_settime(__clock_id: clockid_t, __tp: *const timespec) -> ::std::os::raw::c_int;
+    pub fn clock_settime(
+        __clock_id: clockid_t,
+        __tp: *const timespec,
+    ) -> ::std::os::raw::c_int;
 }
 extern "C" {
     pub fn clock_nanosleep(
@@ -638,7 +682,10 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
-    pub fn clock_getcpuclockid(__pid: pid_t, __clock_id: *mut clockid_t) -> ::std::os::raw::c_int;
+    pub fn clock_getcpuclockid(
+        __pid: pid_t,
+        __clock_id: *mut clockid_t,
+    ) -> ::std::os::raw::c_int;
 }
 extern "C" {
     pub fn timer_create(
@@ -659,7 +706,10 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
-    pub fn timer_gettime(__timerid: timer_t, __value: *mut itimerspec) -> ::std::os::raw::c_int;
+    pub fn timer_gettime(
+        __timerid: timer_t,
+        __value: *mut itimerspec,
+    ) -> ::std::os::raw::c_int;
 }
 extern "C" {
     pub fn timer_getoverrun(__timerid: timer_t) -> ::std::os::raw::c_int;
@@ -683,30 +733,44 @@ impl _sgx_ql_qv_result_t {
     pub const TEE_QV_RESULT_MIN: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40961);
 }
 impl _sgx_ql_qv_result_t {
-    pub const SGX_QL_QV_RESULT_CONFIG_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40961);
+    pub const SGX_QL_QV_RESULT_CONFIG_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40961,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const TEE_QV_RESULT_CONFIG_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40961);
+    pub const TEE_QV_RESULT_CONFIG_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40961,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const SGX_QL_QV_RESULT_OUT_OF_DATE: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40962);
+    pub const SGX_QL_QV_RESULT_OUT_OF_DATE: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40962,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const TEE_QV_RESULT_OUT_OF_DATE: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40962);
+    pub const TEE_QV_RESULT_OUT_OF_DATE: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40962,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED: _sgx_ql_qv_result_t =
-        _sgx_ql_qv_result_t(40963);
+    pub const SGX_QL_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40963,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const TEE_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED: _sgx_ql_qv_result_t =
-        _sgx_ql_qv_result_t(40963);
+    pub const TEE_QV_RESULT_OUT_OF_DATE_CONFIG_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40963,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const SGX_QL_QV_RESULT_INVALID_SIGNATURE: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40964);
+    pub const SGX_QL_QV_RESULT_INVALID_SIGNATURE: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40964,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const TEE_QV_RESULT_INVALID_SIGNATURE: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40964);
+    pub const TEE_QV_RESULT_INVALID_SIGNATURE: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40964,
+    );
 }
 impl _sgx_ql_qv_result_t {
     pub const SGX_QL_QV_RESULT_REVOKED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40965);
@@ -715,40 +779,54 @@ impl _sgx_ql_qv_result_t {
     pub const TEE_QV_RESULT_REVOKED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40965);
 }
 impl _sgx_ql_qv_result_t {
-    pub const SGX_QL_QV_RESULT_UNSPECIFIED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40966);
+    pub const SGX_QL_QV_RESULT_UNSPECIFIED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40966,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const TEE_QV_RESULT_UNSPECIFIED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40966);
+    pub const TEE_QV_RESULT_UNSPECIFIED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40966,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const SGX_QL_QV_RESULT_SW_HARDENING_NEEDED: _sgx_ql_qv_result_t =
-        _sgx_ql_qv_result_t(40967);
+    pub const SGX_QL_QV_RESULT_SW_HARDENING_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40967,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const TEE_QV_RESULT_SW_HARDENING_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40967);
+    pub const TEE_QV_RESULT_SW_HARDENING_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40967,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED: _sgx_ql_qv_result_t =
-        _sgx_ql_qv_result_t(40968);
+    pub const SGX_QL_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40968,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const TEE_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED: _sgx_ql_qv_result_t =
-        _sgx_ql_qv_result_t(40968);
+    pub const TEE_QV_RESULT_CONFIG_AND_SW_HARDENING_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40968,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const SGX_QL_QV_RESULT_TD_RELAUNCH_ADVISED: _sgx_ql_qv_result_t =
-        _sgx_ql_qv_result_t(40969);
+    pub const SGX_QL_QV_RESULT_TD_RELAUNCH_ADVISED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40969,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const TEE_QV_RESULT_TD_RELAUNCH_ADVISED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(40969);
+    pub const TEE_QV_RESULT_TD_RELAUNCH_ADVISED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40969,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const SGX_QL_QV_RESULT_TD_RELAUNCH_ADVISED_CONFIG_NEEDED: _sgx_ql_qv_result_t =
-        _sgx_ql_qv_result_t(40970);
+    pub const SGX_QL_QV_RESULT_TD_RELAUNCH_ADVISED_CONFIG_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40970,
+    );
 }
 impl _sgx_ql_qv_result_t {
-    pub const TEE_QV_RESULT_TD_RELAUNCH_ADVISED_CONFIG_NEEDED: _sgx_ql_qv_result_t =
-        _sgx_ql_qv_result_t(40970);
+    pub const TEE_QV_RESULT_TD_RELAUNCH_ADVISED_CONFIG_NEEDED: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(
+        40970,
+    );
 }
 impl _sgx_ql_qv_result_t {
     pub const SGX_QL_QV_RESULT_MAX: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(41215);
@@ -757,122 +835,134 @@ impl _sgx_ql_qv_result_t {
     pub const TEE_QV_RESULT_MAX: _sgx_ql_qv_result_t = _sgx_ql_qv_result_t(41215);
 }
 #[repr(transparent)]
-#[doc = " Contains the possible values of the quote verification result."]
+/// Contains the possible values of the quote verification result.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct _sgx_ql_qv_result_t(pub ::std::os::raw::c_uint);
-#[doc = " Contains the possible values of the quote verification result."]
+/// Contains the possible values of the quote verification result.
 pub use self::_sgx_ql_qv_result_t as sgx_ql_qv_result_t;
-#[doc = " Contains the possible values of the quote verification result."]
+/// Contains the possible values of the quote verification result.
 pub use self::_sgx_ql_qv_result_t as tee_qv_result_t;
 pub const _pck_cert_flag_enum_t_PCK_FLAG_FALSE: _pck_cert_flag_enum_t = 0;
 pub const _pck_cert_flag_enum_t_PCK_FLAG_TRUE: _pck_cert_flag_enum_t = 1;
 pub const _pck_cert_flag_enum_t_PCK_FLAG_UNDEFINED: _pck_cert_flag_enum_t = 2;
 pub type _pck_cert_flag_enum_t = ::std::os::raw::c_uint;
 pub use self::_pck_cert_flag_enum_t as pck_cert_flag_enum_t;
-#[doc = " Contains data that will allow an alternative quote verification policy."]
+/// Contains data that will allow an alternative quote verification policy.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct _sgx_ql_qv_supplemental_t {
     pub __bindgen_anon_1: _sgx_ql_qv_supplemental_t__bindgen_ty_1,
-    #[doc = "< Earliest issue date of all the collateral (UTC)"]
+    ///< Earliest issue date of all the collateral (UTC)
     pub earliest_issue_date: time_t,
-    #[doc = "< Latest issue date of all the collateral (UTC)"]
+    ///< Latest issue date of all the collateral (UTC)
     pub latest_issue_date: time_t,
-    #[doc = "< Earliest expiration date of all the collateral (UTC)"]
+    ///< Earliest expiration date of all the collateral (UTC)
     pub earliest_expiration_date: time_t,
-    #[doc = "< The SGX TCB of the platform that generated the quote is not vulnerable\n< to any Security Advisory with an SGX TCB impact released on or before this date.\n< See Intel Security Center Advisories"]
+    /**< The SGX TCB of the platform that generated the quote is not vulnerable
+< to any Security Advisory with an SGX TCB impact released on or before this date.
+< See Intel Security Center Advisories*/
     pub tcb_level_date_tag: time_t,
-    #[doc = "< CRL Num from PCK Cert CRL"]
+    ///< CRL Num from PCK Cert CRL
     pub pck_crl_num: u32,
-    #[doc = "< CRL Num from Root CA CRL"]
+    ///< CRL Num from Root CA CRL
     pub root_ca_crl_num: u32,
-    #[doc = "< Use the lower TCB evaluation data number from Platform and QE Identity"]
+    ///< Use the lower TCB evaluation data number from Platform and QE Identity
     pub tcb_eval_ref_num: u32,
-    #[doc = "< ID of the collateral's root signer (hash of Root CA's public key SHA-384)"]
+    ///< ID of the collateral's root signer (hash of Root CA's public key SHA-384)
     pub root_key_id: [u8; 48usize],
-    #[doc = "< PPID from remote platform.  Can be used for platform ownership checks"]
+    ///< PPID from remote platform.  Can be used for platform ownership checks
     pub pck_ppid: sgx_key_128bit_t,
-    #[doc = "< CPUSVN of the remote platform's PCK Cert"]
+    ///< CPUSVN of the remote platform's PCK Cert
     pub tcb_cpusvn: sgx_cpu_svn_t,
-    #[doc = "< PCE_ISVNSVN of the remote platform's PCK Cert"]
+    ///< PCE_ISVNSVN of the remote platform's PCK Cert
     pub tcb_pce_isvsvn: sgx_isv_svn_t,
-    #[doc = "< PCE_ID of the remote platform"]
+    ///< PCE_ID of the remote platform
     pub pce_id: u16,
-    #[doc = "< 0x00000000: SGX or 0x00000081: TDX"]
+    ///< 0x00000000: SGX or 0x00000081: TDX
     pub tee_type: u32,
-    #[doc = "< Indicate the type of memory protection available on the platform, it should be one of\n< Standard (0), Scalable (1) and Scalable with Integrity (2)"]
+    /**< Indicate the type of memory protection available on the platform, it should be one of
+< Standard (0), Scalable (1) and Scalable with Integrity (2)*/
     pub sgx_type: u8,
-    #[doc = "< Value of Platform Instance ID, 16 bytes"]
+    ///< Value of Platform Instance ID, 16 bytes
     pub platform_instance_id: [u8; 16usize],
-    #[doc = "< Indicate whether a platform can be extended with additional packages - via Package Add calls to SGX Registration Backend"]
+    ///< Indicate whether a platform can be extended with additional packages - via Package Add calls to SGX Registration Backend
     pub dynamic_platform: pck_cert_flag_enum_t,
-    #[doc = "< Indicate whether platform root keys are cached by SGX Registration Backend"]
+    ///< Indicate whether platform root keys are cached by SGX Registration Backend
     pub cached_keys: pck_cert_flag_enum_t,
-    #[doc = "< Indicate whether a plat form has SMT (simultaneous multithreading) enabled"]
+    ///< Indicate whether a plat form has SMT (simultaneous multithreading) enabled
     pub smt_enabled: pck_cert_flag_enum_t,
-    #[doc = "< String of comma separated list of Security Advisory IDs"]
+    ///< String of comma separated list of Security Advisory IDs
     pub sa_list: [::std::os::raw::c_char; 450usize],
-    #[doc = "< Earliest issue date of QEIdentity (UTC)"]
+    ///< Earliest issue date of QEIdentity (UTC)
     pub qe_iden_earliest_issue_date: time_t,
-    #[doc = "< Latest issue date of QEIdentity (UTC)"]
+    ///< Latest issue date of QEIdentity (UTC)
     pub qe_iden_latest_issue_date: time_t,
-    #[doc = "< Earliest expiration date of QEIdentity (UTC)"]
+    ///< Earliest expiration date of QEIdentity (UTC)
     pub qe_iden_earliest_expiration_date: time_t,
-    #[doc = "< TCB date for the current QE identity TCB level"]
+    ///< TCB date for the current QE identity TCB level
     pub qe_iden_tcb_level_date_tag: time_t,
-    #[doc = "< The TCB evaluation data number of QE Identity"]
+    ///< The TCB evaluation data number of QE Identity
     pub qe_iden_tcb_eval_ref_num: u32,
-    #[doc = "< QEIdentity TCB status"]
+    ///< QEIdentity TCB status
     pub qe_iden_status: sgx_ql_qv_result_t,
-    #[doc = "< TCB date for the matched platform TCB level"]
+    ///< TCB date for the matched platform TCB level
     pub platform_tcb_level_date_tag: time_t,
-    #[doc = "< platform_tcb_level_date_tag, evaluated for the current TCB level"]
+    ///< platform_tcb_level_date_tag, evaluated for the current TCB level
     pub tcb_date_current: time_t,
-    #[doc = "< TCB status, evaluated for the current TCB level"]
+    ///< TCB status, evaluated for the current TCB level
     pub tcb_status_current: sgx_ql_qv_result_t,
-    #[doc = "< sa_list, evaluated for the current TCB level"]
+    ///< sa_list, evaluated for the current TCB level
     pub sa_list_current: [::std::os::raw::c_char; 450usize],
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union _sgx_ql_qv_supplemental_t__bindgen_ty_1 {
-    #[doc = "< 'version' is the backward compatible legacy representation"]
+    ///< 'version' is the backward compatible legacy representation
     pub version: u32,
     pub __bindgen_anon_1: _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1,
 }
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1 {
-    #[doc = "< If this major version doesn't change, the size of the structure may change and new fields appended to the end but old minor version structure can still be 'cast'\n< If this major version does change, then the structure has been modified in a way that makes the older definitions non-backwards compatible. i.e. You cannot 'cast' older definitions"]
+    /**< If this major version doesn't change, the size of the structure may change and new fields appended to the end but old minor version structure can still be 'cast'
+< If this major version does change, then the structure has been modified in a way that makes the older definitions non-backwards compatible. i.e. You cannot 'cast' older definitions*/
     pub major_version: u16,
-    #[doc = "< If this version changes, new fields have been appended to the end of the previous minor version definition of the structure\n< Set to 1 to support SA_List.  Set to 0 to support everything except the SA List"]
+    /**< If this version changes, new fields have been appended to the end of the previous minor version definition of the structure
+< Set to 1 to support SA_List.  Set to 0 to support everything except the SA List*/
     pub minor_version: u16,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1"]
-        [::std::mem::size_of::<_sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1>() - 4usize];
-    ["Alignment of _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1"]
-        [::std::mem::align_of::<_sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1>() - 2usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1::major_version"][::std::mem::offset_of!(
-        _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1,
-        major_version
-    )
-        - 0usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1::minor_version"][::std::mem::offset_of!(
-        _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1,
-        minor_version
-    )
+    [
+        "Size of _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1",
+    ][::std::mem::size_of::<_sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1>()
+        - 4usize];
+    [
+        "Alignment of _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1",
+    ][::std::mem::align_of::<_sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1>()
         - 2usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1::major_version",
+    ][::std::mem::offset_of!(
+        _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1, major_version
+    ) - 0usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1::minor_version",
+    ][::std::mem::offset_of!(
+        _sgx_ql_qv_supplemental_t__bindgen_ty_1__bindgen_ty_1, minor_version
+    ) - 2usize];
 };
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_qv_supplemental_t__bindgen_ty_1"]
-        [::std::mem::size_of::<_sgx_ql_qv_supplemental_t__bindgen_ty_1>() - 4usize];
-    ["Alignment of _sgx_ql_qv_supplemental_t__bindgen_ty_1"]
-        [::std::mem::align_of::<_sgx_ql_qv_supplemental_t__bindgen_ty_1>() - 4usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t__bindgen_ty_1::version"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t__bindgen_ty_1, version) - 0usize];
+    [
+        "Size of _sgx_ql_qv_supplemental_t__bindgen_ty_1",
+    ][::std::mem::size_of::<_sgx_ql_qv_supplemental_t__bindgen_ty_1>() - 4usize];
+    [
+        "Alignment of _sgx_ql_qv_supplemental_t__bindgen_ty_1",
+    ][::std::mem::align_of::<_sgx_ql_qv_supplemental_t__bindgen_ty_1>() - 4usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t__bindgen_ty_1::version",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t__bindgen_ty_1, version) - 0usize];
 };
 impl Default for _sgx_ql_qv_supplemental_t__bindgen_ty_1 {
     fn default() -> Self {
@@ -885,70 +975,107 @@ impl Default for _sgx_ql_qv_supplemental_t__bindgen_ty_1 {
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_qv_supplemental_t"]
-        [::std::mem::size_of::<_sgx_ql_qv_supplemental_t>() - 1136usize];
-    ["Alignment of _sgx_ql_qv_supplemental_t"]
-        [::std::mem::align_of::<_sgx_ql_qv_supplemental_t>() - 8usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::earliest_issue_date"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, earliest_issue_date) - 8usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::latest_issue_date"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, latest_issue_date) - 16usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::earliest_expiration_date"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, earliest_expiration_date) - 24usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::tcb_level_date_tag"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_level_date_tag) - 32usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::pck_crl_num"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, pck_crl_num) - 40usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::root_ca_crl_num"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, root_ca_crl_num) - 44usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::tcb_eval_ref_num"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_eval_ref_num) - 48usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::root_key_id"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, root_key_id) - 52usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::pck_ppid"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, pck_ppid) - 100usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::tcb_cpusvn"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_cpusvn) - 116usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::tcb_pce_isvsvn"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_pce_isvsvn) - 132usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::pce_id"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, pce_id) - 134usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::tee_type"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tee_type) - 136usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::sgx_type"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, sgx_type) - 140usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::platform_instance_id"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, platform_instance_id) - 141usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::dynamic_platform"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, dynamic_platform) - 160usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::cached_keys"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, cached_keys) - 164usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::smt_enabled"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, smt_enabled) - 168usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::sa_list"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, sa_list) - 172usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_earliest_issue_date"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_earliest_issue_date) - 624usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_latest_issue_date"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_latest_issue_date) - 632usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_earliest_expiration_date"][::std::mem::offset_of!(
-        _sgx_ql_qv_supplemental_t,
-        qe_iden_earliest_expiration_date
-    ) - 640usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_tcb_level_date_tag"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_tcb_level_date_tag) - 648usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_tcb_eval_ref_num"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_tcb_eval_ref_num) - 656usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_status"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_status) - 660usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::platform_tcb_level_date_tag"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, platform_tcb_level_date_tag) - 664usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::tcb_date_current"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_date_current) - 672usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::tcb_status_current"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_status_current) - 680usize];
-    ["Offset of field: _sgx_ql_qv_supplemental_t::sa_list_current"]
-        [::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, sa_list_current) - 684usize];
+    [
+        "Size of _sgx_ql_qv_supplemental_t",
+    ][::std::mem::size_of::<_sgx_ql_qv_supplemental_t>() - 1136usize];
+    [
+        "Alignment of _sgx_ql_qv_supplemental_t",
+    ][::std::mem::align_of::<_sgx_ql_qv_supplemental_t>() - 8usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::earliest_issue_date",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, earliest_issue_date) - 8usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::latest_issue_date",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, latest_issue_date) - 16usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::earliest_expiration_date",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, earliest_expiration_date)
+        - 24usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::tcb_level_date_tag",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_level_date_tag) - 32usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::pck_crl_num",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, pck_crl_num) - 40usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::root_ca_crl_num",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, root_ca_crl_num) - 44usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::tcb_eval_ref_num",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_eval_ref_num) - 48usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::root_key_id",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, root_key_id) - 52usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::pck_ppid",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, pck_ppid) - 100usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::tcb_cpusvn",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_cpusvn) - 116usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::tcb_pce_isvsvn",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_pce_isvsvn) - 132usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::pce_id",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, pce_id) - 134usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::tee_type",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tee_type) - 136usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::sgx_type",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, sgx_type) - 140usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::platform_instance_id",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, platform_instance_id)
+        - 141usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::dynamic_platform",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, dynamic_platform) - 160usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::cached_keys",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, cached_keys) - 164usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::smt_enabled",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, smt_enabled) - 168usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::sa_list",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, sa_list) - 172usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_earliest_issue_date",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_earliest_issue_date)
+        - 624usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_latest_issue_date",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_latest_issue_date)
+        - 632usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_earliest_expiration_date",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_earliest_expiration_date)
+        - 640usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_tcb_level_date_tag",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_tcb_level_date_tag)
+        - 648usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_tcb_eval_ref_num",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_tcb_eval_ref_num)
+        - 656usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::qe_iden_status",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, qe_iden_status) - 660usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::platform_tcb_level_date_tag",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, platform_tcb_level_date_tag)
+        - 664usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::tcb_date_current",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_date_current) - 672usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::tcb_status_current",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, tcb_status_current) - 680usize];
+    [
+        "Offset of field: _sgx_ql_qv_supplemental_t::sa_list_current",
+    ][::std::mem::offset_of!(_sgx_ql_qv_supplemental_t, sa_list_current) - 684usize];
 };
 impl Default for _sgx_ql_qv_supplemental_t {
     fn default() -> Self {
@@ -959,31 +1086,39 @@ impl Default for _sgx_ql_qv_supplemental_t {
         }
     }
 }
-#[doc = " Contains data that will allow an alternative quote verification policy."]
+/// Contains data that will allow an alternative quote verification policy.
 pub type sgx_ql_qv_supplemental_t = _sgx_ql_qv_supplemental_t;
-#[doc = " Descriptor of the supplemental data requestor structure. Used when requesting supplemental data from the DCAP quote verification API"]
+/// Descriptor of the supplemental data requestor structure. Used when requesting supplemental data from the DCAP quote verification API
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _tee_supp_data_descriptor_t {
-    #[doc = "< Input. Major version of supplemental data\n< If == 0, then return latest version of the sgx_ql_qv_supplemental_t structure\n< If <= latest supported, return the latest minor version associated with that major version\n< > latest supported, return an error (SGX_QL_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED)"]
+    /**< Input. Major version of supplemental data
+< If == 0, then return latest version of the sgx_ql_qv_supplemental_t structure
+< If <= latest supported, return the latest minor version associated with that major version
+< > latest supported, return an error (SGX_QL_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED)*/
     pub major_version: u16,
-    #[doc = "< Input. Supplemental data size of `p_data`, which returned by API `tee_get_supplemental_data_version_and_size()`"]
+    ///< Input. Supplemental data size of `p_data`, which returned by API `tee_get_supplemental_data_version_and_size()`
     pub data_size: u32,
-    #[doc = "< Output. Pointer to supplemental data"]
+    ///< Output. Pointer to supplemental data
     pub p_data: *mut u8,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _tee_supp_data_descriptor_t"]
-        [::std::mem::size_of::<_tee_supp_data_descriptor_t>() - 16usize];
-    ["Alignment of _tee_supp_data_descriptor_t"]
-        [::std::mem::align_of::<_tee_supp_data_descriptor_t>() - 8usize];
-    ["Offset of field: _tee_supp_data_descriptor_t::major_version"]
-        [::std::mem::offset_of!(_tee_supp_data_descriptor_t, major_version) - 0usize];
-    ["Offset of field: _tee_supp_data_descriptor_t::data_size"]
-        [::std::mem::offset_of!(_tee_supp_data_descriptor_t, data_size) - 4usize];
-    ["Offset of field: _tee_supp_data_descriptor_t::p_data"]
-        [::std::mem::offset_of!(_tee_supp_data_descriptor_t, p_data) - 8usize];
+    [
+        "Size of _tee_supp_data_descriptor_t",
+    ][::std::mem::size_of::<_tee_supp_data_descriptor_t>() - 16usize];
+    [
+        "Alignment of _tee_supp_data_descriptor_t",
+    ][::std::mem::align_of::<_tee_supp_data_descriptor_t>() - 8usize];
+    [
+        "Offset of field: _tee_supp_data_descriptor_t::major_version",
+    ][::std::mem::offset_of!(_tee_supp_data_descriptor_t, major_version) - 0usize];
+    [
+        "Offset of field: _tee_supp_data_descriptor_t::data_size",
+    ][::std::mem::offset_of!(_tee_supp_data_descriptor_t, data_size) - 4usize];
+    [
+        "Offset of field: _tee_supp_data_descriptor_t::p_data",
+    ][::std::mem::offset_of!(_tee_supp_data_descriptor_t, p_data) - 8usize];
 };
 impl Default for _tee_supp_data_descriptor_t {
     fn default() -> Self {
@@ -994,7 +1129,7 @@ impl Default for _tee_supp_data_descriptor_t {
         }
     }
 }
-#[doc = " Descriptor of the supplemental data requestor structure. Used when requesting supplemental data from the DCAP quote verification API"]
+/// Descriptor of the supplemental data requestor structure. Used when requesting supplemental data from the DCAP quote verification API
 pub type tee_supp_data_descriptor_t = _tee_supp_data_descriptor_t;
 pub type wchar_t = ::std::os::raw::c_int;
 #[repr(C)]
@@ -1009,248 +1144,268 @@ pub struct max_align_t {
 const _: () = {
     ["Size of max_align_t"][::std::mem::size_of::<max_align_t>() - 32usize];
     ["Alignment of max_align_t"][::std::mem::align_of::<max_align_t>() - 16usize];
-    ["Offset of field: max_align_t::__clang_max_align_nonce1"]
-        [::std::mem::offset_of!(max_align_t, __clang_max_align_nonce1) - 0usize];
-    ["Offset of field: max_align_t::__clang_max_align_nonce2"]
-        [::std::mem::offset_of!(max_align_t, __clang_max_align_nonce2) - 16usize];
+    [
+        "Offset of field: max_align_t::__clang_max_align_nonce1",
+    ][::std::mem::offset_of!(max_align_t, __clang_max_align_nonce1) - 0usize];
+    [
+        "Offset of field: max_align_t::__clang_max_align_nonce2",
+    ][::std::mem::offset_of!(max_align_t, __clang_max_align_nonce2) - 16usize];
 };
 impl _quote3_error_t {
-    #[doc = "< Success"]
+    ///< Success
     pub const SGX_QL_SUCCESS: _quote3_error_t = _quote3_error_t(0);
 }
 impl _quote3_error_t {
-    #[doc = "< Success"]
+    ///< Success
     pub const TEE_SUCCESS: _quote3_error_t = _quote3_error_t(0);
 }
 impl _quote3_error_t {
-    #[doc = "< Indicate min error to allow better translation."]
+    ///< Indicate min error to allow better translation.
     pub const SGX_QL_ERROR_MIN: _quote3_error_t = _quote3_error_t(57345);
 }
 impl _quote3_error_t {
-    #[doc = "< Indicate min error to allow better translation."]
+    ///< Indicate min error to allow better translation.
     pub const TEE_ERROR_MIN: _quote3_error_t = _quote3_error_t(57345);
 }
 impl _quote3_error_t {
-    #[doc = "< Unexpected error"]
+    ///< Unexpected error
     pub const SGX_QL_ERROR_UNEXPECTED: _quote3_error_t = _quote3_error_t(57345);
 }
 impl _quote3_error_t {
-    #[doc = "< Unexpected error"]
+    ///< Unexpected error
     pub const TEE_ERROR_UNEXPECTED: _quote3_error_t = _quote3_error_t(57345);
 }
 impl _quote3_error_t {
-    #[doc = "< The parameter is incorrect"]
+    ///< The parameter is incorrect
     pub const SGX_QL_ERROR_INVALID_PARAMETER: _quote3_error_t = _quote3_error_t(57346);
 }
 impl _quote3_error_t {
-    #[doc = "< The parameter is incorrect"]
+    ///< The parameter is incorrect
     pub const TEE_ERROR_INVALID_PARAMETER: _quote3_error_t = _quote3_error_t(57346);
 }
 impl _quote3_error_t {
-    #[doc = "< Not enough memory is available to complete this operation"]
+    ///< Not enough memory is available to complete this operation
     pub const SGX_QL_ERROR_OUT_OF_MEMORY: _quote3_error_t = _quote3_error_t(57347);
 }
 impl _quote3_error_t {
-    #[doc = "< Not enough memory is available to complete this operation"]
+    ///< Not enough memory is available to complete this operation
     pub const TEE_ERROR_OUT_OF_MEMORY: _quote3_error_t = _quote3_error_t(57347);
 }
 impl _quote3_error_t {
-    #[doc = "< Expected ECDSA_ID does not match the value stored in the ECDSA Blob"]
+    ///< Expected ECDSA_ID does not match the value stored in the ECDSA Blob
     pub const SGX_QL_ERROR_ECDSA_ID_MISMATCH: _quote3_error_t = _quote3_error_t(57348);
 }
 impl _quote3_error_t {
-    #[doc = "< Expected ECDSA_ID does not match the value stored in the ECDSA Blob"]
+    ///< Expected ECDSA_ID does not match the value stored in the ECDSA Blob
     pub const TEE_ERROR_ECDSA_ID_MISMATCH: _quote3_error_t = _quote3_error_t(57348);
 }
 impl _quote3_error_t {
-    #[doc = "< The ECDSA blob pathname is too large"]
-    pub const SGX_QL_PATHNAME_BUFFER_OVERFLOW_ERROR: _quote3_error_t = _quote3_error_t(57349);
+    ///< The ECDSA blob pathname is too large
+    pub const SGX_QL_PATHNAME_BUFFER_OVERFLOW_ERROR: _quote3_error_t = _quote3_error_t(
+        57349,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< The ECDSA blob pathname is too large"]
-    pub const TEE_PATHNAME_BUFFER_OVERFLOW_ERROR: _quote3_error_t = _quote3_error_t(57349);
+    ///< The ECDSA blob pathname is too large
+    pub const TEE_PATHNAME_BUFFER_OVERFLOW_ERROR: _quote3_error_t = _quote3_error_t(
+        57349,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< Error accessing ECDSA blob"]
+    ///< Error accessing ECDSA blob
     pub const SGX_QL_FILE_ACCESS_ERROR: _quote3_error_t = _quote3_error_t(57350);
 }
 impl _quote3_error_t {
-    #[doc = "< Error accessing ECDSA blob"]
+    ///< Error accessing ECDSA blob
     pub const TEE_FILE_ACCESS_ERROR: _quote3_error_t = _quote3_error_t(57350);
 }
 impl _quote3_error_t {
-    #[doc = "< Cached ECDSA key is invalid"]
+    ///< Cached ECDSA key is invalid
     pub const SGX_QL_ERROR_STORED_KEY: _quote3_error_t = _quote3_error_t(57351);
 }
 impl _quote3_error_t {
-    #[doc = "< Cached ECDSA key is invalid"]
+    ///< Cached ECDSA key is invalid
     pub const TEE_ERROR_STORED_KEY: _quote3_error_t = _quote3_error_t(57351);
 }
 impl _quote3_error_t {
-    #[doc = "< Cached ECDSA key does not match requested key"]
+    ///< Cached ECDSA key does not match requested key
     pub const SGX_QL_ERROR_PUB_KEY_ID_MISMATCH: _quote3_error_t = _quote3_error_t(57352);
 }
 impl _quote3_error_t {
-    #[doc = "< Cached ECDSA key does not match requested key"]
+    ///< Cached ECDSA key does not match requested key
     pub const TEE_ERROR_PUB_KEY_ID_MISMATCH: _quote3_error_t = _quote3_error_t(57352);
 }
 impl _quote3_error_t {
-    #[doc = "< PCE use the incorrect signature scheme"]
-    pub const SGX_QL_ERROR_INVALID_PCE_SIG_SCHEME: _quote3_error_t = _quote3_error_t(57353);
+    ///< PCE use the incorrect signature scheme
+    pub const SGX_QL_ERROR_INVALID_PCE_SIG_SCHEME: _quote3_error_t = _quote3_error_t(
+        57353,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< PCE use the incorrect signature scheme"]
+    ///< PCE use the incorrect signature scheme
     pub const TEE_ERROR_INVALID_PCE_SIG_SCHEME: _quote3_error_t = _quote3_error_t(57353);
 }
 impl _quote3_error_t {
-    #[doc = "< There is a problem with the attestation key blob."]
+    ///< There is a problem with the attestation key blob.
     pub const SGX_QL_ATT_KEY_BLOB_ERROR: _quote3_error_t = _quote3_error_t(57354);
 }
 impl _quote3_error_t {
-    #[doc = "< There is a problem with the attestation key blob."]
+    ///< There is a problem with the attestation key blob.
     pub const TEE_ATT_KEY_BLOB_ERROR: _quote3_error_t = _quote3_error_t(57354);
 }
 impl _quote3_error_t {
-    #[doc = "< Unsupported attestation key ID."]
+    ///< Unsupported attestation key ID.
     pub const SGX_QL_UNSUPPORTED_ATT_KEY_ID: _quote3_error_t = _quote3_error_t(57355);
 }
 impl _quote3_error_t {
-    #[doc = "< Unsupported attestation key ID."]
+    ///< Unsupported attestation key ID.
     pub const TEE_UNSUPPORTED_ATT_KEY_ID: _quote3_error_t = _quote3_error_t(57355);
 }
 impl _quote3_error_t {
-    #[doc = "< Unsupported enclave loading policy."]
-    pub const SGX_QL_UNSUPPORTED_LOADING_POLICY: _quote3_error_t = _quote3_error_t(57356);
+    ///< Unsupported enclave loading policy.
+    pub const SGX_QL_UNSUPPORTED_LOADING_POLICY: _quote3_error_t = _quote3_error_t(
+        57356,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< Unsupported enclave loading policy."]
+    ///< Unsupported enclave loading policy.
     pub const TEE_UNSUPPORTED_LOADING_POLICY: _quote3_error_t = _quote3_error_t(57356);
 }
 impl _quote3_error_t {
-    #[doc = "< Unable to load the PCE enclave"]
+    ///< Unable to load the PCE enclave
     pub const SGX_QL_INTERFACE_UNAVAILABLE: _quote3_error_t = _quote3_error_t(57357);
 }
 impl _quote3_error_t {
-    #[doc = "< Unable to load the PCE enclave"]
+    ///< Unable to load the PCE enclave
     pub const TEE_INTERFACE_UNAVAILABLE: _quote3_error_t = _quote3_error_t(57357);
 }
 impl _quote3_error_t {
-    #[doc = "< Unable to find the platform library with the dependent APIs.  Not fatal."]
+    ///< Unable to find the platform library with the dependent APIs.  Not fatal.
     pub const SGX_QL_PLATFORM_LIB_UNAVAILABLE: _quote3_error_t = _quote3_error_t(57358);
 }
 impl _quote3_error_t {
-    #[doc = "< Unable to find the platform library with the dependent APIs.  Not fatal."]
+    ///< Unable to find the platform library with the dependent APIs.  Not fatal.
     pub const TEE_PLATFORM_LIB_UNAVAILABLE: _quote3_error_t = _quote3_error_t(57358);
 }
 impl _quote3_error_t {
-    #[doc = "< The attestation key doesn't exist or has not been certified."]
+    ///< The attestation key doesn't exist or has not been certified.
     pub const SGX_QL_ATT_KEY_NOT_INITIALIZED: _quote3_error_t = _quote3_error_t(57359);
 }
 impl _quote3_error_t {
-    #[doc = "< The attestation key doesn't exist or has not been certified."]
+    ///< The attestation key doesn't exist or has not been certified.
     pub const TEE_ATT_KEY_NOT_INITIALIZED: _quote3_error_t = _quote3_error_t(57359);
 }
 impl _quote3_error_t {
-    #[doc = "< The certification data retrieved from the platform library is invalid."]
+    ///< The certification data retrieved from the platform library is invalid.
     pub const SGX_QL_ATT_KEY_CERT_DATA_INVALID: _quote3_error_t = _quote3_error_t(57360);
 }
 impl _quote3_error_t {
-    #[doc = "< The certification data retrieved from the platform library is invalid."]
+    ///< The certification data retrieved from the platform library is invalid.
     pub const TEE_ATT_KEY_CERT_DATA_INVALID: _quote3_error_t = _quote3_error_t(57360);
 }
 impl _quote3_error_t {
-    #[doc = "< The platform library doesn't have any platfrom cert data."]
+    ///< The platform library doesn't have any platfrom cert data.
     pub const SGX_QL_NO_PLATFORM_CERT_DATA: _quote3_error_t = _quote3_error_t(57361);
 }
 impl _quote3_error_t {
-    #[doc = "< The platform library doesn't have any platfrom cert data."]
+    ///< The platform library doesn't have any platfrom cert data.
     pub const TEE_NO_PLATFORM_CERT_DATA: _quote3_error_t = _quote3_error_t(57361);
 }
 impl _quote3_error_t {
-    #[doc = "< Not enough memory in the EPC to load the enclave."]
+    ///< Not enough memory in the EPC to load the enclave.
     pub const SGX_QL_OUT_OF_EPC: _quote3_error_t = _quote3_error_t(57362);
 }
 impl _quote3_error_t {
-    #[doc = "< Not enough memory in the EPC to load the enclave."]
+    ///< Not enough memory in the EPC to load the enclave.
     pub const TEE_OUT_OF_EPC: _quote3_error_t = _quote3_error_t(57362);
 }
 impl _quote3_error_t {
-    #[doc = "< There was a problem verifying an SGX REPORT."]
+    ///< There was a problem verifying an SGX REPORT.
     pub const SGX_QL_ERROR_REPORT: _quote3_error_t = _quote3_error_t(57363);
 }
 impl _quote3_error_t {
-    #[doc = "< There was a problem verifying an SGX REPORT."]
+    ///< There was a problem verifying an SGX REPORT.
     pub const TEE_ERROR_REPORT: _quote3_error_t = _quote3_error_t(57363);
 }
 impl _quote3_error_t {
-    #[doc = "< Interfacing to the enclave failed due to a power transition."]
+    ///< Interfacing to the enclave failed due to a power transition.
     pub const SGX_QL_ENCLAVE_LOST: _quote3_error_t = _quote3_error_t(57364);
 }
 impl _quote3_error_t {
-    #[doc = "< Interfacing to the enclave failed due to a power transition."]
+    ///< Interfacing to the enclave failed due to a power transition.
     pub const TEE_ENCLAVE_LOST: _quote3_error_t = _quote3_error_t(57364);
 }
 impl _quote3_error_t {
-    #[doc = "< Error verifying the application enclave's report."]
+    ///< Error verifying the application enclave's report.
     pub const SGX_QL_INVALID_REPORT: _quote3_error_t = _quote3_error_t(57365);
 }
 impl _quote3_error_t {
-    #[doc = "< Error verifying the application enclave's report."]
+    ///< Error verifying the application enclave's report.
     pub const TEE_INVALID_REPORT: _quote3_error_t = _quote3_error_t(57365);
 }
 impl _quote3_error_t {
-    #[doc = "< Unable to load the enclaves. Could be due to file I/O error, loading infrastructure error, or non-SGX capable system"]
+    ///< Unable to load the enclaves. Could be due to file I/O error, loading infrastructure error, or non-SGX capable system
     pub const SGX_QL_ENCLAVE_LOAD_ERROR: _quote3_error_t = _quote3_error_t(57366);
 }
 impl _quote3_error_t {
-    #[doc = "< Unable to load the enclaves. Could be due to file I/O error, loading infrastructure error, or non-SGX capable system"]
+    ///< Unable to load the enclaves. Could be due to file I/O error, loading infrastructure error, or non-SGX capable system
     pub const TEE_ENCLAVE_LOAD_ERROR: _quote3_error_t = _quote3_error_t(57366);
 }
 impl _quote3_error_t {
-    #[doc = "< The QE was unable to generate its own report targeting the application enclave either\n< because the QE doesn't support this feature there is an enclave compatibility issue.\n< Please call again with the p_qe_report_info to NULL."]
-    pub const SGX_QL_UNABLE_TO_GENERATE_QE_REPORT: _quote3_error_t = _quote3_error_t(57367);
+    /**< The QE was unable to generate its own report targeting the application enclave either
+< because the QE doesn't support this feature there is an enclave compatibility issue.
+< Please call again with the p_qe_report_info to NULL.*/
+    pub const SGX_QL_UNABLE_TO_GENERATE_QE_REPORT: _quote3_error_t = _quote3_error_t(
+        57367,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< The QE was unable to generate its own report targeting the application enclave either\n< because the QE doesn't support this feature there is an enclave compatibility issue.\n< Please call again with the p_qe_report_info to NULL."]
+    /**< The QE was unable to generate its own report targeting the application enclave either
+< because the QE doesn't support this feature there is an enclave compatibility issue.
+< Please call again with the p_qe_report_info to NULL.*/
     pub const TEE_UNABLE_TO_GENERATE_QE_REPORT: _quote3_error_t = _quote3_error_t(57367);
 }
 impl _quote3_error_t {
-    #[doc = "< Caused when the provider library returns an invalid TCB (too high)."]
+    ///< Caused when the provider library returns an invalid TCB (too high).
     pub const SGX_QL_KEY_CERTIFCATION_ERROR: _quote3_error_t = _quote3_error_t(57368);
 }
 impl _quote3_error_t {
-    #[doc = "< Caused when the provider library returns an invalid TCB (too high)."]
+    ///< Caused when the provider library returns an invalid TCB (too high).
     pub const TEE_KEY_CERTIFCATION_ERROR: _quote3_error_t = _quote3_error_t(57368);
 }
 impl _quote3_error_t {
-    #[doc = "< Network error when retrieving PCK certs"]
+    ///< Network error when retrieving PCK certs
     pub const SGX_QL_NETWORK_ERROR: _quote3_error_t = _quote3_error_t(57369);
 }
 impl _quote3_error_t {
-    #[doc = "< Network error when retrieving PCK certs"]
+    ///< Network error when retrieving PCK certs
     pub const TEE_NETWORK_ERROR: _quote3_error_t = _quote3_error_t(57369);
 }
 impl _quote3_error_t {
-    #[doc = "< Message error when retrieving PCK certs"]
+    ///< Message error when retrieving PCK certs
     pub const SGX_QL_MESSAGE_ERROR: _quote3_error_t = _quote3_error_t(57370);
 }
 impl _quote3_error_t {
-    #[doc = "< Message error when retrieving PCK certs"]
+    ///< Message error when retrieving PCK certs
     pub const TEE_MESSAGE_ERROR: _quote3_error_t = _quote3_error_t(57370);
 }
 impl _quote3_error_t {
-    #[doc = "< The platform does not have the quote verification collateral data available."]
+    ///< The platform does not have the quote verification collateral data available.
     pub const SGX_QL_NO_QUOTE_COLLATERAL_DATA: _quote3_error_t = _quote3_error_t(57371);
 }
 impl _quote3_error_t {
-    #[doc = "< The platform does not have the quote verification collateral data available."]
+    ///< The platform does not have the quote verification collateral data available.
     pub const TEE_NO_QUOTE_COLLATERAL_DATA: _quote3_error_t = _quote3_error_t(57371);
 }
 impl _quote3_error_t {
-    pub const SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED: _quote3_error_t = _quote3_error_t(57372);
+    pub const SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED: _quote3_error_t = _quote3_error_t(
+        57372,
+    );
 }
 impl _quote3_error_t {
-    pub const TEE_QUOTE_CERTIFICATION_DATA_UNSUPPORTED: _quote3_error_t = _quote3_error_t(57372);
+    pub const TEE_QUOTE_CERTIFICATION_DATA_UNSUPPORTED: _quote3_error_t = _quote3_error_t(
+        57372,
+    );
 }
 impl _quote3_error_t {
     pub const SGX_QL_QUOTE_FORMAT_UNSUPPORTED: _quote3_error_t = _quote3_error_t(57373);
@@ -1265,19 +1420,25 @@ impl _quote3_error_t {
     pub const TEE_UNABLE_TO_GENERATE_REPORT: _quote3_error_t = _quote3_error_t(57374);
 }
 impl _quote3_error_t {
-    pub const SGX_QL_QE_REPORT_INVALID_SIGNATURE: _quote3_error_t = _quote3_error_t(57375);
+    pub const SGX_QL_QE_REPORT_INVALID_SIGNATURE: _quote3_error_t = _quote3_error_t(
+        57375,
+    );
 }
 impl _quote3_error_t {
     pub const TEE_QE_REPORT_INVALID_SIGNATURE: _quote3_error_t = _quote3_error_t(57375);
 }
 impl _quote3_error_t {
-    pub const SGX_QL_QE_REPORT_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(57376);
+    pub const SGX_QL_QE_REPORT_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(
+        57376,
+    );
 }
 impl _quote3_error_t {
     pub const TEE_QE_REPORT_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(57376);
 }
 impl _quote3_error_t {
-    pub const SGX_QL_PCK_CERT_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(57377);
+    pub const SGX_QL_PCK_CERT_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(
+        57377,
+    );
 }
 impl _quote3_error_t {
     pub const TEE_PCK_CERT_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(57377);
@@ -1289,7 +1450,9 @@ impl _quote3_error_t {
     pub const TEE_PCK_CERT_CHAIN_ERROR: _quote3_error_t = _quote3_error_t(57378);
 }
 impl _quote3_error_t {
-    pub const SGX_QL_TCBINFO_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(57379);
+    pub const SGX_QL_TCBINFO_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(
+        57379,
+    );
 }
 impl _quote3_error_t {
     pub const TEE_TCBINFO_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(57379);
@@ -1301,10 +1464,14 @@ impl _quote3_error_t {
     pub const TEE_TCBINFO_MISMATCH: _quote3_error_t = _quote3_error_t(57380);
 }
 impl _quote3_error_t {
-    pub const SGX_QL_QEIDENTITY_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(57381);
+    pub const SGX_QL_QEIDENTITY_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(
+        57381,
+    );
 }
 impl _quote3_error_t {
-    pub const TEE_QEIDENTITY_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(57381);
+    pub const TEE_QEIDENTITY_UNSUPPORTED_FORMAT: _quote3_error_t = _quote3_error_t(
+        57381,
+    );
 }
 impl _quote3_error_t {
     pub const SGX_QL_QEIDENTITY_MISMATCH: _quote3_error_t = _quote3_error_t(57382);
@@ -1319,25 +1486,36 @@ impl _quote3_error_t {
     pub const TEE_TCB_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(57383);
 }
 impl _quote3_error_t {
-    #[doc = "< TCB out of date and Configuration needed"]
-    pub const SGX_QL_TCB_OUT_OF_DATE_CONFIGURATION_NEEDED: _quote3_error_t = _quote3_error_t(57384);
+    ///< TCB out of date and Configuration needed
+    pub const SGX_QL_TCB_OUT_OF_DATE_CONFIGURATION_NEEDED: _quote3_error_t = _quote3_error_t(
+        57384,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< TCB out of date and Configuration needed"]
-    pub const TEE_TCB_OUT_OF_DATE_CONFIGURATION_NEEDED: _quote3_error_t = _quote3_error_t(57384);
+    ///< TCB out of date and Configuration needed
+    pub const TEE_TCB_OUT_OF_DATE_CONFIGURATION_NEEDED: _quote3_error_t = _quote3_error_t(
+        57384,
+    );
 }
 impl _quote3_error_t {
-    pub const SGX_QL_SGX_ENCLAVE_IDENTITY_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(57385);
+    pub const SGX_QL_SGX_ENCLAVE_IDENTITY_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(
+        57385,
+    );
 }
 impl _quote3_error_t {
-    pub const TEE_SGX_ENCLAVE_IDENTITY_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(57385);
+    pub const TEE_SGX_ENCLAVE_IDENTITY_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(
+        57385,
+    );
 }
 impl _quote3_error_t {
-    pub const SGX_QL_SGX_ENCLAVE_REPORT_ISVSVN_OUT_OF_DATE: _quote3_error_t =
-        _quote3_error_t(57386);
+    pub const SGX_QL_SGX_ENCLAVE_REPORT_ISVSVN_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(
+        57386,
+    );
 }
 impl _quote3_error_t {
-    pub const TEE_SGX_ENCLAVE_REPORT_ISVSVN_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(57386);
+    pub const TEE_SGX_ENCLAVE_REPORT_ISVSVN_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(
+        57386,
+    );
 }
 impl _quote3_error_t {
     pub const SGX_QL_QE_IDENTITY_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(57387);
@@ -1352,7 +1530,9 @@ impl _quote3_error_t {
     pub const TEE_SGX_TCB_INFO_EXPIRED: _quote3_error_t = _quote3_error_t(57388);
 }
 impl _quote3_error_t {
-    pub const SGX_QL_SGX_PCK_CERT_CHAIN_EXPIRED: _quote3_error_t = _quote3_error_t(57389);
+    pub const SGX_QL_SGX_PCK_CERT_CHAIN_EXPIRED: _quote3_error_t = _quote3_error_t(
+        57389,
+    );
 }
 impl _quote3_error_t {
     pub const TEE_SGX_PCK_CERT_CHAIN_EXPIRED: _quote3_error_t = _quote3_error_t(57389);
@@ -1364,13 +1544,19 @@ impl _quote3_error_t {
     pub const TEE_SGX_CRL_EXPIRED: _quote3_error_t = _quote3_error_t(57390);
 }
 impl _quote3_error_t {
-    pub const SGX_QL_SGX_SIGNING_CERT_CHAIN_EXPIRED: _quote3_error_t = _quote3_error_t(57391);
+    pub const SGX_QL_SGX_SIGNING_CERT_CHAIN_EXPIRED: _quote3_error_t = _quote3_error_t(
+        57391,
+    );
 }
 impl _quote3_error_t {
-    pub const TEE_SGX_SIGNING_CERT_CHAIN_EXPIRED: _quote3_error_t = _quote3_error_t(57391);
+    pub const TEE_SGX_SIGNING_CERT_CHAIN_EXPIRED: _quote3_error_t = _quote3_error_t(
+        57391,
+    );
 }
 impl _quote3_error_t {
-    pub const SGX_QL_SGX_ENCLAVE_IDENTITY_EXPIRED: _quote3_error_t = _quote3_error_t(57392);
+    pub const SGX_QL_SGX_ENCLAVE_IDENTITY_EXPIRED: _quote3_error_t = _quote3_error_t(
+        57392,
+    );
 }
 impl _quote3_error_t {
     pub const TEE_SGX_ENCLAVE_IDENTITY_EXPIRED: _quote3_error_t = _quote3_error_t(57392);
@@ -1400,19 +1586,19 @@ impl _quote3_error_t {
     pub const TEE_UNABLE_TO_GET_COLLATERAL: _quote3_error_t = _quote3_error_t(57396);
 }
 impl _quote3_error_t {
-    #[doc = "< No enough privilege to perform the operation"]
+    ///< No enough privilege to perform the operation
     pub const SGX_QL_ERROR_INVALID_PRIVILEGE: _quote3_error_t = _quote3_error_t(57397);
 }
 impl _quote3_error_t {
-    #[doc = "< No enough privilege to perform the operation"]
+    ///< No enough privilege to perform the operation
     pub const TEE_ERROR_INVALID_PRIVILEGE: _quote3_error_t = _quote3_error_t(57397);
 }
 impl _quote3_error_t {
-    #[doc = "< The platform does not have the QVE identity data available."]
+    ///< The platform does not have the QVE identity data available.
     pub const SGX_QL_NO_QVE_IDENTITY_DATA: _quote3_error_t = _quote3_error_t(57399);
 }
 impl _quote3_error_t {
-    #[doc = "< The platform does not have the QVE identity data available."]
+    ///< The platform does not have the QVE identity data available.
     pub const TEE_NO_QVE_IDENTITY_DATA: _quote3_error_t = _quote3_error_t(57399);
 }
 impl _quote3_error_t {
@@ -1434,30 +1620,34 @@ impl _quote3_error_t {
     pub const TEE_TCBINFO_CHAIN_ERROR: _quote3_error_t = _quote3_error_t(57402);
 }
 impl _quote3_error_t {
-    #[doc = "< Supplemental data size and version mismatched between QVL and QvE\n< Please make sure to use QVL and QvE from same release package"]
+    /**< Supplemental data size and version mismatched between QVL and QvE
+< Please make sure to use QVL and QvE from same release package*/
     pub const SGX_QL_ERROR_QVL_QVE_MISMATCH: _quote3_error_t = _quote3_error_t(57403);
 }
 impl _quote3_error_t {
-    #[doc = "< Supplemental data size and version mismatched between QVL and QvE\n< Please make sure to use QVL and QvE from same release package"]
+    /**< Supplemental data size and version mismatched between QVL and QvE
+< Please make sure to use QVL and QvE from same release package*/
     pub const TEE_ERROR_QVL_QVE_MISMATCH: _quote3_error_t = _quote3_error_t(57403);
 }
 impl _quote3_error_t {
-    #[doc = "< TCB up to date but SW Hardening needed"]
+    ///< TCB up to date but SW Hardening needed
     pub const SGX_QL_TCB_SW_HARDENING_NEEDED: _quote3_error_t = _quote3_error_t(57404);
 }
 impl _quote3_error_t {
-    #[doc = "< TCB up to date but SW Hardening needed"]
+    ///< TCB up to date but SW Hardening needed
     pub const TEE_TCB_SW_HARDENING_NEEDED: _quote3_error_t = _quote3_error_t(57404);
 }
 impl _quote3_error_t {
-    #[doc = "< TCB up to date but Configuration and SW Hardening needed"]
-    pub const SGX_QL_TCB_CONFIGURATION_AND_SW_HARDENING_NEEDED: _quote3_error_t =
-        _quote3_error_t(57405);
+    ///< TCB up to date but Configuration and SW Hardening needed
+    pub const SGX_QL_TCB_CONFIGURATION_AND_SW_HARDENING_NEEDED: _quote3_error_t = _quote3_error_t(
+        57405,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< TCB up to date but Configuration and SW Hardening needed"]
-    pub const TEE_TCB_CONFIGURATION_AND_SW_HARDENING_NEEDED: _quote3_error_t =
-        _quote3_error_t(57405);
+    ///< TCB up to date but Configuration and SW Hardening needed
+    pub const TEE_TCB_CONFIGURATION_AND_SW_HARDENING_NEEDED: _quote3_error_t = _quote3_error_t(
+        57405,
+    );
 }
 impl _quote3_error_t {
     pub const SGX_QL_UNSUPPORTED_MODE: _quote3_error_t = _quote3_error_t(57406);
@@ -1496,260 +1686,283 @@ impl _quote3_error_t {
     pub const TEE_ERROR_BUSY: _quote3_error_t = _quote3_error_t(57411);
 }
 impl _quote3_error_t {
-    #[doc = "< Unexpected error from the cache service"]
+    ///< Unexpected error from the cache service
     pub const SGX_QL_UNKNOWN_MESSAGE_RESPONSE: _quote3_error_t = _quote3_error_t(57412);
 }
 impl _quote3_error_t {
-    #[doc = "< Unexpected error from the cache service"]
+    ///< Unexpected error from the cache service
     pub const TEE_UNKNOWN_MESSAGE_RESPONSE: _quote3_error_t = _quote3_error_t(57412);
 }
 impl _quote3_error_t {
-    #[doc = "< Error storing the retrieved cached data in persistent memory"]
+    ///< Error storing the retrieved cached data in persistent memory
     pub const SGX_QL_PERSISTENT_STORAGE_ERROR: _quote3_error_t = _quote3_error_t(57413);
 }
 impl _quote3_error_t {
-    #[doc = "< Error storing the retrieved cached data in persistent memory"]
+    ///< Error storing the retrieved cached data in persistent memory
     pub const TEE_PERSISTENT_STORAGE_ERROR: _quote3_error_t = _quote3_error_t(57413);
 }
 impl _quote3_error_t {
-    pub const SGX_QL_ERROR_MESSAGE_PARSING_ERROR: _quote3_error_t = _quote3_error_t(57414);
+    pub const SGX_QL_ERROR_MESSAGE_PARSING_ERROR: _quote3_error_t = _quote3_error_t(
+        57414,
+    );
 }
 impl _quote3_error_t {
     pub const TEE_ERROR_MESSAGE_PARSING_ERROR: _quote3_error_t = _quote3_error_t(57414);
 }
 impl _quote3_error_t {
-    #[doc = "< Platform was not found in the cache"]
+    ///< Platform was not found in the cache
     pub const SGX_QL_PLATFORM_UNKNOWN: _quote3_error_t = _quote3_error_t(57415);
 }
 impl _quote3_error_t {
-    #[doc = "< Platform was not found in the cache"]
+    ///< Platform was not found in the cache
     pub const TEE_PLATFORM_UNKNOWN: _quote3_error_t = _quote3_error_t(57415);
 }
 impl _quote3_error_t {
-    #[doc = "< The current PCS API version configured is unknown"]
+    ///< The current PCS API version configured is unknown
     pub const SGX_QL_UNKNOWN_API_VERSION: _quote3_error_t = _quote3_error_t(57416);
 }
 impl _quote3_error_t {
-    #[doc = "< The current PCS API version configured is unknown"]
+    ///< The current PCS API version configured is unknown
     pub const TEE_UNKNOWN_API_VERSION: _quote3_error_t = _quote3_error_t(57416);
 }
 impl _quote3_error_t {
-    #[doc = "< Certificates are not available for this platform"]
+    ///< Certificates are not available for this platform
     pub const SGX_QL_CERTS_UNAVAILABLE: _quote3_error_t = _quote3_error_t(57417);
 }
 impl _quote3_error_t {
-    #[doc = "< Certificates are not available for this platform"]
+    ///< Certificates are not available for this platform
     pub const TEE_CERTS_UNAVAILABLE: _quote3_error_t = _quote3_error_t(57417);
 }
 impl _quote3_error_t {
-    #[doc = "< QvE Identity is NOT match to Intel signed QvE identity"]
+    ///< QvE Identity is NOT match to Intel signed QvE identity
     pub const SGX_QL_QVEIDENTITY_MISMATCH: _quote3_error_t = _quote3_error_t(57424);
 }
 impl _quote3_error_t {
-    #[doc = "< QvE Identity is NOT match to Intel signed QvE identity"]
+    ///< QvE Identity is NOT match to Intel signed QvE identity
     pub const TEE_QVEIDENTITY_MISMATCH: _quote3_error_t = _quote3_error_t(57424);
 }
 impl _quote3_error_t {
-    #[doc = "< QvE ISVSVN is smaller than the ISVSVN threshold, or input QvE ISVSVN is too small"]
+    ///< QvE ISVSVN is smaller than the ISVSVN threshold, or input QvE ISVSVN is too small
     pub const SGX_QL_QVE_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(57425);
 }
 impl _quote3_error_t {
-    #[doc = "< QvE ISVSVN is smaller than the ISVSVN threshold, or input QvE ISVSVN is too small"]
+    ///< QvE ISVSVN is smaller than the ISVSVN threshold, or input QvE ISVSVN is too small
     pub const TEE_QVE_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(57425);
 }
 impl _quote3_error_t {
-    #[doc = "< SGX PSW library cannot be loaded, could be due to file I/O error"]
+    ///< SGX PSW library cannot be loaded, could be due to file I/O error
     pub const SGX_QL_PSW_NOT_AVAILABLE: _quote3_error_t = _quote3_error_t(57426);
 }
 impl _quote3_error_t {
-    #[doc = "< SGX PSW library cannot be loaded, could be due to file I/O error"]
+    ///< SGX PSW library cannot be loaded, could be due to file I/O error
     pub const TEE_PSW_NOT_AVAILABLE: _quote3_error_t = _quote3_error_t(57426);
 }
 impl _quote3_error_t {
-    #[doc = "< SGX quote verification collateral version not supported by QVL/QvE"]
-    pub const SGX_QL_COLLATERAL_VERSION_NOT_SUPPORTED: _quote3_error_t = _quote3_error_t(57427);
+    ///< SGX quote verification collateral version not supported by QVL/QvE
+    pub const SGX_QL_COLLATERAL_VERSION_NOT_SUPPORTED: _quote3_error_t = _quote3_error_t(
+        57427,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< SGX quote verification collateral version not supported by QVL/QvE"]
-    pub const TEE_COLLATERAL_VERSION_NOT_SUPPORTED: _quote3_error_t = _quote3_error_t(57427);
+    ///< SGX quote verification collateral version not supported by QVL/QvE
+    pub const TEE_COLLATERAL_VERSION_NOT_SUPPORTED: _quote3_error_t = _quote3_error_t(
+        57427,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< TDX SEAM module identity is NOT match to Intel signed TDX SEAM module"]
+    ///< TDX SEAM module identity is NOT match to Intel signed TDX SEAM module
     pub const SGX_QL_TDX_MODULE_MISMATCH: _quote3_error_t = _quote3_error_t(57440);
 }
 impl _quote3_error_t {
-    #[doc = "< TDX SEAM module identity is NOT match to Intel signed TDX SEAM module"]
+    ///< TDX SEAM module identity is NOT match to Intel signed TDX SEAM module
     pub const TEE_TDX_MODULE_MISMATCH: _quote3_error_t = _quote3_error_t(57440);
 }
 impl _quote3_error_t {
-    #[doc = "< QE identity was not found"]
+    ///< QE identity was not found
     pub const SGX_QL_QEIDENTITY_NOT_FOUND: _quote3_error_t = _quote3_error_t(57441);
 }
 impl _quote3_error_t {
-    #[doc = "< QE identity was not found"]
+    ///< QE identity was not found
     pub const TEE_QEIDENTITY_NOT_FOUND: _quote3_error_t = _quote3_error_t(57441);
 }
 impl _quote3_error_t {
-    #[doc = "< TCB Info was not found"]
+    ///< TCB Info was not found
     pub const SGX_QL_TCBINFO_NOT_FOUND: _quote3_error_t = _quote3_error_t(57442);
 }
 impl _quote3_error_t {
-    #[doc = "< TCB Info was not found"]
+    ///< TCB Info was not found
     pub const TEE_TCBINFO_NOT_FOUND: _quote3_error_t = _quote3_error_t(57442);
 }
 impl _quote3_error_t {
-    #[doc = "< Internal server error"]
+    ///< Internal server error
     pub const SGX_QL_INTERNAL_SERVER_ERROR: _quote3_error_t = _quote3_error_t(57443);
 }
 impl _quote3_error_t {
-    #[doc = "< Internal server error"]
+    ///< Internal server error
     pub const TEE_INTERNAL_SERVER_ERROR: _quote3_error_t = _quote3_error_t(57443);
 }
 impl _quote3_error_t {
-    #[doc = "< The supplemental data version is not supported"]
-    pub const SGX_QL_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED: _quote3_error_t =
-        _quote3_error_t(57444);
+    ///< The supplemental data version is not supported
+    pub const SGX_QL_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED: _quote3_error_t = _quote3_error_t(
+        57444,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< The supplemental data version is not supported"]
-    pub const TEE_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED: _quote3_error_t = _quote3_error_t(57444);
+    ///< The supplemental data version is not supported
+    pub const TEE_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED: _quote3_error_t = _quote3_error_t(
+        57444,
+    );
 }
 impl _quote3_error_t {
-    #[doc = "< The certificate used to establish SSL session is untrusted"]
+    ///< The certificate used to establish SSL session is untrusted
     pub const SGX_QL_ROOT_CA_UNTRUSTED: _quote3_error_t = _quote3_error_t(57445);
 }
 impl _quote3_error_t {
-    #[doc = "< The certificate used to establish SSL session is untrusted"]
+    ///< The certificate used to establish SSL session is untrusted
     pub const TEE_ROOT_CA_UNTRUSTED: _quote3_error_t = _quote3_error_t(57445);
 }
 impl _quote3_error_t {
-    #[doc = "< Current TCB level cannot be found in platform/enclave TCB info"]
+    ///< Current TCB level cannot be found in platform/enclave TCB info
     pub const SGX_QL_TCB_NOT_SUPPORTED: _quote3_error_t = _quote3_error_t(57446);
 }
 impl _quote3_error_t {
-    #[doc = "< Current TCB level cannot be found in platform/enclave TCB info"]
+    ///< Current TCB level cannot be found in platform/enclave TCB info
     pub const TEE_TCB_NOT_SUPPORTED: _quote3_error_t = _quote3_error_t(57446);
 }
 impl _quote3_error_t {
-    #[doc = "< The QPL's config file is in JSON format but has a format error"]
+    ///< The QPL's config file is in JSON format but has a format error
     pub const SGX_QL_CONFIG_INVALID_JSON: _quote3_error_t = _quote3_error_t(57447);
 }
 impl _quote3_error_t {
-    #[doc = "< The QPL's config file is in JSON format but has a format error"]
+    ///< The QPL's config file is in JSON format but has a format error
     pub const TEE_CONFIG_INVALID_JSON: _quote3_error_t = _quote3_error_t(57447);
 }
 impl _quote3_error_t {
-    #[doc = "< Invalid signature during quote verification"]
+    ///< Invalid signature during quote verification
     pub const SGX_QL_RESULT_INVALID_SIGNATURE: _quote3_error_t = _quote3_error_t(57448);
 }
 impl _quote3_error_t {
-    #[doc = "< Invalid signature during quote verification"]
+    ///< Invalid signature during quote verification
     pub const TEE_RESULT_INVALID_SIGNATURE: _quote3_error_t = _quote3_error_t(57448);
 }
 impl _quote3_error_t {
-    #[doc = "< QaE Identity is NOT match to Intel signed QaE identity"]
+    ///< QaE Identity is NOT match to Intel signed QaE identity
     pub const SGX_QL_QAEIDENTITY_MISMATCH: _quote3_error_t = _quote3_error_t(57456);
 }
 impl _quote3_error_t {
-    #[doc = "< QaE Identity is NOT match to Intel signed QaE identity"]
+    ///< QaE Identity is NOT match to Intel signed QaE identity
     pub const TEE_QAEIDENTITY_MISMATCH: _quote3_error_t = _quote3_error_t(57456);
 }
 impl _quote3_error_t {
-    #[doc = "< QaE ISVSVN is smaller than the ISVSVN threshold, or input QaE ISVSVN is too small"]
+    ///< QaE ISVSVN is smaller than the ISVSVN threshold, or input QaE ISVSVN is too small
     pub const SGX_QL_QAE_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(57457);
 }
 impl _quote3_error_t {
-    #[doc = "< QaE ISVSVN is smaller than the ISVSVN threshold, or input QaE ISVSVN is too small"]
+    ///< QaE ISVSVN is smaller than the ISVSVN threshold, or input QaE ISVSVN is too small
     pub const TEE_QAE_OUT_OF_DATE: _quote3_error_t = _quote3_error_t(57457);
 }
 impl _quote3_error_t {
-    #[doc = "< Quote hash in the appraisal result is not derived from the input quote"]
+    ///< Quote hash in the appraisal result is not derived from the input quote
     pub const SGX_QL_QUOTE_HASH_MISMATCH: _quote3_error_t = _quote3_error_t(57458);
 }
 impl _quote3_error_t {
-    #[doc = "< Quote hash in the appraisal result is not derived from the input quote"]
+    ///< Quote hash in the appraisal result is not derived from the input quote
     pub const TEE_RESULT_QUOTE_HASH_MISMATCH: _quote3_error_t = _quote3_error_t(57458);
 }
 impl _quote3_error_t {
-    #[doc = "< report data mismatch during qae report and identity verify"]
+    ///< report data mismatch during qae report and identity verify
     pub const SGX_QL_REPORT_DATA_MISMATCH: _quote3_error_t = _quote3_error_t(57459);
 }
 impl _quote3_error_t {
-    #[doc = "< report data mismatch during qae report and identity verify"]
+    ///< report data mismatch during qae report and identity verify
     pub const TEE_RESULT_REPORT_DATA_MISMATCH: _quote3_error_t = _quote3_error_t(57459);
 }
 impl _quote3_error_t {
-    #[doc = "< Indicate max error to allow better translation."]
+    ///< Indicate max error to allow better translation.
     pub const SGX_QL_ERROR_MAX: _quote3_error_t = _quote3_error_t(57599);
 }
 impl _quote3_error_t {
-    #[doc = "< Indicate max error to allow better translation."]
+    ///< Indicate max error to allow better translation.
     pub const TEE_ERROR_MAX: _quote3_error_t = _quote3_error_t(57599);
 }
 #[repr(transparent)]
-#[doc = " Possible errors generated by the quote interface."]
+/// Possible errors generated by the quote interface.
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct _quote3_error_t(pub ::std::os::raw::c_uint);
-#[doc = " Possible errors generated by the quote interface."]
+/// Possible errors generated by the quote interface.
 pub use self::_quote3_error_t as quote3_error_t;
-#[doc = " Possible errors generated by the quote interface."]
+/// Possible errors generated by the quote interface.
 pub use self::_quote3_error_t as tee_error_t;
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct _sgx_ql_qe3_id_t {
-    #[doc = "< Contains the 16-byte QE_ID"]
+    ///< Contains the 16-byte QE_ID
     pub id: [u8; 16usize],
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of _sgx_ql_qe3_id_t"][::std::mem::size_of::<_sgx_ql_qe3_id_t>() - 16usize];
-    ["Alignment of _sgx_ql_qe3_id_t"][::std::mem::align_of::<_sgx_ql_qe3_id_t>() - 1usize];
-    ["Offset of field: _sgx_ql_qe3_id_t::id"]
-        [::std::mem::offset_of!(_sgx_ql_qe3_id_t, id) - 0usize];
+    [
+        "Alignment of _sgx_ql_qe3_id_t",
+    ][::std::mem::align_of::<_sgx_ql_qe3_id_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_qe3_id_t::id",
+    ][::std::mem::offset_of!(_sgx_ql_qe3_id_t, id) - 0usize];
 };
 pub type sgx_ql_qe3_id_t = _sgx_ql_qe3_id_t;
-#[doc = " Used to describe the PCK Cert for a platform"]
+/// Used to describe the PCK Cert for a platform
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct _sgx_ql_pck_cert_id_t {
-    #[doc = "< The QE_ID used to identify the platform for PCK Cert Retrieval"]
+    ///< The QE_ID used to identify the platform for PCK Cert Retrieval
     pub p_qe3_id: *mut u8,
-    #[doc = "< The Size of hte QE_ID (currenlty 16 bytes)"]
+    ///< The Size of hte QE_ID (currenlty 16 bytes)
     pub qe3_id_size: u32,
-    #[doc = "< Pointer to the platform's raw CPUSVN"]
+    ///< Pointer to the platform's raw CPUSVN
     pub p_platform_cpu_svn: *mut sgx_cpu_svn_t,
-    #[doc = "< Pointer to the platform's raw PCE ISVSVN"]
+    ///< Pointer to the platform's raw PCE ISVSVN
     pub p_platform_pce_isv_svn: *mut sgx_isv_svn_t,
-    #[doc = "< Pointer to the encrypted PPID (Optional)"]
+    ///< Pointer to the encrypted PPID (Optional)
     pub p_encrypted_ppid: *mut u8,
-    #[doc = "< Size of encrytped PPID."]
+    ///< Size of encrytped PPID.
     pub encrypted_ppid_size: u32,
-    #[doc = "< Crypto algorithm used to encrypt the PPID"]
+    ///< Crypto algorithm used to encrypt the PPID
     pub crypto_suite: u8,
-    #[doc = "< Identifies the PCE-Version used to generate the encrypted PPID."]
+    ///< Identifies the PCE-Version used to generate the encrypted PPID.
     pub pce_id: u16,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_pck_cert_id_t"][::std::mem::size_of::<_sgx_ql_pck_cert_id_t>() - 43usize];
-    ["Alignment of _sgx_ql_pck_cert_id_t"]
-        [::std::mem::align_of::<_sgx_ql_pck_cert_id_t>() - 1usize];
-    ["Offset of field: _sgx_ql_pck_cert_id_t::p_qe3_id"]
-        [::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, p_qe3_id) - 0usize];
-    ["Offset of field: _sgx_ql_pck_cert_id_t::qe3_id_size"]
-        [::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, qe3_id_size) - 8usize];
-    ["Offset of field: _sgx_ql_pck_cert_id_t::p_platform_cpu_svn"]
-        [::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, p_platform_cpu_svn) - 12usize];
-    ["Offset of field: _sgx_ql_pck_cert_id_t::p_platform_pce_isv_svn"]
-        [::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, p_platform_pce_isv_svn) - 20usize];
-    ["Offset of field: _sgx_ql_pck_cert_id_t::p_encrypted_ppid"]
-        [::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, p_encrypted_ppid) - 28usize];
-    ["Offset of field: _sgx_ql_pck_cert_id_t::encrypted_ppid_size"]
-        [::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, encrypted_ppid_size) - 36usize];
-    ["Offset of field: _sgx_ql_pck_cert_id_t::crypto_suite"]
-        [::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, crypto_suite) - 40usize];
-    ["Offset of field: _sgx_ql_pck_cert_id_t::pce_id"]
-        [::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, pce_id) - 41usize];
+    [
+        "Size of _sgx_ql_pck_cert_id_t",
+    ][::std::mem::size_of::<_sgx_ql_pck_cert_id_t>() - 43usize];
+    [
+        "Alignment of _sgx_ql_pck_cert_id_t",
+    ][::std::mem::align_of::<_sgx_ql_pck_cert_id_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_pck_cert_id_t::p_qe3_id",
+    ][::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, p_qe3_id) - 0usize];
+    [
+        "Offset of field: _sgx_ql_pck_cert_id_t::qe3_id_size",
+    ][::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, qe3_id_size) - 8usize];
+    [
+        "Offset of field: _sgx_ql_pck_cert_id_t::p_platform_cpu_svn",
+    ][::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, p_platform_cpu_svn) - 12usize];
+    [
+        "Offset of field: _sgx_ql_pck_cert_id_t::p_platform_pce_isv_svn",
+    ][::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, p_platform_pce_isv_svn) - 20usize];
+    [
+        "Offset of field: _sgx_ql_pck_cert_id_t::p_encrypted_ppid",
+    ][::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, p_encrypted_ppid) - 28usize];
+    [
+        "Offset of field: _sgx_ql_pck_cert_id_t::encrypted_ppid_size",
+    ][::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, encrypted_ppid_size) - 36usize];
+    [
+        "Offset of field: _sgx_ql_pck_cert_id_t::crypto_suite",
+    ][::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, crypto_suite) - 40usize];
+    [
+        "Offset of field: _sgx_ql_pck_cert_id_t::pce_id",
+    ][::std::mem::offset_of!(_sgx_ql_pck_cert_id_t, pce_id) - 41usize];
 };
 impl Default for _sgx_ql_pck_cert_id_t {
     fn default() -> Self {
@@ -1760,41 +1973,48 @@ impl Default for _sgx_ql_pck_cert_id_t {
         }
     }
 }
-#[doc = " Used to describe the PCK Cert for a platform"]
+/// Used to describe the PCK Cert for a platform
 pub type sgx_ql_pck_cert_id_t = _sgx_ql_pck_cert_id_t;
 pub const _sgx_ql_config_version_t_SGX_QL_CONFIG_VERSION_1: _sgx_ql_config_version_t = 1;
-#[doc = " Contains the valid versions of the sgx_ql_config_t data structure."]
+/// Contains the valid versions of the sgx_ql_config_t data structure.
 pub type _sgx_ql_config_version_t = ::std::os::raw::c_uint;
-#[doc = " Contains the valid versions of the sgx_ql_config_t data structure."]
+/// Contains the valid versions of the sgx_ql_config_t data structure.
 pub use self::_sgx_ql_config_version_t as sgx_ql_config_version_t;
-#[doc = " Contains the certification data used to certify the attestation key and in generating a quote."]
+/// Contains the certification data used to certify the attestation key and in generating a quote.
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct _sgx_ql_config_t {
     pub version: sgx_ql_config_version_t,
-    #[doc = "< The CPUSVN used to generate the PCK Signature used to certify the attestation key."]
+    ///< The CPUSVN used to generate the PCK Signature used to certify the attestation key.
     pub cert_cpu_svn: sgx_cpu_svn_t,
-    #[doc = "< The PCE ISVSVN used to generate the PCK Signature used to certify the attestation key."]
+    ///< The PCE ISVSVN used to generate the PCK Signature used to certify the attestation key.
     pub cert_pce_isv_svn: sgx_isv_svn_t,
-    #[doc = "< The size of the buffer pointed to by p_cert_data"]
+    ///< The size of the buffer pointed to by p_cert_data
     pub cert_data_size: u32,
-    #[doc = "< The certification data used for the quote."]
+    ///< The certification data used for the quote.
     pub p_cert_data: *mut u8,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of _sgx_ql_config_t"][::std::mem::size_of::<_sgx_ql_config_t>() - 34usize];
-    ["Alignment of _sgx_ql_config_t"][::std::mem::align_of::<_sgx_ql_config_t>() - 1usize];
-    ["Offset of field: _sgx_ql_config_t::version"]
-        [::std::mem::offset_of!(_sgx_ql_config_t, version) - 0usize];
-    ["Offset of field: _sgx_ql_config_t::cert_cpu_svn"]
-        [::std::mem::offset_of!(_sgx_ql_config_t, cert_cpu_svn) - 4usize];
-    ["Offset of field: _sgx_ql_config_t::cert_pce_isv_svn"]
-        [::std::mem::offset_of!(_sgx_ql_config_t, cert_pce_isv_svn) - 20usize];
-    ["Offset of field: _sgx_ql_config_t::cert_data_size"]
-        [::std::mem::offset_of!(_sgx_ql_config_t, cert_data_size) - 22usize];
-    ["Offset of field: _sgx_ql_config_t::p_cert_data"]
-        [::std::mem::offset_of!(_sgx_ql_config_t, p_cert_data) - 26usize];
+    [
+        "Alignment of _sgx_ql_config_t",
+    ][::std::mem::align_of::<_sgx_ql_config_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_config_t::version",
+    ][::std::mem::offset_of!(_sgx_ql_config_t, version) - 0usize];
+    [
+        "Offset of field: _sgx_ql_config_t::cert_cpu_svn",
+    ][::std::mem::offset_of!(_sgx_ql_config_t, cert_cpu_svn) - 4usize];
+    [
+        "Offset of field: _sgx_ql_config_t::cert_pce_isv_svn",
+    ][::std::mem::offset_of!(_sgx_ql_config_t, cert_pce_isv_svn) - 20usize];
+    [
+        "Offset of field: _sgx_ql_config_t::cert_data_size",
+    ][::std::mem::offset_of!(_sgx_ql_config_t, cert_data_size) - 22usize];
+    [
+        "Offset of field: _sgx_ql_config_t::p_cert_data",
+    ][::std::mem::offset_of!(_sgx_ql_config_t, p_cert_data) - 26usize];
 };
 impl Default for _sgx_ql_config_t {
     fn default() -> Self {
@@ -1805,7 +2025,7 @@ impl Default for _sgx_ql_config_t {
         }
     }
 }
-#[doc = " Contains the certification data used to certify the attestation key and in generating a quote."]
+/// Contains the certification data used to certify the attestation key and in generating a quote.
 pub type sgx_ql_config_t = _sgx_ql_config_t;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -1815,14 +2035,18 @@ pub struct _sgx_ql_qve_collateral_param_t {
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_qve_collateral_param_t"]
-        [::std::mem::size_of::<_sgx_ql_qve_collateral_param_t>() - 514usize];
-    ["Alignment of _sgx_ql_qve_collateral_param_t"]
-        [::std::mem::align_of::<_sgx_ql_qve_collateral_param_t>() - 1usize];
-    ["Offset of field: _sgx_ql_qve_collateral_param_t::key"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_param_t, key) - 0usize];
-    ["Offset of field: _sgx_ql_qve_collateral_param_t::value"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_param_t, value) - 257usize];
+    [
+        "Size of _sgx_ql_qve_collateral_param_t",
+    ][::std::mem::size_of::<_sgx_ql_qve_collateral_param_t>() - 514usize];
+    [
+        "Alignment of _sgx_ql_qve_collateral_param_t",
+    ][::std::mem::align_of::<_sgx_ql_qve_collateral_param_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_param_t::key",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_param_t, key) - 0usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_param_t::value",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_param_t, value) - 257usize];
 };
 impl Default for _sgx_ql_qve_collateral_param_t {
     fn default() -> Self {
@@ -1838,67 +2062,75 @@ pub type sgx_ql_qve_collateral_param_t = _sgx_ql_qve_collateral_param_t;
 #[derive(Copy, Clone)]
 pub struct _sgx_ql_qve_collateral_t {
     pub __bindgen_anon_1: _sgx_ql_qve_collateral_t__bindgen_ty_1,
-    #[doc = "<  0x00000000: SGX or 0x00000081: TDX"]
+    ///<  0x00000000: SGX or 0x00000081: TDX
     pub tee_type: u32,
     pub pck_crl_issuer_chain: *mut ::std::os::raw::c_char,
     pub pck_crl_issuer_chain_size: u32,
     pub root_ca_crl: *mut ::std::os::raw::c_char,
-    #[doc = " Root CA CRL"]
+    /// Root CA CRL
     pub root_ca_crl_size: u32,
     pub pck_crl: *mut ::std::os::raw::c_char,
-    #[doc = " PCK Cert CRL"]
+    /// PCK Cert CRL
     pub pck_crl_size: u32,
     pub tcb_info_issuer_chain: *mut ::std::os::raw::c_char,
     pub tcb_info_issuer_chain_size: u32,
     pub tcb_info: *mut ::std::os::raw::c_char,
-    #[doc = " TCB Info structure"]
+    /// TCB Info structure
     pub tcb_info_size: u32,
     pub qe_identity_issuer_chain: *mut ::std::os::raw::c_char,
     pub qe_identity_issuer_chain_size: u32,
     pub qe_identity: *mut ::std::os::raw::c_char,
-    #[doc = " QE Identity Structure"]
+    /// QE Identity Structure
     pub qe_identity_size: u32,
 }
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union _sgx_ql_qve_collateral_t__bindgen_ty_1 {
-    #[doc = "< 'version' is the backward compatible legacy representation"]
+    ///< 'version' is the backward compatible legacy representation
     pub version: u32,
     pub __bindgen_anon_1: _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1,
 }
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1 {
-    #[doc = "< the CRLs will be formatted in PEM. For PCS V3 APIs, the major_version = 3 and the"]
+    ///< the CRLs will be formatted in PEM. For PCS V3 APIs, the major_version = 3 and the
     pub major_version: u16,
-    #[doc = "< minor_version can be either 0 or 1. minor_verion of 0 indicates the CRL’s are formatted\n< in Base16 encoded DER.  A minor version of 1 indicates the CRL’s are formatted in raw binary DER."]
+    /**< minor_version can be either 0 or 1. minor_verion of 0 indicates the CRL’s are formatted
+< in Base16 encoded DER.  A minor version of 1 indicates the CRL’s are formatted in raw binary DER.*/
     pub minor_version: u16,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1"]
-        [::std::mem::size_of::<_sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1>() - 4usize];
-    ["Alignment of _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1"]
-        [::std::mem::align_of::<_sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1>() - 2usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1::major_version"][::std::mem::offset_of!(
-        _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1,
-        major_version
-    )
-        - 0usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1::minor_version"][::std::mem::offset_of!(
-        _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1,
-        minor_version
-    )
+    [
+        "Size of _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1",
+    ][::std::mem::size_of::<_sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1>()
+        - 4usize];
+    [
+        "Alignment of _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1",
+    ][::std::mem::align_of::<_sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1>()
         - 2usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1::major_version",
+    ][::std::mem::offset_of!(
+        _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1, major_version
+    ) - 0usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1::minor_version",
+    ][::std::mem::offset_of!(
+        _sgx_ql_qve_collateral_t__bindgen_ty_1__bindgen_ty_1, minor_version
+    ) - 2usize];
 };
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_qve_collateral_t__bindgen_ty_1"]
-        [::std::mem::size_of::<_sgx_ql_qve_collateral_t__bindgen_ty_1>() - 4usize];
-    ["Alignment of _sgx_ql_qve_collateral_t__bindgen_ty_1"]
-        [::std::mem::align_of::<_sgx_ql_qve_collateral_t__bindgen_ty_1>() - 4usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t__bindgen_ty_1::version"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t__bindgen_ty_1, version) - 0usize];
+    [
+        "Size of _sgx_ql_qve_collateral_t__bindgen_ty_1",
+    ][::std::mem::size_of::<_sgx_ql_qve_collateral_t__bindgen_ty_1>() - 4usize];
+    [
+        "Alignment of _sgx_ql_qve_collateral_t__bindgen_ty_1",
+    ][::std::mem::align_of::<_sgx_ql_qve_collateral_t__bindgen_ty_1>() - 4usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t__bindgen_ty_1::version",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t__bindgen_ty_1, version) - 0usize];
 };
 impl Default for _sgx_ql_qve_collateral_t__bindgen_ty_1 {
     fn default() -> Self {
@@ -1911,40 +2143,61 @@ impl Default for _sgx_ql_qve_collateral_t__bindgen_ty_1 {
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_qve_collateral_t"]
-        [::std::mem::size_of::<_sgx_ql_qve_collateral_t>() - 120usize];
-    ["Alignment of _sgx_ql_qve_collateral_t"]
-        [::std::mem::align_of::<_sgx_ql_qve_collateral_t>() - 8usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::tee_type"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tee_type) - 4usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::pck_crl_issuer_chain"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, pck_crl_issuer_chain) - 8usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::pck_crl_issuer_chain_size"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, pck_crl_issuer_chain_size) - 16usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::root_ca_crl"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, root_ca_crl) - 24usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::root_ca_crl_size"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, root_ca_crl_size) - 32usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::pck_crl"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, pck_crl) - 40usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::pck_crl_size"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, pck_crl_size) - 48usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::tcb_info_issuer_chain"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tcb_info_issuer_chain) - 56usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::tcb_info_issuer_chain_size"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tcb_info_issuer_chain_size) - 64usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::tcb_info"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tcb_info) - 72usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::tcb_info_size"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tcb_info_size) - 80usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::qe_identity_issuer_chain"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, qe_identity_issuer_chain) - 88usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::qe_identity_issuer_chain_size"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, qe_identity_issuer_chain_size) - 96usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::qe_identity"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, qe_identity) - 104usize];
-    ["Offset of field: _sgx_ql_qve_collateral_t::qe_identity_size"]
-        [::std::mem::offset_of!(_sgx_ql_qve_collateral_t, qe_identity_size) - 112usize];
+    [
+        "Size of _sgx_ql_qve_collateral_t",
+    ][::std::mem::size_of::<_sgx_ql_qve_collateral_t>() - 120usize];
+    [
+        "Alignment of _sgx_ql_qve_collateral_t",
+    ][::std::mem::align_of::<_sgx_ql_qve_collateral_t>() - 8usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::tee_type",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tee_type) - 4usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::pck_crl_issuer_chain",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, pck_crl_issuer_chain) - 8usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::pck_crl_issuer_chain_size",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, pck_crl_issuer_chain_size)
+        - 16usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::root_ca_crl",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, root_ca_crl) - 24usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::root_ca_crl_size",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, root_ca_crl_size) - 32usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::pck_crl",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, pck_crl) - 40usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::pck_crl_size",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, pck_crl_size) - 48usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::tcb_info_issuer_chain",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tcb_info_issuer_chain) - 56usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::tcb_info_issuer_chain_size",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tcb_info_issuer_chain_size)
+        - 64usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::tcb_info",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tcb_info) - 72usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::tcb_info_size",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, tcb_info_size) - 80usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::qe_identity_issuer_chain",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, qe_identity_issuer_chain)
+        - 88usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::qe_identity_issuer_chain_size",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, qe_identity_issuer_chain_size)
+        - 96usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::qe_identity",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, qe_identity) - 104usize];
+    [
+        "Offset of field: _sgx_ql_qve_collateral_t::qe_identity_size",
+    ][::std::mem::offset_of!(_sgx_ql_qve_collateral_t, qe_identity_size) - 112usize];
 };
 impl Default for _sgx_ql_qve_collateral_t {
     fn default() -> Self {
@@ -1963,7 +2216,10 @@ pub const _sgx_ql_log_level_t_SGX_QL_LOG_TRACE: _sgx_ql_log_level_t = 3;
 pub type _sgx_ql_log_level_t = ::std::os::raw::c_uint;
 pub use self::_sgx_ql_log_level_t as sgx_ql_log_level_t;
 pub type sgx_ql_logging_callback_t = ::std::option::Option<
-    unsafe extern "C" fn(level: sgx_ql_log_level_t, message: *const ::std::os::raw::c_char),
+    unsafe extern "C" fn(
+        level: sgx_ql_log_level_t,
+        message: *const ::std::os::raw::c_char,
+    ),
 >;
 pub const _sgx_prod_type_t_SGX_PROD_TYPE_SGX: _sgx_prod_type_t = 0;
 pub const _sgx_prod_type_t_SGX_PROD_TYPE_TDX: _sgx_prod_type_t = 1;
@@ -1983,10 +2239,15 @@ pub struct _sgx_measurement_t {
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_measurement_t"][::std::mem::size_of::<_sgx_measurement_t>() - 32usize];
-    ["Alignment of _sgx_measurement_t"][::std::mem::align_of::<_sgx_measurement_t>() - 1usize];
-    ["Offset of field: _sgx_measurement_t::m"]
-        [::std::mem::offset_of!(_sgx_measurement_t, m) - 0usize];
+    [
+        "Size of _sgx_measurement_t",
+    ][::std::mem::size_of::<_sgx_measurement_t>() - 32usize];
+    [
+        "Alignment of _sgx_measurement_t",
+    ][::std::mem::align_of::<_sgx_measurement_t>() - 1usize];
+    [
+        "Offset of field: _sgx_measurement_t::m",
+    ][::std::mem::offset_of!(_sgx_measurement_t, m) - 0usize];
 };
 pub type sgx_measurement_t = _sgx_measurement_t;
 pub type sgx_mac_t = [u8; 16usize];
@@ -1997,10 +2258,15 @@ pub struct _sgx_report_data_t {
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_report_data_t"][::std::mem::size_of::<_sgx_report_data_t>() - 64usize];
-    ["Alignment of _sgx_report_data_t"][::std::mem::align_of::<_sgx_report_data_t>() - 1usize];
-    ["Offset of field: _sgx_report_data_t::d"]
-        [::std::mem::offset_of!(_sgx_report_data_t, d) - 0usize];
+    [
+        "Size of _sgx_report_data_t",
+    ][::std::mem::size_of::<_sgx_report_data_t>() - 64usize];
+    [
+        "Alignment of _sgx_report_data_t",
+    ][::std::mem::align_of::<_sgx_report_data_t>() - 1usize];
+    [
+        "Offset of field: _sgx_report_data_t::d",
+    ][::std::mem::offset_of!(_sgx_report_data_t, d) - 0usize];
 };
 impl Default for _sgx_report_data_t {
     fn default() -> Self {
@@ -2031,22 +2297,30 @@ pub struct _target_info_t {
 const _: () = {
     ["Size of _target_info_t"][::std::mem::size_of::<_target_info_t>() - 512usize];
     ["Alignment of _target_info_t"][::std::mem::align_of::<_target_info_t>() - 8usize];
-    ["Offset of field: _target_info_t::mr_enclave"]
-        [::std::mem::offset_of!(_target_info_t, mr_enclave) - 0usize];
-    ["Offset of field: _target_info_t::attributes"]
-        [::std::mem::offset_of!(_target_info_t, attributes) - 32usize];
-    ["Offset of field: _target_info_t::reserved1"]
-        [::std::mem::offset_of!(_target_info_t, reserved1) - 48usize];
-    ["Offset of field: _target_info_t::config_svn"]
-        [::std::mem::offset_of!(_target_info_t, config_svn) - 50usize];
-    ["Offset of field: _target_info_t::misc_select"]
-        [::std::mem::offset_of!(_target_info_t, misc_select) - 52usize];
-    ["Offset of field: _target_info_t::reserved2"]
-        [::std::mem::offset_of!(_target_info_t, reserved2) - 56usize];
-    ["Offset of field: _target_info_t::config_id"]
-        [::std::mem::offset_of!(_target_info_t, config_id) - 64usize];
-    ["Offset of field: _target_info_t::reserved3"]
-        [::std::mem::offset_of!(_target_info_t, reserved3) - 128usize];
+    [
+        "Offset of field: _target_info_t::mr_enclave",
+    ][::std::mem::offset_of!(_target_info_t, mr_enclave) - 0usize];
+    [
+        "Offset of field: _target_info_t::attributes",
+    ][::std::mem::offset_of!(_target_info_t, attributes) - 32usize];
+    [
+        "Offset of field: _target_info_t::reserved1",
+    ][::std::mem::offset_of!(_target_info_t, reserved1) - 48usize];
+    [
+        "Offset of field: _target_info_t::config_svn",
+    ][::std::mem::offset_of!(_target_info_t, config_svn) - 50usize];
+    [
+        "Offset of field: _target_info_t::misc_select",
+    ][::std::mem::offset_of!(_target_info_t, misc_select) - 52usize];
+    [
+        "Offset of field: _target_info_t::reserved2",
+    ][::std::mem::offset_of!(_target_info_t, reserved2) - 56usize];
+    [
+        "Offset of field: _target_info_t::config_id",
+    ][::std::mem::offset_of!(_target_info_t, config_id) - 64usize];
+    [
+        "Offset of field: _target_info_t::reserved3",
+    ][::std::mem::offset_of!(_target_info_t, reserved3) - 128usize];
 };
 impl Default for _target_info_t {
     fn default() -> Self {
@@ -2082,38 +2356,54 @@ pub struct _report_body_t {
 const _: () = {
     ["Size of _report_body_t"][::std::mem::size_of::<_report_body_t>() - 384usize];
     ["Alignment of _report_body_t"][::std::mem::align_of::<_report_body_t>() - 8usize];
-    ["Offset of field: _report_body_t::cpu_svn"]
-        [::std::mem::offset_of!(_report_body_t, cpu_svn) - 0usize];
-    ["Offset of field: _report_body_t::misc_select"]
-        [::std::mem::offset_of!(_report_body_t, misc_select) - 16usize];
-    ["Offset of field: _report_body_t::reserved1"]
-        [::std::mem::offset_of!(_report_body_t, reserved1) - 20usize];
-    ["Offset of field: _report_body_t::isv_ext_prod_id"]
-        [::std::mem::offset_of!(_report_body_t, isv_ext_prod_id) - 32usize];
-    ["Offset of field: _report_body_t::attributes"]
-        [::std::mem::offset_of!(_report_body_t, attributes) - 48usize];
-    ["Offset of field: _report_body_t::mr_enclave"]
-        [::std::mem::offset_of!(_report_body_t, mr_enclave) - 64usize];
-    ["Offset of field: _report_body_t::reserved2"]
-        [::std::mem::offset_of!(_report_body_t, reserved2) - 96usize];
-    ["Offset of field: _report_body_t::mr_signer"]
-        [::std::mem::offset_of!(_report_body_t, mr_signer) - 128usize];
-    ["Offset of field: _report_body_t::reserved3"]
-        [::std::mem::offset_of!(_report_body_t, reserved3) - 160usize];
-    ["Offset of field: _report_body_t::config_id"]
-        [::std::mem::offset_of!(_report_body_t, config_id) - 192usize];
-    ["Offset of field: _report_body_t::isv_prod_id"]
-        [::std::mem::offset_of!(_report_body_t, isv_prod_id) - 256usize];
-    ["Offset of field: _report_body_t::isv_svn"]
-        [::std::mem::offset_of!(_report_body_t, isv_svn) - 258usize];
-    ["Offset of field: _report_body_t::config_svn"]
-        [::std::mem::offset_of!(_report_body_t, config_svn) - 260usize];
-    ["Offset of field: _report_body_t::reserved4"]
-        [::std::mem::offset_of!(_report_body_t, reserved4) - 262usize];
-    ["Offset of field: _report_body_t::isv_family_id"]
-        [::std::mem::offset_of!(_report_body_t, isv_family_id) - 304usize];
-    ["Offset of field: _report_body_t::report_data"]
-        [::std::mem::offset_of!(_report_body_t, report_data) - 320usize];
+    [
+        "Offset of field: _report_body_t::cpu_svn",
+    ][::std::mem::offset_of!(_report_body_t, cpu_svn) - 0usize];
+    [
+        "Offset of field: _report_body_t::misc_select",
+    ][::std::mem::offset_of!(_report_body_t, misc_select) - 16usize];
+    [
+        "Offset of field: _report_body_t::reserved1",
+    ][::std::mem::offset_of!(_report_body_t, reserved1) - 20usize];
+    [
+        "Offset of field: _report_body_t::isv_ext_prod_id",
+    ][::std::mem::offset_of!(_report_body_t, isv_ext_prod_id) - 32usize];
+    [
+        "Offset of field: _report_body_t::attributes",
+    ][::std::mem::offset_of!(_report_body_t, attributes) - 48usize];
+    [
+        "Offset of field: _report_body_t::mr_enclave",
+    ][::std::mem::offset_of!(_report_body_t, mr_enclave) - 64usize];
+    [
+        "Offset of field: _report_body_t::reserved2",
+    ][::std::mem::offset_of!(_report_body_t, reserved2) - 96usize];
+    [
+        "Offset of field: _report_body_t::mr_signer",
+    ][::std::mem::offset_of!(_report_body_t, mr_signer) - 128usize];
+    [
+        "Offset of field: _report_body_t::reserved3",
+    ][::std::mem::offset_of!(_report_body_t, reserved3) - 160usize];
+    [
+        "Offset of field: _report_body_t::config_id",
+    ][::std::mem::offset_of!(_report_body_t, config_id) - 192usize];
+    [
+        "Offset of field: _report_body_t::isv_prod_id",
+    ][::std::mem::offset_of!(_report_body_t, isv_prod_id) - 256usize];
+    [
+        "Offset of field: _report_body_t::isv_svn",
+    ][::std::mem::offset_of!(_report_body_t, isv_svn) - 258usize];
+    [
+        "Offset of field: _report_body_t::config_svn",
+    ][::std::mem::offset_of!(_report_body_t, config_svn) - 260usize];
+    [
+        "Offset of field: _report_body_t::reserved4",
+    ][::std::mem::offset_of!(_report_body_t, reserved4) - 262usize];
+    [
+        "Offset of field: _report_body_t::isv_family_id",
+    ][::std::mem::offset_of!(_report_body_t, isv_family_id) - 304usize];
+    [
+        "Offset of field: _report_body_t::report_data",
+    ][::std::mem::offset_of!(_report_body_t, report_data) - 320usize];
 };
 impl Default for _report_body_t {
     fn default() -> Self {
@@ -2136,9 +2426,15 @@ pub struct _report_t {
 const _: () = {
     ["Size of _report_t"][::std::mem::size_of::<_report_t>() - 432usize];
     ["Alignment of _report_t"][::std::mem::align_of::<_report_t>() - 8usize];
-    ["Offset of field: _report_t::body"][::std::mem::offset_of!(_report_t, body) - 0usize];
-    ["Offset of field: _report_t::key_id"][::std::mem::offset_of!(_report_t, key_id) - 384usize];
-    ["Offset of field: _report_t::mac"][::std::mem::offset_of!(_report_t, mac) - 416usize];
+    [
+        "Offset of field: _report_t::body",
+    ][::std::mem::offset_of!(_report_t, body) - 0usize];
+    [
+        "Offset of field: _report_t::key_id",
+    ][::std::mem::offset_of!(_report_t, key_id) - 384usize];
+    [
+        "Offset of field: _report_t::mac",
+    ][::std::mem::offset_of!(_report_t, mac) - 416usize];
 };
 impl Default for _report_t {
     fn default() -> Self {
@@ -2172,7 +2468,9 @@ pub struct _basename_t {
 const _: () = {
     ["Size of _basename_t"][::std::mem::size_of::<_basename_t>() - 32usize];
     ["Alignment of _basename_t"][::std::mem::align_of::<_basename_t>() - 1usize];
-    ["Offset of field: _basename_t::name"][::std::mem::offset_of!(_basename_t, name) - 0usize];
+    [
+        "Offset of field: _basename_t::name",
+    ][::std::mem::offset_of!(_basename_t, name) - 0usize];
 };
 pub type sgx_basename_t = _basename_t;
 #[repr(C)]
@@ -2184,7 +2482,9 @@ pub struct _quote_nonce {
 const _: () = {
     ["Size of _quote_nonce"][::std::mem::size_of::<_quote_nonce>() - 16usize];
     ["Alignment of _quote_nonce"][::std::mem::align_of::<_quote_nonce>() - 1usize];
-    ["Offset of field: _quote_nonce::rand"][::std::mem::offset_of!(_quote_nonce, rand) - 0usize];
+    [
+        "Offset of field: _quote_nonce::rand",
+    ][::std::mem::offset_of!(_quote_nonce, rand) - 0usize];
 };
 pub type sgx_quote_nonce_t = _quote_nonce;
 pub const sgx_quote_sign_type_t_SGX_UNLINKABLE_SIGNATURE: sgx_quote_sign_type_t = 0;
@@ -2207,20 +2507,36 @@ pub struct _quote_t {
 const _: () = {
     ["Size of _quote_t"][::std::mem::size_of::<_quote_t>() - 436usize];
     ["Alignment of _quote_t"][::std::mem::align_of::<_quote_t>() - 1usize];
-    ["Offset of field: _quote_t::version"][::std::mem::offset_of!(_quote_t, version) - 0usize];
-    ["Offset of field: _quote_t::sign_type"][::std::mem::offset_of!(_quote_t, sign_type) - 2usize];
-    ["Offset of field: _quote_t::epid_group_id"]
-        [::std::mem::offset_of!(_quote_t, epid_group_id) - 4usize];
-    ["Offset of field: _quote_t::qe_svn"][::std::mem::offset_of!(_quote_t, qe_svn) - 8usize];
-    ["Offset of field: _quote_t::pce_svn"][::std::mem::offset_of!(_quote_t, pce_svn) - 10usize];
-    ["Offset of field: _quote_t::xeid"][::std::mem::offset_of!(_quote_t, xeid) - 12usize];
-    ["Offset of field: _quote_t::basename"][::std::mem::offset_of!(_quote_t, basename) - 16usize];
-    ["Offset of field: _quote_t::report_body"]
-        [::std::mem::offset_of!(_quote_t, report_body) - 48usize];
-    ["Offset of field: _quote_t::signature_len"]
-        [::std::mem::offset_of!(_quote_t, signature_len) - 432usize];
-    ["Offset of field: _quote_t::signature"]
-        [::std::mem::offset_of!(_quote_t, signature) - 436usize];
+    [
+        "Offset of field: _quote_t::version",
+    ][::std::mem::offset_of!(_quote_t, version) - 0usize];
+    [
+        "Offset of field: _quote_t::sign_type",
+    ][::std::mem::offset_of!(_quote_t, sign_type) - 2usize];
+    [
+        "Offset of field: _quote_t::epid_group_id",
+    ][::std::mem::offset_of!(_quote_t, epid_group_id) - 4usize];
+    [
+        "Offset of field: _quote_t::qe_svn",
+    ][::std::mem::offset_of!(_quote_t, qe_svn) - 8usize];
+    [
+        "Offset of field: _quote_t::pce_svn",
+    ][::std::mem::offset_of!(_quote_t, pce_svn) - 10usize];
+    [
+        "Offset of field: _quote_t::xeid",
+    ][::std::mem::offset_of!(_quote_t, xeid) - 12usize];
+    [
+        "Offset of field: _quote_t::basename",
+    ][::std::mem::offset_of!(_quote_t, basename) - 16usize];
+    [
+        "Offset of field: _quote_t::report_body",
+    ][::std::mem::offset_of!(_quote_t, report_body) - 48usize];
+    [
+        "Offset of field: _quote_t::signature_len",
+    ][::std::mem::offset_of!(_quote_t, signature_len) - 432usize];
+    [
+        "Offset of field: _quote_t::signature",
+    ][::std::mem::offset_of!(_quote_t, signature) - 436usize];
 };
 impl Default for _quote_t {
     fn default() -> Self {
@@ -2241,8 +2557,9 @@ pub struct _platform_info {
 const _: () = {
     ["Size of _platform_info"][::std::mem::size_of::<_platform_info>() - 101usize];
     ["Alignment of _platform_info"][::std::mem::align_of::<_platform_info>() - 1usize];
-    ["Offset of field: _platform_info::platform_info"]
-        [::std::mem::offset_of!(_platform_info, platform_info) - 0usize];
+    [
+        "Offset of field: _platform_info::platform_info",
+    ][::std::mem::offset_of!(_platform_info, platform_info) - 0usize];
 };
 impl Default for _platform_info {
     fn default() -> Self {
@@ -2264,13 +2581,18 @@ pub struct _update_info_bit {
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of _update_info_bit"][::std::mem::size_of::<_update_info_bit>() - 12usize];
-    ["Alignment of _update_info_bit"][::std::mem::align_of::<_update_info_bit>() - 1usize];
-    ["Offset of field: _update_info_bit::ucodeUpdate"]
-        [::std::mem::offset_of!(_update_info_bit, ucodeUpdate) - 0usize];
-    ["Offset of field: _update_info_bit::csmeFwUpdate"]
-        [::std::mem::offset_of!(_update_info_bit, csmeFwUpdate) - 4usize];
-    ["Offset of field: _update_info_bit::pswUpdate"]
-        [::std::mem::offset_of!(_update_info_bit, pswUpdate) - 8usize];
+    [
+        "Alignment of _update_info_bit",
+    ][::std::mem::align_of::<_update_info_bit>() - 1usize];
+    [
+        "Offset of field: _update_info_bit::ucodeUpdate",
+    ][::std::mem::offset_of!(_update_info_bit, ucodeUpdate) - 0usize];
+    [
+        "Offset of field: _update_info_bit::csmeFwUpdate",
+    ][::std::mem::offset_of!(_update_info_bit, csmeFwUpdate) - 4usize];
+    [
+        "Offset of field: _update_info_bit::pswUpdate",
+    ][::std::mem::offset_of!(_update_info_bit, pswUpdate) - 8usize];
 };
 pub type sgx_update_info_bit_t = _update_info_bit;
 #[repr(C)]
@@ -2282,8 +2604,9 @@ pub struct _att_key_id_t {
 const _: () = {
     ["Size of _att_key_id_t"][::std::mem::size_of::<_att_key_id_t>() - 256usize];
     ["Alignment of _att_key_id_t"][::std::mem::align_of::<_att_key_id_t>() - 1usize];
-    ["Offset of field: _att_key_id_t::att_key_id"]
-        [::std::mem::offset_of!(_att_key_id_t, att_key_id) - 0usize];
+    [
+        "Offset of field: _att_key_id_t::att_key_id",
+    ][::std::mem::offset_of!(_att_key_id_t, att_key_id) - 0usize];
 };
 impl Default for _att_key_id_t {
     fn default() -> Self {
@@ -2295,51 +2618,65 @@ impl Default for _att_key_id_t {
     }
 }
 pub type sgx_att_key_id_t = _att_key_id_t;
-#[doc = " Describes a single attestation key.  Contains both QE identity and the attestation algorithm ID."]
+/// Describes a single attestation key.  Contains both QE identity and the attestation algorithm ID.
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct _sgx_ql_att_key_id_t {
-    #[doc = "< Structure ID"]
+    ///< Structure ID
     pub id: u16,
-    #[doc = "< Structure version"]
+    ///< Structure version
     pub version: u16,
-    #[doc = "< Number of valid bytes in MRSIGNER."]
+    ///< Number of valid bytes in MRSIGNER.
     pub mrsigner_length: u16,
-    #[doc = "< SHA256 or SHA384 hash of the Public key that signed the QE.\n< The lower bytes contain MRSIGNER.  Bytes beyond mrsigner_length '0'"]
+    /**< SHA256 or SHA384 hash of the Public key that signed the QE.
+< The lower bytes contain MRSIGNER.  Bytes beyond mrsigner_length '0'*/
     pub mrsigner: [u8; 48usize],
-    #[doc = "< Legacy Product ID of the QE"]
+    ///< Legacy Product ID of the QE
     pub prod_id: u32,
-    #[doc = "< Extended Product ID or the QE. All 0's for legacy format enclaves."]
+    ///< Extended Product ID or the QE. All 0's for legacy format enclaves.
     pub extended_prod_id: [u8; 16usize],
-    #[doc = "< Config ID of the QE."]
+    ///< Config ID of the QE.
     pub config_id: [u8; 64usize],
-    #[doc = "< Family ID of the QE."]
+    ///< Family ID of the QE.
     pub family_id: [u8; 16usize],
-    #[doc = "< Identity of the attestation key algorithm."]
+    ///< Identity of the attestation key algorithm.
     pub algorithm_id: u32,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_att_key_id_t"][::std::mem::size_of::<_sgx_ql_att_key_id_t>() - 158usize];
-    ["Alignment of _sgx_ql_att_key_id_t"][::std::mem::align_of::<_sgx_ql_att_key_id_t>() - 1usize];
-    ["Offset of field: _sgx_ql_att_key_id_t::id"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_t, id) - 0usize];
-    ["Offset of field: _sgx_ql_att_key_id_t::version"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_t, version) - 2usize];
-    ["Offset of field: _sgx_ql_att_key_id_t::mrsigner_length"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_t, mrsigner_length) - 4usize];
-    ["Offset of field: _sgx_ql_att_key_id_t::mrsigner"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_t, mrsigner) - 6usize];
-    ["Offset of field: _sgx_ql_att_key_id_t::prod_id"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_t, prod_id) - 54usize];
-    ["Offset of field: _sgx_ql_att_key_id_t::extended_prod_id"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_t, extended_prod_id) - 58usize];
-    ["Offset of field: _sgx_ql_att_key_id_t::config_id"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_t, config_id) - 74usize];
-    ["Offset of field: _sgx_ql_att_key_id_t::family_id"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_t, family_id) - 138usize];
-    ["Offset of field: _sgx_ql_att_key_id_t::algorithm_id"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_t, algorithm_id) - 154usize];
+    [
+        "Size of _sgx_ql_att_key_id_t",
+    ][::std::mem::size_of::<_sgx_ql_att_key_id_t>() - 158usize];
+    [
+        "Alignment of _sgx_ql_att_key_id_t",
+    ][::std::mem::align_of::<_sgx_ql_att_key_id_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_t::id",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_t, id) - 0usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_t::version",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_t, version) - 2usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_t::mrsigner_length",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_t, mrsigner_length) - 4usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_t::mrsigner",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_t, mrsigner) - 6usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_t::prod_id",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_t, prod_id) - 54usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_t::extended_prod_id",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_t, extended_prod_id) - 58usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_t::config_id",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_t, config_id) - 74usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_t::family_id",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_t, family_id) - 138usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_t::algorithm_id",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_t, algorithm_id) - 154usize];
 };
 impl Default for _sgx_ql_att_key_id_t {
     fn default() -> Self {
@@ -2350,33 +2687,41 @@ impl Default for _sgx_ql_att_key_id_t {
         }
     }
 }
-#[doc = " Describes a single attestation key.  Contains both QE identity and the attestation algorithm ID."]
+/// Describes a single attestation key.  Contains both QE identity and the attestation algorithm ID.
 pub type sgx_ql_att_key_id_t = _sgx_ql_att_key_id_t;
-#[doc = " Describes an extended attestation key.  Contains sgx_ql_att_key_id_t, spid and quote_type"]
+/// Describes an extended attestation key.  Contains sgx_ql_att_key_id_t, spid and quote_type
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct _sgx_att_key_id_ext_t {
     pub base: sgx_ql_att_key_id_t,
-    #[doc = "< Service Provider ID, should be 0s for ECDSA quote"]
+    ///< Service Provider ID, should be 0s for ECDSA quote
     pub spid: [u8; 16usize],
-    #[doc = "< For non-EPID quote, it should be 0\n< For EPID quote, it equals to sgx_quote_sign_type_t"]
+    /**< For non-EPID quote, it should be 0
+< For EPID quote, it equals to sgx_quote_sign_type_t*/
     pub att_key_type: u16,
-    #[doc = "< It should have the same size of sgx_att_key_id_t"]
+    ///< It should have the same size of sgx_att_key_id_t
     pub reserved: [u8; 80usize],
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_att_key_id_ext_t"][::std::mem::size_of::<_sgx_att_key_id_ext_t>() - 256usize];
-    ["Alignment of _sgx_att_key_id_ext_t"]
-        [::std::mem::align_of::<_sgx_att_key_id_ext_t>() - 1usize];
-    ["Offset of field: _sgx_att_key_id_ext_t::base"]
-        [::std::mem::offset_of!(_sgx_att_key_id_ext_t, base) - 0usize];
-    ["Offset of field: _sgx_att_key_id_ext_t::spid"]
-        [::std::mem::offset_of!(_sgx_att_key_id_ext_t, spid) - 158usize];
-    ["Offset of field: _sgx_att_key_id_ext_t::att_key_type"]
-        [::std::mem::offset_of!(_sgx_att_key_id_ext_t, att_key_type) - 174usize];
-    ["Offset of field: _sgx_att_key_id_ext_t::reserved"]
-        [::std::mem::offset_of!(_sgx_att_key_id_ext_t, reserved) - 176usize];
+    [
+        "Size of _sgx_att_key_id_ext_t",
+    ][::std::mem::size_of::<_sgx_att_key_id_ext_t>() - 256usize];
+    [
+        "Alignment of _sgx_att_key_id_ext_t",
+    ][::std::mem::align_of::<_sgx_att_key_id_ext_t>() - 1usize];
+    [
+        "Offset of field: _sgx_att_key_id_ext_t::base",
+    ][::std::mem::offset_of!(_sgx_att_key_id_ext_t, base) - 0usize];
+    [
+        "Offset of field: _sgx_att_key_id_ext_t::spid",
+    ][::std::mem::offset_of!(_sgx_att_key_id_ext_t, spid) - 158usize];
+    [
+        "Offset of field: _sgx_att_key_id_ext_t::att_key_type",
+    ][::std::mem::offset_of!(_sgx_att_key_id_ext_t, att_key_type) - 174usize];
+    [
+        "Offset of field: _sgx_att_key_id_ext_t::reserved",
+    ][::std::mem::offset_of!(_sgx_att_key_id_ext_t, reserved) - 176usize];
 };
 impl Default for _sgx_att_key_id_ext_t {
     fn default() -> Self {
@@ -2387,7 +2732,7 @@ impl Default for _sgx_att_key_id_ext_t {
         }
     }
 }
-#[doc = " Describes an extended attestation key.  Contains sgx_ql_att_key_id_t, spid and quote_type"]
+/// Describes an extended attestation key.  Contains sgx_ql_att_key_id_t, spid and quote_type
 pub type sgx_att_key_id_ext_t = _sgx_att_key_id_ext_t;
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
@@ -2399,13 +2744,18 @@ pub struct _qe_report_info_t {
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of _qe_report_info_t"][::std::mem::size_of::<_qe_report_info_t>() - 960usize];
-    ["Alignment of _qe_report_info_t"][::std::mem::align_of::<_qe_report_info_t>() - 1usize];
-    ["Offset of field: _qe_report_info_t::nonce"]
-        [::std::mem::offset_of!(_qe_report_info_t, nonce) - 0usize];
-    ["Offset of field: _qe_report_info_t::app_enclave_target_info"]
-        [::std::mem::offset_of!(_qe_report_info_t, app_enclave_target_info) - 16usize];
-    ["Offset of field: _qe_report_info_t::qe_report"]
-        [::std::mem::offset_of!(_qe_report_info_t, qe_report) - 528usize];
+    [
+        "Alignment of _qe_report_info_t",
+    ][::std::mem::align_of::<_qe_report_info_t>() - 1usize];
+    [
+        "Offset of field: _qe_report_info_t::nonce",
+    ][::std::mem::offset_of!(_qe_report_info_t, nonce) - 0usize];
+    [
+        "Offset of field: _qe_report_info_t::app_enclave_target_info",
+    ][::std::mem::offset_of!(_qe_report_info_t, app_enclave_target_info) - 16usize];
+    [
+        "Offset of field: _qe_report_info_t::qe_report",
+    ][::std::mem::offset_of!(_qe_report_info_t, qe_report) - 528usize];
 };
 impl Default for _qe_report_info_t {
     fn default() -> Self {
@@ -2432,42 +2782,47 @@ impl _sgx_ql_request_policy {
     pub const SGX_QL_DEFAULT: _sgx_ql_request_policy = _sgx_ql_request_policy::SGX_QL_PERSISTENT;
 }
 #[repr(u32)]
-#[doc = " Typedef enum _sgx_ql_request_policy"]
+/// Typedef enum _sgx_ql_request_policy
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub enum _sgx_ql_request_policy {
-    #[doc = "< QE is initialized on first use and reused until process ends."]
+    ///< QE is initialized on first use and reused until process ends.
     SGX_QL_PERSISTENT = 0,
-    #[doc = "< QE is initialized and terminated on every quote.\n< If a previous QE exists, it is stopped & restarted before quoting."]
+    /**< QE is initialized and terminated on every quote.
+< If a previous QE exists, it is stopped & restarted before quoting.*/
     SGX_QL_EPHEMERAL = 1,
-    #[doc = "< Only used for quote verification, QvE is loaded per thread and be unloaded before function exit."]
+    ///< Only used for quote verification, QvE is loaded per thread and be unloaded before function exit.
     SGX_QL_EPHEMERAL_QVE_MULTI_THREAD = 2,
-    #[doc = "< Only used for quote verification, QvE is loaded per thread and be unloaded before thread exit."]
+    ///< Only used for quote verification, QvE is loaded per thread and be unloaded before thread exit.
     SGX_QL_PERSISTENT_QVE_MULTI_THREAD = 3,
 }
-#[doc = " Typedef enum _sgx_ql_request_policy"]
+/// Typedef enum _sgx_ql_request_policy
 pub use self::_sgx_ql_request_policy as sgx_ql_request_policy_t;
-#[doc = " Structure for the Platform Certificate Enclave identity information"]
+/// Structure for the Platform Certificate Enclave identity information
 #[repr(C, packed)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct _sgx_pce_info_t {
-    #[doc = "< PCE ISVSVN"]
+    ///< PCE ISVSVN
     pub pce_isv_svn: sgx_isv_svn_t,
-    #[doc = "< PCE ID.  It will change when something in the PCE would cause the PPID generation to change on the same platform"]
+    ///< PCE ID.  It will change when something in the PCE would cause the PPID generation to change on the same platform
     pub pce_id: u16,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of _sgx_pce_info_t"][::std::mem::size_of::<_sgx_pce_info_t>() - 4usize];
     ["Alignment of _sgx_pce_info_t"][::std::mem::align_of::<_sgx_pce_info_t>() - 1usize];
-    ["Offset of field: _sgx_pce_info_t::pce_isv_svn"]
-        [::std::mem::offset_of!(_sgx_pce_info_t, pce_isv_svn) - 0usize];
-    ["Offset of field: _sgx_pce_info_t::pce_id"]
-        [::std::mem::offset_of!(_sgx_pce_info_t, pce_id) - 2usize];
+    [
+        "Offset of field: _sgx_pce_info_t::pce_isv_svn",
+    ][::std::mem::offset_of!(_sgx_pce_info_t, pce_isv_svn) - 0usize];
+    [
+        "Offset of field: _sgx_pce_info_t::pce_id",
+    ][::std::mem::offset_of!(_sgx_pce_info_t, pce_id) - 2usize];
 };
-#[doc = " Structure for the Platform Certificate Enclave identity information"]
+/// Structure for the Platform Certificate Enclave identity information
 pub type sgx_pce_info_t = _sgx_pce_info_t;
 extern "C" {
-    pub fn sgx_set_pce_enclave_load_policy(policy: sgx_ql_request_policy_t) -> sgx_pce_error_t;
+    pub fn sgx_set_pce_enclave_load_policy(
+        policy: sgx_ql_request_policy_t,
+    ) -> sgx_pce_error_t;
 }
 extern "C" {
     pub fn sgx_pce_get_target(
@@ -2508,110 +2863,128 @@ extern "C" {
 extern "C" {
     pub fn sgx_set_pce_path(p_path: *const ::std::os::raw::c_char) -> sgx_pce_error_t;
 }
-#[doc = "< EPID 2.0 - Anonymous"]
+///< EPID 2.0 - Anonymous
 pub const sgx_ql_attestation_algorithm_id_t_SGX_QL_ALG_EPID: sgx_ql_attestation_algorithm_id_t = 0;
-#[doc = "< Reserved"]
-pub const sgx_ql_attestation_algorithm_id_t_SGX_QL_ALG_RESERVED_1:
-    sgx_ql_attestation_algorithm_id_t = 1;
-#[doc = "< ECDSA-256-with-P-256 curve, Non - Anonymous"]
-pub const sgx_ql_attestation_algorithm_id_t_SGX_QL_ALG_ECDSA_P256:
-    sgx_ql_attestation_algorithm_id_t = 2;
-#[doc = "< ECDSA-384-with-P-384 curve (Note: currently not supported), Non-Anonymous"]
-pub const sgx_ql_attestation_algorithm_id_t_SGX_QL_ALG_ECDSA_P384:
-    sgx_ql_attestation_algorithm_id_t = 3;
+///< Reserved
+pub const sgx_ql_attestation_algorithm_id_t_SGX_QL_ALG_RESERVED_1: sgx_ql_attestation_algorithm_id_t = 1;
+///< ECDSA-256-with-P-256 curve, Non - Anonymous
+pub const sgx_ql_attestation_algorithm_id_t_SGX_QL_ALG_ECDSA_P256: sgx_ql_attestation_algorithm_id_t = 2;
+///< ECDSA-384-with-P-384 curve (Note: currently not supported), Non-Anonymous
+pub const sgx_ql_attestation_algorithm_id_t_SGX_QL_ALG_ECDSA_P384: sgx_ql_attestation_algorithm_id_t = 3;
 pub const sgx_ql_attestation_algorithm_id_t_SGX_QL_ALG_MAX: sgx_ql_attestation_algorithm_id_t = 4;
-#[doc = " Enumerates the different attestation key algorithms"]
+/// Enumerates the different attestation key algorithms
 pub type sgx_ql_attestation_algorithm_id_t = ::std::os::raw::c_uint;
-#[doc = "< Clear PPID + CPU_SVN, PvE_SVN, PCE_SVN, PCE_ID"]
+///< Clear PPID + CPU_SVN, PvE_SVN, PCE_SVN, PCE_ID
 pub const sgx_ql_cert_key_type_t_PPID_CLEARTEXT: sgx_ql_cert_key_type_t = 1;
-#[doc = "< RSA-2048-OAEP Encrypted PPID + CPU_SVN, PvE_SVN, PCE_SVN, PCE_ID"]
+///< RSA-2048-OAEP Encrypted PPID + CPU_SVN, PvE_SVN, PCE_SVN, PCE_ID
 pub const sgx_ql_cert_key_type_t_PPID_RSA2048_ENCRYPTED: sgx_ql_cert_key_type_t = 2;
-#[doc = "< RSA-3072-OAEP Encrypted PPID + CPU_SVN, PvE_SVN, PCE_SVN, PCE_ID"]
+///< RSA-3072-OAEP Encrypted PPID + CPU_SVN, PvE_SVN, PCE_SVN, PCE_ID
 pub const sgx_ql_cert_key_type_t_PPID_RSA3072_ENCRYPTED: sgx_ql_cert_key_type_t = 3;
-#[doc = "< Clear PCK Leaf Cert"]
+///< Clear PCK Leaf Cert
 pub const sgx_ql_cert_key_type_t_PCK_CLEARTEXT: sgx_ql_cert_key_type_t = 4;
-#[doc = "< Full PCK Cert chain (PCK Leaf Cert|| Intermediate CA Cert || Root CA Cert)"]
+///< Full PCK Cert chain (PCK Leaf Cert|| Intermediate CA Cert || Root CA Cert)
 pub const sgx_ql_cert_key_type_t_PCK_CERT_CHAIN: sgx_ql_cert_key_type_t = 5;
-#[doc = "< Indicates the contents of the CERTIFICATION_INFO_DATA contains the ECDSA_SIG_AUX_DATA of another Quote."]
+///< Indicates the contents of the CERTIFICATION_INFO_DATA contains the ECDSA_SIG_AUX_DATA of another Quote.
 pub const sgx_ql_cert_key_type_t_ECDSA_SIG_AUX_DATA: sgx_ql_cert_key_type_t = 6;
 pub const sgx_ql_cert_key_type_t_QL_CERT_KEY_TYPE_MAX: sgx_ql_cert_key_type_t = 16;
-#[doc = " Enumerates the different certification data types used to describe the signer of the attestation key"]
+/// Enumerates the different certification data types used to describe the signer of the attestation key
 pub type sgx_ql_cert_key_type_t = ::std::os::raw::c_uint;
-#[doc = " Describes the header that contains the list of attestation keys supported by a given verifier"]
+/// Describes the header that contains the list of attestation keys supported by a given verifier
 #[repr(C, packed)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct _sgx_ql_att_key_id_list_header_t {
-    #[doc = "< Structure ID"]
+    ///< Structure ID
     pub id: u16,
-    #[doc = "< Structure version"]
+    ///< Structure version
     pub version: u16,
-    #[doc = "< Number of 'Attestation Key Identifier' Elements"]
+    ///< Number of 'Attestation Key Identifier' Elements
     pub num_att_ids: u32,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_att_key_id_list_header_t"]
-        [::std::mem::size_of::<_sgx_ql_att_key_id_list_header_t>() - 8usize];
-    ["Alignment of _sgx_ql_att_key_id_list_header_t"]
-        [::std::mem::align_of::<_sgx_ql_att_key_id_list_header_t>() - 1usize];
-    ["Offset of field: _sgx_ql_att_key_id_list_header_t::id"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_list_header_t, id) - 0usize];
-    ["Offset of field: _sgx_ql_att_key_id_list_header_t::version"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_list_header_t, version) - 2usize];
-    ["Offset of field: _sgx_ql_att_key_id_list_header_t::num_att_ids"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_list_header_t, num_att_ids) - 4usize];
+    [
+        "Size of _sgx_ql_att_key_id_list_header_t",
+    ][::std::mem::size_of::<_sgx_ql_att_key_id_list_header_t>() - 8usize];
+    [
+        "Alignment of _sgx_ql_att_key_id_list_header_t",
+    ][::std::mem::align_of::<_sgx_ql_att_key_id_list_header_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_list_header_t::id",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_list_header_t, id) - 0usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_list_header_t::version",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_list_header_t, version) - 2usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_list_header_t::num_att_ids",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_list_header_t, num_att_ids) - 4usize];
 };
-#[doc = " Describes the header that contains the list of attestation keys supported by a given verifier"]
+/// Describes the header that contains the list of attestation keys supported by a given verifier
 pub type sgx_ql_att_key_id_list_header_t = _sgx_ql_att_key_id_list_header_t;
-#[doc = " This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is\n  PPID_CLEARTTEXT. It identifies the PCK Cert required to verify the certification signature."]
+/** This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is
+  PPID_CLEARTTEXT. It identifies the PCK Cert required to verify the certification signature.*/
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct _sgx_ql_ppid_cleartext_cert_info_t {
-    #[doc = "< PPID of this platform"]
+    ///< PPID of this platform
     pub ppid: [u8; 16usize],
-    #[doc = "< The CPUSVN TCB used to generate the PCK signature."]
+    ///< The CPUSVN TCB used to generate the PCK signature.
     pub cpu_svn: sgx_cpu_svn_t,
-    #[doc = "< The PCE ISVSVN used to generate the PCK signature."]
+    ///< The PCE ISVSVN used to generate the PCK signature.
     pub pce_info: sgx_pce_info_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_ppid_cleartext_cert_info_t"]
-        [::std::mem::size_of::<_sgx_ql_ppid_cleartext_cert_info_t>() - 36usize];
-    ["Alignment of _sgx_ql_ppid_cleartext_cert_info_t"]
-        [::std::mem::align_of::<_sgx_ql_ppid_cleartext_cert_info_t>() - 1usize];
-    ["Offset of field: _sgx_ql_ppid_cleartext_cert_info_t::ppid"]
-        [::std::mem::offset_of!(_sgx_ql_ppid_cleartext_cert_info_t, ppid) - 0usize];
-    ["Offset of field: _sgx_ql_ppid_cleartext_cert_info_t::cpu_svn"]
-        [::std::mem::offset_of!(_sgx_ql_ppid_cleartext_cert_info_t, cpu_svn) - 16usize];
-    ["Offset of field: _sgx_ql_ppid_cleartext_cert_info_t::pce_info"]
-        [::std::mem::offset_of!(_sgx_ql_ppid_cleartext_cert_info_t, pce_info) - 32usize];
+    [
+        "Size of _sgx_ql_ppid_cleartext_cert_info_t",
+    ][::std::mem::size_of::<_sgx_ql_ppid_cleartext_cert_info_t>() - 36usize];
+    [
+        "Alignment of _sgx_ql_ppid_cleartext_cert_info_t",
+    ][::std::mem::align_of::<_sgx_ql_ppid_cleartext_cert_info_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_ppid_cleartext_cert_info_t::ppid",
+    ][::std::mem::offset_of!(_sgx_ql_ppid_cleartext_cert_info_t, ppid) - 0usize];
+    [
+        "Offset of field: _sgx_ql_ppid_cleartext_cert_info_t::cpu_svn",
+    ][::std::mem::offset_of!(_sgx_ql_ppid_cleartext_cert_info_t, cpu_svn) - 16usize];
+    [
+        "Offset of field: _sgx_ql_ppid_cleartext_cert_info_t::pce_info",
+    ][::std::mem::offset_of!(_sgx_ql_ppid_cleartext_cert_info_t, pce_info) - 32usize];
 };
-#[doc = " This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is\n  PPID_CLEARTTEXT. It identifies the PCK Cert required to verify the certification signature."]
+/** This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is
+  PPID_CLEARTTEXT. It identifies the PCK Cert required to verify the certification signature.*/
 pub type sgx_ql_ppid_cleartext_cert_info_t = _sgx_ql_ppid_cleartext_cert_info_t;
-#[doc = " This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is\n  PPID_RSA2048_ENCRYPTED. It identifies the PCK Cert required to verify the certification signature."]
+/** This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is
+  PPID_RSA2048_ENCRYPTED. It identifies the PCK Cert required to verify the certification signature.*/
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _sgx_ql_ppid_rsa2048_encrypted_cert_info_t {
-    #[doc = "< Encrypted PPID of this platform"]
+    ///< Encrypted PPID of this platform
     pub enc_ppid: [u8; 256usize],
-    #[doc = "< The CPUSVN TCB used to generate the PCK signature."]
+    ///< The CPUSVN TCB used to generate the PCK signature.
     pub cpu_svn: sgx_cpu_svn_t,
-    #[doc = "< The PCE ISVSVN used to generate the PCK signature."]
+    ///< The PCE ISVSVN used to generate the PCK signature.
     pub pce_info: sgx_pce_info_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_ppid_rsa2048_encrypted_cert_info_t"]
-        [::std::mem::size_of::<_sgx_ql_ppid_rsa2048_encrypted_cert_info_t>() - 276usize];
-    ["Alignment of _sgx_ql_ppid_rsa2048_encrypted_cert_info_t"]
-        [::std::mem::align_of::<_sgx_ql_ppid_rsa2048_encrypted_cert_info_t>() - 1usize];
-    ["Offset of field: _sgx_ql_ppid_rsa2048_encrypted_cert_info_t::enc_ppid"]
-        [::std::mem::offset_of!(_sgx_ql_ppid_rsa2048_encrypted_cert_info_t, enc_ppid) - 0usize];
-    ["Offset of field: _sgx_ql_ppid_rsa2048_encrypted_cert_info_t::cpu_svn"]
-        [::std::mem::offset_of!(_sgx_ql_ppid_rsa2048_encrypted_cert_info_t, cpu_svn) - 256usize];
-    ["Offset of field: _sgx_ql_ppid_rsa2048_encrypted_cert_info_t::pce_info"]
-        [::std::mem::offset_of!(_sgx_ql_ppid_rsa2048_encrypted_cert_info_t, pce_info) - 272usize];
+    [
+        "Size of _sgx_ql_ppid_rsa2048_encrypted_cert_info_t",
+    ][::std::mem::size_of::<_sgx_ql_ppid_rsa2048_encrypted_cert_info_t>() - 276usize];
+    [
+        "Alignment of _sgx_ql_ppid_rsa2048_encrypted_cert_info_t",
+    ][::std::mem::align_of::<_sgx_ql_ppid_rsa2048_encrypted_cert_info_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_ppid_rsa2048_encrypted_cert_info_t::enc_ppid",
+    ][::std::mem::offset_of!(_sgx_ql_ppid_rsa2048_encrypted_cert_info_t, enc_ppid)
+        - 0usize];
+    [
+        "Offset of field: _sgx_ql_ppid_rsa2048_encrypted_cert_info_t::cpu_svn",
+    ][::std::mem::offset_of!(_sgx_ql_ppid_rsa2048_encrypted_cert_info_t, cpu_svn)
+        - 256usize];
+    [
+        "Offset of field: _sgx_ql_ppid_rsa2048_encrypted_cert_info_t::pce_info",
+    ][::std::mem::offset_of!(_sgx_ql_ppid_rsa2048_encrypted_cert_info_t, pce_info)
+        - 272usize];
 };
 impl Default for _sgx_ql_ppid_rsa2048_encrypted_cert_info_t {
     fn default() -> Self {
@@ -2622,31 +2995,41 @@ impl Default for _sgx_ql_ppid_rsa2048_encrypted_cert_info_t {
         }
     }
 }
-#[doc = " This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is\n  PPID_RSA2048_ENCRYPTED. It identifies the PCK Cert required to verify the certification signature."]
+/** This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is
+  PPID_RSA2048_ENCRYPTED. It identifies the PCK Cert required to verify the certification signature.*/
 pub type sgx_ql_ppid_rsa2048_encrypted_cert_info_t = _sgx_ql_ppid_rsa2048_encrypted_cert_info_t;
-#[doc = " This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is\n  PPID_RSA2072_ENCRYPTED. It identifies the PCK Cert required to verify the certification signature."]
+/** This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is
+  PPID_RSA2072_ENCRYPTED. It identifies the PCK Cert required to verify the certification signature.*/
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct _sgx_ql_ppid_rsa3072_encrypted_cert_info_t {
-    #[doc = "< Encrypted PPID of this platform"]
+    ///< Encrypted PPID of this platform
     pub enc_ppid: [u8; 384usize],
-    #[doc = "< The CPUSVN TCB used to generate the PCK signature."]
+    ///< The CPUSVN TCB used to generate the PCK signature.
     pub cpu_svn: sgx_cpu_svn_t,
-    #[doc = "< The PCE ISVSVN used to generate the PCK signature."]
+    ///< The PCE ISVSVN used to generate the PCK signature.
     pub pce_info: sgx_pce_info_t,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_ppid_rsa3072_encrypted_cert_info_t"]
-        [::std::mem::size_of::<_sgx_ql_ppid_rsa3072_encrypted_cert_info_t>() - 404usize];
-    ["Alignment of _sgx_ql_ppid_rsa3072_encrypted_cert_info_t"]
-        [::std::mem::align_of::<_sgx_ql_ppid_rsa3072_encrypted_cert_info_t>() - 1usize];
-    ["Offset of field: _sgx_ql_ppid_rsa3072_encrypted_cert_info_t::enc_ppid"]
-        [::std::mem::offset_of!(_sgx_ql_ppid_rsa3072_encrypted_cert_info_t, enc_ppid) - 0usize];
-    ["Offset of field: _sgx_ql_ppid_rsa3072_encrypted_cert_info_t::cpu_svn"]
-        [::std::mem::offset_of!(_sgx_ql_ppid_rsa3072_encrypted_cert_info_t, cpu_svn) - 384usize];
-    ["Offset of field: _sgx_ql_ppid_rsa3072_encrypted_cert_info_t::pce_info"]
-        [::std::mem::offset_of!(_sgx_ql_ppid_rsa3072_encrypted_cert_info_t, pce_info) - 400usize];
+    [
+        "Size of _sgx_ql_ppid_rsa3072_encrypted_cert_info_t",
+    ][::std::mem::size_of::<_sgx_ql_ppid_rsa3072_encrypted_cert_info_t>() - 404usize];
+    [
+        "Alignment of _sgx_ql_ppid_rsa3072_encrypted_cert_info_t",
+    ][::std::mem::align_of::<_sgx_ql_ppid_rsa3072_encrypted_cert_info_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_ppid_rsa3072_encrypted_cert_info_t::enc_ppid",
+    ][::std::mem::offset_of!(_sgx_ql_ppid_rsa3072_encrypted_cert_info_t, enc_ppid)
+        - 0usize];
+    [
+        "Offset of field: _sgx_ql_ppid_rsa3072_encrypted_cert_info_t::cpu_svn",
+    ][::std::mem::offset_of!(_sgx_ql_ppid_rsa3072_encrypted_cert_info_t, cpu_svn)
+        - 384usize];
+    [
+        "Offset of field: _sgx_ql_ppid_rsa3072_encrypted_cert_info_t::pce_info",
+    ][::std::mem::offset_of!(_sgx_ql_ppid_rsa3072_encrypted_cert_info_t, pce_info)
+        - 400usize];
 };
 impl Default for _sgx_ql_ppid_rsa3072_encrypted_cert_info_t {
     fn default() -> Self {
@@ -2657,24 +3040,32 @@ impl Default for _sgx_ql_ppid_rsa3072_encrypted_cert_info_t {
         }
     }
 }
-#[doc = " This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is\n  PPID_RSA2072_ENCRYPTED. It identifies the PCK Cert required to verify the certification signature."]
+/** This is the data structure of the CERTIFICATION_INFO_DATA in the Quote when the certification type is
+  PPID_RSA2072_ENCRYPTED. It identifies the PCK Cert required to verify the certification signature.*/
 pub type sgx_ql_ppid_rsa3072_encrypted_cert_info_t = _sgx_ql_ppid_rsa3072_encrypted_cert_info_t;
-#[doc = " Structure to hold the size of the authentication data and the place holder for\nthe authentication data itself."]
+/** Structure to hold the size of the authentication data and the place holder for
+the authentication data itself.*/
 #[repr(C, packed)]
 pub struct _sgx_ql_auth_data_t {
-    #[doc = "< Size in bytes contained the auth_data buffer."]
+    ///< Size in bytes contained the auth_data buffer.
     pub size: u16,
-    #[doc = "< Additional data provided by Att key owner to be signed by the certification key"]
+    ///< Additional data provided by Att key owner to be signed by the certification key
     pub auth_data: __IncompleteArrayField<u8>,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_auth_data_t"][::std::mem::size_of::<_sgx_ql_auth_data_t>() - 2usize];
-    ["Alignment of _sgx_ql_auth_data_t"][::std::mem::align_of::<_sgx_ql_auth_data_t>() - 1usize];
-    ["Offset of field: _sgx_ql_auth_data_t::size"]
-        [::std::mem::offset_of!(_sgx_ql_auth_data_t, size) - 0usize];
-    ["Offset of field: _sgx_ql_auth_data_t::auth_data"]
-        [::std::mem::offset_of!(_sgx_ql_auth_data_t, auth_data) - 2usize];
+    [
+        "Size of _sgx_ql_auth_data_t",
+    ][::std::mem::size_of::<_sgx_ql_auth_data_t>() - 2usize];
+    [
+        "Alignment of _sgx_ql_auth_data_t",
+    ][::std::mem::align_of::<_sgx_ql_auth_data_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_auth_data_t::size",
+    ][::std::mem::offset_of!(_sgx_ql_auth_data_t, size) - 0usize];
+    [
+        "Offset of field: _sgx_ql_auth_data_t::auth_data",
+    ][::std::mem::offset_of!(_sgx_ql_auth_data_t, auth_data) - 2usize];
 };
 impl Default for _sgx_ql_auth_data_t {
     fn default() -> Self {
@@ -2685,30 +3076,38 @@ impl Default for _sgx_ql_auth_data_t {
         }
     }
 }
-#[doc = " Structure to hold the size of the authentication data and the place holder for\nthe authentication data itself."]
+/** Structure to hold the size of the authentication data and the place holder for
+the authentication data itself.*/
 pub type sgx_ql_auth_data_t = _sgx_ql_auth_data_t;
-#[doc = " Data that will be signed by the ECDSA described in the CERTIFICATION_* fields.\nThis will be SHA256 hashed along with the ECDSA PUBLIC KEY and put in\nQE3_REPORT.ReportData."]
+/** Data that will be signed by the ECDSA described in the CERTIFICATION_* fields.
+This will be SHA256 hashed along with the ECDSA PUBLIC KEY and put in
+QE3_REPORT.ReportData.*/
 #[repr(C, packed)]
 pub struct _sgx_ql_certification_data_t {
-    #[doc = "< The type of certification key used to sign the QE3 Report and Att key hash (ECDSA_ID+Authentication Data)."]
+    ///< The type of certification key used to sign the QE3 Report and Att key hash (ECDSA_ID+Authentication Data).
     pub cert_key_type: u16,
-    #[doc = "< Size of the data structure for the cert_key_type information."]
+    ///< Size of the data structure for the cert_key_type information.
     pub size: u32,
-    #[doc = "< Certification data associated with the cert_key_type"]
+    ///< Certification data associated with the cert_key_type
     pub certification_data: __IncompleteArrayField<u8>,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_certification_data_t"]
-        [::std::mem::size_of::<_sgx_ql_certification_data_t>() - 6usize];
-    ["Alignment of _sgx_ql_certification_data_t"]
-        [::std::mem::align_of::<_sgx_ql_certification_data_t>() - 1usize];
-    ["Offset of field: _sgx_ql_certification_data_t::cert_key_type"]
-        [::std::mem::offset_of!(_sgx_ql_certification_data_t, cert_key_type) - 0usize];
-    ["Offset of field: _sgx_ql_certification_data_t::size"]
-        [::std::mem::offset_of!(_sgx_ql_certification_data_t, size) - 2usize];
-    ["Offset of field: _sgx_ql_certification_data_t::certification_data"]
-        [::std::mem::offset_of!(_sgx_ql_certification_data_t, certification_data) - 6usize];
+    [
+        "Size of _sgx_ql_certification_data_t",
+    ][::std::mem::size_of::<_sgx_ql_certification_data_t>() - 6usize];
+    [
+        "Alignment of _sgx_ql_certification_data_t",
+    ][::std::mem::align_of::<_sgx_ql_certification_data_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_certification_data_t::cert_key_type",
+    ][::std::mem::offset_of!(_sgx_ql_certification_data_t, cert_key_type) - 0usize];
+    [
+        "Offset of field: _sgx_ql_certification_data_t::size",
+    ][::std::mem::offset_of!(_sgx_ql_certification_data_t, size) - 2usize];
+    [
+        "Offset of field: _sgx_ql_certification_data_t::certification_data",
+    ][::std::mem::offset_of!(_sgx_ql_certification_data_t, certification_data) - 6usize];
 };
 impl Default for _sgx_ql_certification_data_t {
     fn default() -> Self {
@@ -2719,38 +3118,49 @@ impl Default for _sgx_ql_certification_data_t {
         }
     }
 }
-#[doc = " Data that will be signed by the ECDSA described in the CERTIFICATION_* fields.\nThis will be SHA256 hashed along with the ECDSA PUBLIC KEY and put in\nQE3_REPORT.ReportData."]
+/** Data that will be signed by the ECDSA described in the CERTIFICATION_* fields.
+This will be SHA256 hashed along with the ECDSA PUBLIC KEY and put in
+QE3_REPORT.ReportData.*/
 pub type sgx_ql_certification_data_t = _sgx_ql_certification_data_t;
-#[doc = " The SGX_QL_SGX_QL_ALG_ECDSA_P256 specific data structure.  Appears in the signature_data[] of the sgx_quote3_t\n  structure."]
+/** The SGX_QL_SGX_QL_ALG_ECDSA_P256 specific data structure.  Appears in the signature_data[] of the sgx_quote3_t
+  structure.*/
 #[repr(C, packed)]
 pub struct _sgx_ql_ecdsa_sig_data_t {
-    #[doc = "< Signature over the Quote using the ECDSA Att key. Big Endian."]
+    ///< Signature over the Quote using the ECDSA Att key. Big Endian.
     pub sig: [u8; 64usize],
-    #[doc = "< ECDSA Att Public Key.  Hash in QE3Report.ReportData.  Big Endian"]
+    ///< ECDSA Att Public Key.  Hash in QE3Report.ReportData.  Big Endian
     pub attest_pub_key: [u8; 64usize],
-    #[doc = "< QE3 Report of the QE when the Att key was generated.  The ReportData will contain the ECDSA_ID"]
+    ///< QE3 Report of the QE when the Att key was generated.  The ReportData will contain the ECDSA_ID
     pub qe_report: sgx_report_body_t,
-    #[doc = "< Signature of QE Report using the Certification Key (PCK for root signing). Big Endian"]
+    ///< Signature of QE Report using the Certification Key (PCK for root signing). Big Endian
     pub qe_report_sig: [u8; 64usize],
-    #[doc = "< Place holder for both the auth_data_t and certification_data_t.  Concatenated in that order."]
+    ///< Place holder for both the auth_data_t and certification_data_t.  Concatenated in that order.
     pub auth_certification_data: __IncompleteArrayField<u8>,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_ecdsa_sig_data_t"]
-        [::std::mem::size_of::<_sgx_ql_ecdsa_sig_data_t>() - 576usize];
-    ["Alignment of _sgx_ql_ecdsa_sig_data_t"]
-        [::std::mem::align_of::<_sgx_ql_ecdsa_sig_data_t>() - 1usize];
-    ["Offset of field: _sgx_ql_ecdsa_sig_data_t::sig"]
-        [::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, sig) - 0usize];
-    ["Offset of field: _sgx_ql_ecdsa_sig_data_t::attest_pub_key"]
-        [::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, attest_pub_key) - 64usize];
-    ["Offset of field: _sgx_ql_ecdsa_sig_data_t::qe_report"]
-        [::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, qe_report) - 128usize];
-    ["Offset of field: _sgx_ql_ecdsa_sig_data_t::qe_report_sig"]
-        [::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, qe_report_sig) - 512usize];
-    ["Offset of field: _sgx_ql_ecdsa_sig_data_t::auth_certification_data"]
-        [::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, auth_certification_data) - 576usize];
+    [
+        "Size of _sgx_ql_ecdsa_sig_data_t",
+    ][::std::mem::size_of::<_sgx_ql_ecdsa_sig_data_t>() - 576usize];
+    [
+        "Alignment of _sgx_ql_ecdsa_sig_data_t",
+    ][::std::mem::align_of::<_sgx_ql_ecdsa_sig_data_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_ecdsa_sig_data_t::sig",
+    ][::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, sig) - 0usize];
+    [
+        "Offset of field: _sgx_ql_ecdsa_sig_data_t::attest_pub_key",
+    ][::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, attest_pub_key) - 64usize];
+    [
+        "Offset of field: _sgx_ql_ecdsa_sig_data_t::qe_report",
+    ][::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, qe_report) - 128usize];
+    [
+        "Offset of field: _sgx_ql_ecdsa_sig_data_t::qe_report_sig",
+    ][::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, qe_report_sig) - 512usize];
+    [
+        "Offset of field: _sgx_ql_ecdsa_sig_data_t::auth_certification_data",
+    ][::std::mem::offset_of!(_sgx_ql_ecdsa_sig_data_t, auth_certification_data)
+        - 576usize];
 };
 impl Default for _sgx_ql_ecdsa_sig_data_t {
     fn default() -> Self {
@@ -2761,72 +3171,89 @@ impl Default for _sgx_ql_ecdsa_sig_data_t {
         }
     }
 }
-#[doc = " The SGX_QL_SGX_QL_ALG_ECDSA_P256 specific data structure.  Appears in the signature_data[] of the sgx_quote3_t\n  structure."]
+/** The SGX_QL_SGX_QL_ALG_ECDSA_P256 specific data structure.  Appears in the signature_data[] of the sgx_quote3_t
+  structure.*/
 pub type sgx_ql_ecdsa_sig_data_t = _sgx_ql_ecdsa_sig_data_t;
-#[doc = " The quote header.  It is designed to compatible with earlier versions of the quote."]
+/// The quote header.  It is designed to compatible with earlier versions of the quote.
 #[repr(C, packed)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct _sgx_quote_header_t {
-    #[doc = "< 0:  The version this quote structure."]
+    ///< 0:  The version this quote structure.
     pub version: u16,
-    #[doc = "< 2:  sgx_attestation_algorithm_id_t.  Describes the type of signature in the signature_data[] field."]
+    ///< 2:  sgx_attestation_algorithm_id_t.  Describes the type of signature in the signature_data[] field.
     pub att_key_type: u16,
-    #[doc = "< 4:  Optionally stores additional data associated with the att_key_type."]
+    ///< 4:  Optionally stores additional data associated with the att_key_type.
     pub att_key_data_0: u32,
-    #[doc = "< 8:  The ISV_SVN of the Quoting Enclave when the quote was generated."]
+    ///< 8:  The ISV_SVN of the Quoting Enclave when the quote was generated.
     pub qe_svn: sgx_isv_svn_t,
-    #[doc = "< 10: The ISV_SVN of the PCE when the quote was generated."]
+    ///< 10: The ISV_SVN of the PCE when the quote was generated.
     pub pce_svn: sgx_isv_svn_t,
-    #[doc = "< 12: Unique identifier of QE Vendor."]
+    ///< 12: Unique identifier of QE Vendor.
     pub vendor_id: [u8; 16usize],
-    #[doc = "< 28: Custom attestation key owner data."]
+    ///< 28: Custom attestation key owner data.
     pub user_data: [u8; 20usize],
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_quote_header_t"][::std::mem::size_of::<_sgx_quote_header_t>() - 48usize];
-    ["Alignment of _sgx_quote_header_t"][::std::mem::align_of::<_sgx_quote_header_t>() - 1usize];
-    ["Offset of field: _sgx_quote_header_t::version"]
-        [::std::mem::offset_of!(_sgx_quote_header_t, version) - 0usize];
-    ["Offset of field: _sgx_quote_header_t::att_key_type"]
-        [::std::mem::offset_of!(_sgx_quote_header_t, att_key_type) - 2usize];
-    ["Offset of field: _sgx_quote_header_t::att_key_data_0"]
-        [::std::mem::offset_of!(_sgx_quote_header_t, att_key_data_0) - 4usize];
-    ["Offset of field: _sgx_quote_header_t::qe_svn"]
-        [::std::mem::offset_of!(_sgx_quote_header_t, qe_svn) - 8usize];
-    ["Offset of field: _sgx_quote_header_t::pce_svn"]
-        [::std::mem::offset_of!(_sgx_quote_header_t, pce_svn) - 10usize];
-    ["Offset of field: _sgx_quote_header_t::vendor_id"]
-        [::std::mem::offset_of!(_sgx_quote_header_t, vendor_id) - 12usize];
-    ["Offset of field: _sgx_quote_header_t::user_data"]
-        [::std::mem::offset_of!(_sgx_quote_header_t, user_data) - 28usize];
+    [
+        "Size of _sgx_quote_header_t",
+    ][::std::mem::size_of::<_sgx_quote_header_t>() - 48usize];
+    [
+        "Alignment of _sgx_quote_header_t",
+    ][::std::mem::align_of::<_sgx_quote_header_t>() - 1usize];
+    [
+        "Offset of field: _sgx_quote_header_t::version",
+    ][::std::mem::offset_of!(_sgx_quote_header_t, version) - 0usize];
+    [
+        "Offset of field: _sgx_quote_header_t::att_key_type",
+    ][::std::mem::offset_of!(_sgx_quote_header_t, att_key_type) - 2usize];
+    [
+        "Offset of field: _sgx_quote_header_t::att_key_data_0",
+    ][::std::mem::offset_of!(_sgx_quote_header_t, att_key_data_0) - 4usize];
+    [
+        "Offset of field: _sgx_quote_header_t::qe_svn",
+    ][::std::mem::offset_of!(_sgx_quote_header_t, qe_svn) - 8usize];
+    [
+        "Offset of field: _sgx_quote_header_t::pce_svn",
+    ][::std::mem::offset_of!(_sgx_quote_header_t, pce_svn) - 10usize];
+    [
+        "Offset of field: _sgx_quote_header_t::vendor_id",
+    ][::std::mem::offset_of!(_sgx_quote_header_t, vendor_id) - 12usize];
+    [
+        "Offset of field: _sgx_quote_header_t::user_data",
+    ][::std::mem::offset_of!(_sgx_quote_header_t, user_data) - 28usize];
 };
-#[doc = " The quote header.  It is designed to compatible with earlier versions of the quote."]
+/// The quote header.  It is designed to compatible with earlier versions of the quote.
 pub type sgx_quote_header_t = _sgx_quote_header_t;
-#[doc = " The generic quote data structure.  This is the common part of the quote.  The signature_data[] contains the signature and supporting\n  information of the key used to sign the quote and the contents depend on the sgx_quote_sign_type_t value."]
+/** The generic quote data structure.  This is the common part of the quote.  The signature_data[] contains the signature and supporting
+  information of the key used to sign the quote and the contents depend on the sgx_quote_sign_type_t value.*/
 #[repr(C, packed)]
 pub struct _sgx_quote3_t {
-    #[doc = "< 0:   The quote header."]
+    ///< 0:   The quote header.
     pub header: sgx_quote_header_t,
-    #[doc = "< 48: The REPORT of the app that is attesting remotely."]
+    ///< 48: The REPORT of the app that is attesting remotely.
     pub report_body: sgx_report_body_t,
-    #[doc = "< 432: The length of the signature_data.  Varies depending on the type of sign_type."]
+    ///< 432: The length of the signature_data.  Varies depending on the type of sign_type.
     pub signature_data_len: u32,
-    #[doc = "< 436: Contains the variable length containing the quote signature and support data for the signature."]
+    ///< 436: Contains the variable length containing the quote signature and support data for the signature.
     pub signature_data: __IncompleteArrayField<u8>,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
     ["Size of _sgx_quote3_t"][::std::mem::size_of::<_sgx_quote3_t>() - 436usize];
     ["Alignment of _sgx_quote3_t"][::std::mem::align_of::<_sgx_quote3_t>() - 1usize];
-    ["Offset of field: _sgx_quote3_t::header"]
-        [::std::mem::offset_of!(_sgx_quote3_t, header) - 0usize];
-    ["Offset of field: _sgx_quote3_t::report_body"]
-        [::std::mem::offset_of!(_sgx_quote3_t, report_body) - 48usize];
-    ["Offset of field: _sgx_quote3_t::signature_data_len"]
-        [::std::mem::offset_of!(_sgx_quote3_t, signature_data_len) - 432usize];
-    ["Offset of field: _sgx_quote3_t::signature_data"]
-        [::std::mem::offset_of!(_sgx_quote3_t, signature_data) - 436usize];
+    [
+        "Offset of field: _sgx_quote3_t::header",
+    ][::std::mem::offset_of!(_sgx_quote3_t, header) - 0usize];
+    [
+        "Offset of field: _sgx_quote3_t::report_body",
+    ][::std::mem::offset_of!(_sgx_quote3_t, report_body) - 48usize];
+    [
+        "Offset of field: _sgx_quote3_t::signature_data_len",
+    ][::std::mem::offset_of!(_sgx_quote3_t, signature_data_len) - 432usize];
+    [
+        "Offset of field: _sgx_quote3_t::signature_data",
+    ][::std::mem::offset_of!(_sgx_quote3_t, signature_data) - 436usize];
 };
 impl Default for _sgx_quote3_t {
     fn default() -> Self {
@@ -2837,26 +3264,32 @@ impl Default for _sgx_quote3_t {
         }
     }
 }
-#[doc = " The generic quote data structure.  This is the common part of the quote.  The signature_data[] contains the signature and supporting\n  information of the key used to sign the quote and the contents depend on the sgx_quote_sign_type_t value."]
+/** The generic quote data structure.  This is the common part of the quote.  The signature_data[] contains the signature and supporting
+  information of the key used to sign the quote and the contents depend on the sgx_quote_sign_type_t value.*/
 pub type sgx_quote3_t = _sgx_quote3_t;
-#[doc = " Describes the algorithm parameters needed to generate the given algorithm's signature.  Used for quote generation\n  APIs."]
+/** Describes the algorithm parameters needed to generate the given algorithm's signature.  Used for quote generation
+  APIs.*/
 #[repr(C, packed)]
 pub struct _sgx_ql_att_key_id_param_t {
-    #[doc = "< Size of additional attestation key information.  0 is valid."]
+    ///< Size of additional attestation key information.  0 is valid.
     pub algorithm_param_size: u32,
-    #[doc = "< Additional attestation algorithm information.For example, SigRL for EPID."]
+    ///< Additional attestation algorithm information.For example, SigRL for EPID.
     pub algorithm_param: __IncompleteArrayField<u8>,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_att_key_id_param_t"]
-        [::std::mem::size_of::<_sgx_ql_att_key_id_param_t>() - 4usize];
-    ["Alignment of _sgx_ql_att_key_id_param_t"]
-        [::std::mem::align_of::<_sgx_ql_att_key_id_param_t>() - 1usize];
-    ["Offset of field: _sgx_ql_att_key_id_param_t::algorithm_param_size"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_param_t, algorithm_param_size) - 0usize];
-    ["Offset of field: _sgx_ql_att_key_id_param_t::algorithm_param"]
-        [::std::mem::offset_of!(_sgx_ql_att_key_id_param_t, algorithm_param) - 4usize];
+    [
+        "Size of _sgx_ql_att_key_id_param_t",
+    ][::std::mem::size_of::<_sgx_ql_att_key_id_param_t>() - 4usize];
+    [
+        "Alignment of _sgx_ql_att_key_id_param_t",
+    ][::std::mem::align_of::<_sgx_ql_att_key_id_param_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_param_t::algorithm_param_size",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_param_t, algorithm_param_size) - 0usize];
+    [
+        "Offset of field: _sgx_ql_att_key_id_param_t::algorithm_param",
+    ][::std::mem::offset_of!(_sgx_ql_att_key_id_param_t, algorithm_param) - 4usize];
 };
 impl Default for _sgx_ql_att_key_id_param_t {
     fn default() -> Self {
@@ -2867,26 +3300,33 @@ impl Default for _sgx_ql_att_key_id_param_t {
         }
     }
 }
-#[doc = " Describes the algorithm parameters needed to generate the given algorithm's signature.  Used for quote generation\n  APIs."]
+/** Describes the algorithm parameters needed to generate the given algorithm's signature.  Used for quote generation
+  APIs.*/
 pub type sgx_ql_att_key_id_param_t = _sgx_ql_att_key_id_param_t;
-#[doc = " The full data structure passed to the platform by the verifier. It will list all of the attestation algorithms and\n  QE's supported by the verifier"]
+/** The full data structure passed to the platform by the verifier. It will list all of the attestation algorithms and
+  QE's supported by the verifier*/
 #[repr(C)]
 #[derive(Debug)]
 pub struct _sgx_ql_att_id_list_t {
-    #[doc = "< Header for the attestation key ID list provided by the quote verifier."]
+    ///< Header for the attestation key ID list provided by the quote verifier.
     pub header: sgx_ql_att_key_id_list_header_t,
-    #[doc = "< Place holder for the extended attestation ID list."]
+    ///< Place holder for the extended attestation ID list.
     pub ext_id_list: __IncompleteArrayField<sgx_att_key_id_ext_t>,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_att_id_list_t"][::std::mem::size_of::<_sgx_ql_att_id_list_t>() - 8usize];
-    ["Alignment of _sgx_ql_att_id_list_t"]
-        [::std::mem::align_of::<_sgx_ql_att_id_list_t>() - 1usize];
-    ["Offset of field: _sgx_ql_att_id_list_t::header"]
-        [::std::mem::offset_of!(_sgx_ql_att_id_list_t, header) - 0usize];
-    ["Offset of field: _sgx_ql_att_id_list_t::ext_id_list"]
-        [::std::mem::offset_of!(_sgx_ql_att_id_list_t, ext_id_list) - 8usize];
+    [
+        "Size of _sgx_ql_att_id_list_t",
+    ][::std::mem::size_of::<_sgx_ql_att_id_list_t>() - 8usize];
+    [
+        "Alignment of _sgx_ql_att_id_list_t",
+    ][::std::mem::align_of::<_sgx_ql_att_id_list_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_att_id_list_t::header",
+    ][::std::mem::offset_of!(_sgx_ql_att_id_list_t, header) - 0usize];
+    [
+        "Offset of field: _sgx_ql_att_id_list_t::ext_id_list",
+    ][::std::mem::offset_of!(_sgx_ql_att_id_list_t, ext_id_list) - 8usize];
 };
 impl Default for _sgx_ql_att_id_list_t {
     fn default() -> Self {
@@ -2897,7 +3337,8 @@ impl Default for _sgx_ql_att_id_list_t {
         }
     }
 }
-#[doc = " The full data structure passed to the platform by the verifier. It will list all of the attestation algorithms and\n  QE's supported by the verifier"]
+/** The full data structure passed to the platform by the verifier. It will list all of the attestation algorithms and
+  QE's supported by the verifier*/
 pub type sgx_ql_att_key_id_list_t = _sgx_ql_att_id_list_t;
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
@@ -2908,16 +3349,22 @@ pub struct _sgx_ql_qe_report_info_t {
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of _sgx_ql_qe_report_info_t"]
-        [::std::mem::size_of::<_sgx_ql_qe_report_info_t>() - 960usize];
-    ["Alignment of _sgx_ql_qe_report_info_t"]
-        [::std::mem::align_of::<_sgx_ql_qe_report_info_t>() - 1usize];
-    ["Offset of field: _sgx_ql_qe_report_info_t::nonce"]
-        [::std::mem::offset_of!(_sgx_ql_qe_report_info_t, nonce) - 0usize];
-    ["Offset of field: _sgx_ql_qe_report_info_t::app_enclave_target_info"]
-        [::std::mem::offset_of!(_sgx_ql_qe_report_info_t, app_enclave_target_info) - 16usize];
-    ["Offset of field: _sgx_ql_qe_report_info_t::qe_report"]
-        [::std::mem::offset_of!(_sgx_ql_qe_report_info_t, qe_report) - 528usize];
+    [
+        "Size of _sgx_ql_qe_report_info_t",
+    ][::std::mem::size_of::<_sgx_ql_qe_report_info_t>() - 960usize];
+    [
+        "Alignment of _sgx_ql_qe_report_info_t",
+    ][::std::mem::align_of::<_sgx_ql_qe_report_info_t>() - 1usize];
+    [
+        "Offset of field: _sgx_ql_qe_report_info_t::nonce",
+    ][::std::mem::offset_of!(_sgx_ql_qe_report_info_t, nonce) - 0usize];
+    [
+        "Offset of field: _sgx_ql_qe_report_info_t::app_enclave_target_info",
+    ][::std::mem::offset_of!(_sgx_ql_qe_report_info_t, app_enclave_target_info)
+        - 16usize];
+    [
+        "Offset of field: _sgx_ql_qe_report_info_t::qe_report",
+    ][::std::mem::offset_of!(_sgx_ql_qe_report_info_t, qe_report) - 528usize];
 };
 impl Default for _sgx_ql_qe_report_info_t {
     fn default() -> Self {
@@ -2930,15 +3377,67 @@ impl Default for _sgx_ql_qe_report_info_t {
 }
 pub type sgx_ql_qe_report_info_t = _sgx_ql_qe_report_info_t;
 extern "C" {
-    #[doc = " When the Quoting Verification Library is linked to a process, it needs to know the proper enclave loading policy.\n The library may be linked with a long lived process, such as a service, where it can load the enclaves and leave\n them loaded (persistent). This better ensures that the enclaves will be available upon quote requests and not subject\n to EPC limitations if loaded on demand. However, if the QVL is linked with an application process, there may be many\n applications with the QVL and a better utilization of EPC is to load and unloaded the quote verification enclaves on\n demand (ephemeral).  The library will be shipped with a default policy of loading enclaves and leaving\n them loaded until the library is unloaded (PERSISTENT). If the policy is set to EPHEMERAL, then the QvE will\n be loaded and unloaded on-demand.\n Supported policies:\n  SGX_QL_EPHEMERAL - Default policy. QvE is initialized and terminated on every quote verification function call.\n  SGX_QL_PERSISTENT - All the threads will share single QvE instance, and QvE is initialized on first use and reused until process ends.\n  SGX_QL_EPHEMERAL_QVE_MULTI_THREAD - QvE is loaded per thread and be unloaded before function exit.\n  SGX_QL_PERSISTENT_QVE_MULTI_THREAD - QvE is loaded per thread and only be unloaded before thread exit.\n\n NOTE: QvE load policy should be only set once in one process, otherwise, this function will return error SGX_QL_UNSUPPORTED_LOADING_POLICY.\n\n @param policy Sets the requested enclave loading policy to either SGX_QL_PERSISTENT, SGX_QL_EPHEMERAL or SGX_QL_DEFAULT.\n\n @return SGX_QL_SUCCESS Successfully set the enclave loading policy for the quoting library's enclaves.\n @return SGX_QL_UNSUPPORTED_LOADING_POLICY The selected policy is not supported or it has been set once.\n"]
-    pub fn sgx_qv_set_enclave_load_policy(policy: sgx_ql_request_policy_t) -> quote3_error_t;
+    /** When the Quoting Verification Library is linked to a process, it needs to know the proper enclave loading policy.
+ The library may be linked with a long lived process, such as a service, where it can load the enclaves and leave
+ them loaded (persistent). This better ensures that the enclaves will be available upon quote requests and not subject
+ to EPC limitations if loaded on demand. However, if the QVL is linked with an application process, there may be many
+ applications with the QVL and a better utilization of EPC is to load and unloaded the quote verification enclaves on
+ demand (ephemeral).  The library will be shipped with a default policy of loading enclaves and leaving
+ them loaded until the library is unloaded (PERSISTENT). If the policy is set to EPHEMERAL, then the QvE will
+ be loaded and unloaded on-demand.
+ Supported policies:
+  SGX_QL_EPHEMERAL - Default policy. QvE is initialized and terminated on every quote verification function call.
+  SGX_QL_PERSISTENT - All the threads will share single QvE instance, and QvE is initialized on first use and reused until process ends.
+  SGX_QL_EPHEMERAL_QVE_MULTI_THREAD - QvE is loaded per thread and be unloaded before function exit.
+  SGX_QL_PERSISTENT_QVE_MULTI_THREAD - QvE is loaded per thread and only be unloaded before thread exit.
+
+ NOTE: QvE load policy should be only set once in one process, otherwise, this function will return error SGX_QL_UNSUPPORTED_LOADING_POLICY.
+
+ @param policy Sets the requested enclave loading policy to either SGX_QL_PERSISTENT, SGX_QL_EPHEMERAL or SGX_QL_DEFAULT.
+
+ @return SGX_QL_SUCCESS Successfully set the enclave loading policy for the quoting library's enclaves.
+ @return SGX_QL_UNSUPPORTED_LOADING_POLICY The selected policy is not supported or it has been set once.
+*/
+    pub fn sgx_qv_set_enclave_load_policy(
+        policy: sgx_ql_request_policy_t,
+    ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Get supplemental data required size.\n @param p_data_size[OUT] - Pointer to hold the size of the buffer in bytes required to contain all of the supplemental data.\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_ERROR_QVL_QVE_MISMATCH\n      - SGX_QL_ENCLAVE_LOAD_ERROR"]
-    pub fn sgx_qv_get_quote_supplemental_data_size(p_data_size: *mut u32) -> quote3_error_t;
+    /** Get supplemental data required size.
+ @param p_data_size[OUT] - Pointer to hold the size of the buffer in bytes required to contain all of the supplemental data.
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_ERROR_QVL_QVE_MISMATCH
+      - SGX_QL_ENCLAVE_LOAD_ERROR*/
+    pub fn sgx_qv_get_quote_supplemental_data_size(
+        p_data_size: *mut u32,
+    ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Perform ECDSA quote verification.\n\n @param p_quote[IN] - Pointer to SGX Quote.\n @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).\n @param p_quote_collateral[IN] - This is a pointer to the Quote Certification Collateral provided by the caller.\n @param expiration_check_date[IN] - This is the date that the QvE will use to determine if any of the inputted collateral have expired.\n @param p_collateral_expiration_status[OUT] - Address of the outputted expiration status.  This input must not be NULL.\n @param p_quote_verification_result[OUT] - Address of the outputted quote verification result.\n @param p_qve_report_info[IN/OUT] - This parameter can be used in 2 ways.\n        If p_qve_report_info is NOT NULL, the API will use Intel QvE to perform quote verification, and QvE will generate a report using the target_info in sgx_ql_qe_report_info_t structure.\n        if p_qve_report_info is NULL, the API will use QVL library to perform quote verification, note that the results can not be cryptographically authenticated in this mode.\n @param supplemental_data_size[IN] - Size of the buffer pointed to by p_quote (in bytes).\n @param p_supplemental_data[OUT] - The parameter is optional.  If it is NULL, supplemental_data_size must be 0.\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED\n      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED\n      - SGX_QL_UNABLE_TO_GENERATE_REPORT\n      - SGX_QL_CRL_UNSUPPORTED_FORMAT\n      - SGX_QL_ERROR_UNEXPECTED"]
+    /** Perform ECDSA quote verification.
+
+ @param p_quote[IN] - Pointer to SGX Quote.
+ @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).
+ @param p_quote_collateral[IN] - This is a pointer to the Quote Certification Collateral provided by the caller.
+ @param expiration_check_date[IN] - This is the date that the QvE will use to determine if any of the inputted collateral have expired.
+ @param p_collateral_expiration_status[OUT] - Address of the outputted expiration status.  This input must not be NULL.
+ @param p_quote_verification_result[OUT] - Address of the outputted quote verification result.
+ @param p_qve_report_info[IN/OUT] - This parameter can be used in 2 ways.
+        If p_qve_report_info is NOT NULL, the API will use Intel QvE to perform quote verification, and QvE will generate a report using the target_info in sgx_ql_qe_report_info_t structure.
+        if p_qve_report_info is NULL, the API will use QVL library to perform quote verification, note that the results can not be cryptographically authenticated in this mode.
+ @param supplemental_data_size[IN] - Size of the buffer pointed to by p_quote (in bytes).
+ @param p_supplemental_data[OUT] - The parameter is optional.  If it is NULL, supplemental_data_size must be 0.
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED
+      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED
+      - SGX_QL_UNABLE_TO_GENERATE_REPORT
+      - SGX_QL_CRL_UNSUPPORTED_FORMAT
+      - SGX_QL_ERROR_UNEXPECTED*/
     pub fn sgx_qv_verify_quote(
         p_quote: *const u8,
         quote_size: u32,
@@ -2952,7 +3451,23 @@ extern "C" {
     ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Call quote provider library to get QvE identity.\n\n @param pp_qveid[OUT] - Pointer to the pointer of QvE identity\n @param p_qveid_size[OUT] -  Pointer to the size of QvE identity\n @param pp_qveid_issue_chain[OUT] - Pointer to the pointer QvE identity certificate chain\n @param p_qveid_issue_chain_size[OUT] - Pointer to the QvE identity certificate chain size\n @param pp_root_ca_crl[OUT] - Pointer to the pointer of Intel Root CA CRL\n @param p_root_ca_crl_size[OUT] - Pointer to the Intel Root CA CRL size\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_NO_QVE_IDENTITY_DATA\n      - SGX_QL_ERROR_OUT_OF_MEMORY\n      - SGX_QL_NETWORK_ERROR\n      - SGX_QL_MESSAGE_ERROR\n      - SGX_QL_ERROR_UNEXPECTED"]
+    /** Call quote provider library to get QvE identity.
+
+ @param pp_qveid[OUT] - Pointer to the pointer of QvE identity
+ @param p_qveid_size[OUT] -  Pointer to the size of QvE identity
+ @param pp_qveid_issue_chain[OUT] - Pointer to the pointer QvE identity certificate chain
+ @param p_qveid_issue_chain_size[OUT] - Pointer to the QvE identity certificate chain size
+ @param pp_root_ca_crl[OUT] - Pointer to the pointer of Intel Root CA CRL
+ @param p_root_ca_crl_size[OUT] - Pointer to the Intel Root CA CRL size
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_NO_QVE_IDENTITY_DATA
+      - SGX_QL_ERROR_OUT_OF_MEMORY
+      - SGX_QL_NETWORK_ERROR
+      - SGX_QL_MESSAGE_ERROR
+      - SGX_QL_ERROR_UNEXPECTED*/
     pub fn sgx_qv_get_qve_identity(
         pp_qveid: *mut *mut u8,
         p_qveid_size: *mut u32,
@@ -2963,7 +3478,7 @@ extern "C" {
     ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Call quote provider library to free the p_qve_id, p_qveid_issuer_chain buffer and p_root_ca_crl allocated by sgx_qv_get_qve_identity"]
+    /// Call quote provider library to free the p_qve_id, p_qveid_issuer_chain buffer and p_root_ca_crl allocated by sgx_qv_get_qve_identity
     pub fn sgx_qv_free_qve_identity(
         p_qveid: *mut u8,
         p_qveid_issue_chain: *mut u8,
@@ -2983,7 +3498,28 @@ extern "C" {
     ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Perform ECDSA quote verification and get quote verification result token.\n\n @param p_quote[IN] - Pointer to SGX or TDX Quote.\n @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).\n @param p_quote_collateral[IN] - The parameter is optional. This is a pointer to the Quote Certification Collateral provided by the caller.\n @param p_qve_report_info[IN/OUT] - This parameter can be used in 2 ways.\n        If p_qve_report_info is NOT NULL, the API will use Intel QvE to perform quote verification, and QvE will generate a report using the target_info in sgx_ql_qe_report_info_t structure.\n        if p_qve_report_info is NULL, the API will use QVL library to perform quote verification, note that the results can not be cryptographically authenticated in this mode.\n @param p_user_data[IN] - If not NULL, this points to a buffer holding a null-terminated string for user data. The hash of this string will be verified to match the application enclave SGX reportData held in the input quote. Upon successful verification, the user data will be converted back into JSON format and included in the output VR JWT (instead of the reportData itself).\n         The user data must be less than or equal to 128 bytes in size.\n         This API only supports the SHA384 hashing algorithm, which means the SGX reportData in the quote must be SHA384 hashed.\n @param p_verification_result_token_buffer_size[OUT] - Size of the buffer pointed to by verification_result_token (in bytes).\n @param p_verification_result_token[OUT] - Pointer to the verification_result_token.\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED\n      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED\n      - SGX_QL_UNABLE_TO_GENERATE_REPORT\n      - SGX_QL_CRL_UNSUPPORTED_FORMAT\n      - SGX_QL_ERROR_UNEXPECTED"]
+    /** Perform ECDSA quote verification and get quote verification result token.
+
+ @param p_quote[IN] - Pointer to SGX or TDX Quote.
+ @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).
+ @param p_quote_collateral[IN] - The parameter is optional. This is a pointer to the Quote Certification Collateral provided by the caller.
+ @param p_qve_report_info[IN/OUT] - This parameter can be used in 2 ways.
+        If p_qve_report_info is NOT NULL, the API will use Intel QvE to perform quote verification, and QvE will generate a report using the target_info in sgx_ql_qe_report_info_t structure.
+        if p_qve_report_info is NULL, the API will use QVL library to perform quote verification, note that the results can not be cryptographically authenticated in this mode.
+ @param p_user_data[IN] - If not NULL, this points to a buffer holding a null-terminated string for user data. The hash of this string will be verified to match the application enclave SGX reportData held in the input quote. Upon successful verification, the user data will be converted back into JSON format and included in the output VR JWT (instead of the reportData itself).
+         The user data must be less than or equal to 128 bytes in size.
+         This API only supports the SHA384 hashing algorithm, which means the SGX reportData in the quote must be SHA384 hashed.
+ @param p_verification_result_token_buffer_size[OUT] - Size of the buffer pointed to by verification_result_token (in bytes).
+ @param p_verification_result_token[OUT] - Pointer to the verification_result_token.
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED
+      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED
+      - SGX_QL_UNABLE_TO_GENERATE_REPORT
+      - SGX_QL_CRL_UNSUPPORTED_FORMAT
+      - SGX_QL_ERROR_UNEXPECTED*/
     pub fn tee_verify_quote_qvt(
         p_quote: *const u8,
         quote_size: u32,
@@ -2995,18 +3531,55 @@ extern "C" {
     ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Free quote verification result token buffer, which returned by `tee_verify_quote_qvt`\n\n @param p_verification_result_token[IN] - Pointer to verification result token\n @param p_verification_result_token_buffer_size[IN] - Pointer to verification result token size\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER"]
+    /** Free quote verification result token buffer, which returned by `tee_verify_quote_qvt`
+
+ @param p_verification_result_token[IN] - Pointer to verification result token
+ @param p_verification_result_token_buffer_size[IN] - Pointer to verification result token size
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER*/
     pub fn tee_free_verify_quote_qvt(
         p_verification_result_token: *mut u8,
         p_verification_result_token_buffer_size: *mut u32,
     ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Get TDX supplemental data required size.\n @param p_data_size[OUT] - Pointer to hold the size of the buffer in bytes required to contain all of the supplemental data.\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_ERROR_QVL_QVE_MISMATCH\n      - SGX_QL_ENCLAVE_LOAD_ERROR"]
-    pub fn tdx_qv_get_quote_supplemental_data_size(p_data_size: *mut u32) -> quote3_error_t;
+    /** Get TDX supplemental data required size.
+ @param p_data_size[OUT] - Pointer to hold the size of the buffer in bytes required to contain all of the supplemental data.
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_ERROR_QVL_QVE_MISMATCH
+      - SGX_QL_ENCLAVE_LOAD_ERROR*/
+    pub fn tdx_qv_get_quote_supplemental_data_size(
+        p_data_size: *mut u32,
+    ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Perform TDX ECDSA quote verification.\n\n @param p_quote[IN] - Pointer to TDX Quote.\n @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).\n @param p_quote_collateral[IN] - This is a pointer to the Quote Certification Collateral provided by the caller.\n @param expiration_check_date[IN] - This is the date that the QvE will use to determine if any of the inputted collateral have expired.\n @param p_collateral_expiration_status[OUT] - Address of the outputted expiration status.  This input must not be NULL.\n @param p_quote_verification_result[OUT] - Address of the outputted quote verification result.\n @param p_qve_report_info[IN/OUT] - This parameter can be used in 2 ways.\n        If p_qve_report_info is NOT NULL, the API will use Intel QvE to perform quote verification, and QvE will generate a report using the target_info in sgx_ql_qe_report_info_t structure.\n        if p_qve_report_info is NULL, the API will use QVL library to perform quote verification, note that the results can not be cryptographically authenticated in this mode.\n @param supplemental_data_size[IN] - Size of the buffer pointed to by p_quote (in bytes).\n @param p_supplemental_data[OUT] - The parameter is optional.  If it is NULL, supplemental_data_size must be 0.\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED\n      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED\n      - SGX_QL_UNABLE_TO_GENERATE_REPORT\n      - SGX_QL_CRL_UNSUPPORTED_FORMAT\n      - SGX_QL_ERROR_UNEXPECTED"]
+    /** Perform TDX ECDSA quote verification.
+
+ @param p_quote[IN] - Pointer to TDX Quote.
+ @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).
+ @param p_quote_collateral[IN] - This is a pointer to the Quote Certification Collateral provided by the caller.
+ @param expiration_check_date[IN] - This is the date that the QvE will use to determine if any of the inputted collateral have expired.
+ @param p_collateral_expiration_status[OUT] - Address of the outputted expiration status.  This input must not be NULL.
+ @param p_quote_verification_result[OUT] - Address of the outputted quote verification result.
+ @param p_qve_report_info[IN/OUT] - This parameter can be used in 2 ways.
+        If p_qve_report_info is NOT NULL, the API will use Intel QvE to perform quote verification, and QvE will generate a report using the target_info in sgx_ql_qe_report_info_t structure.
+        if p_qve_report_info is NULL, the API will use QVL library to perform quote verification, note that the results can not be cryptographically authenticated in this mode.
+ @param supplemental_data_size[IN] - Size of the buffer pointed to by p_quote (in bytes).
+ @param p_supplemental_data[OUT] - The parameter is optional.  If it is NULL, supplemental_data_size must be 0.
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED
+      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED
+      - SGX_QL_UNABLE_TO_GENERATE_REPORT
+      - SGX_QL_CRL_UNSUPPORTED_FORMAT
+      - SGX_QL_ERROR_UNEXPECTED*/
     pub fn tdx_qv_verify_quote(
         p_quote: *const u8,
         quote_size: u32,
@@ -3020,7 +3593,23 @@ extern "C" {
     ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Get quote verification collateral.\n\n @param p_quote[IN] - Pointer to TDX/SGX Quote.\n @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).\n @param p_quote_collateral[OUT] - This is a pointer to the Quote Certification Collateral retrieved based on Quote\n @param p_collateral_size[OUT] - This is the sizeof collateral including the size of nested fileds\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_PLATFORM_LIB_UNAVAILABLE\n      - SGX_QL_PCK_CERT_CHAIN_ERROR\n      - SGX_QL_PCK_CERT_UNSUPPORTED_FORMAT\n      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED\n      - SGX_QL_OUT_OF_MEMORY\n      - SGX_QL_NO_QUOTE_COLLATERAL_DATA\n      - SGX_QL_ERROR_UNEXPECTED"]
+    /** Get quote verification collateral.
+
+ @param p_quote[IN] - Pointer to TDX/SGX Quote.
+ @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).
+ @param p_quote_collateral[OUT] - This is a pointer to the Quote Certification Collateral retrieved based on Quote
+ @param p_collateral_size[OUT] - This is the sizeof collateral including the size of nested fileds
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_PLATFORM_LIB_UNAVAILABLE
+      - SGX_QL_PCK_CERT_CHAIN_ERROR
+      - SGX_QL_PCK_CERT_UNSUPPORTED_FORMAT
+      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED
+      - SGX_QL_OUT_OF_MEMORY
+      - SGX_QL_NO_QUOTE_COLLATERAL_DATA
+      - SGX_QL_ERROR_UNEXPECTED*/
     pub fn tee_qv_get_collateral(
         p_quote: *const u8,
         quote_size: u32,
@@ -3029,11 +3618,23 @@ extern "C" {
     ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Free quote verification collateral buffer, which returned by `tee_qv_get_collateral`\n\n @param p_quote_collateral[IN] - Pointer to collateral\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED"]
+    /** Free quote verification collateral buffer, which returned by `tee_qv_get_collateral`
+
+ @param p_quote_collateral[IN] - Pointer to collateral
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED*/
     pub fn tee_qv_free_collateral(p_quote_collateral: *mut u8) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Get supplemental data latest version and required size, support both SGX and TDX\n\n @param p_quote[IN] - Pointer to SGX or TDX Quote.\n @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).\n @param p_version[OUT] - Optional. Pointer to hold latest version of the supplemental data.\n @param p_data_size[OUT] - Optional. Pointer to hold the size of the buffer in bytes required to contain all of the supplemental data."]
+    /** Get supplemental data latest version and required size, support both SGX and TDX
+
+ @param p_quote[IN] - Pointer to SGX or TDX Quote.
+ @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).
+ @param p_version[OUT] - Optional. Pointer to hold latest version of the supplemental data.
+ @param p_data_size[OUT] - Optional. Pointer to hold the size of the buffer in bytes required to contain all of the supplemental data.*/
     pub fn tee_get_supplemental_data_version_and_size(
         p_quote: *const u8,
         quote_size: u32,
@@ -3042,7 +3643,34 @@ extern "C" {
     ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Perform quote verification for SGX and TDX\n This API works the same as the old one, but takes a new parameter to describe the supplemental data (p_supp_data_descriptor)\n\n @param p_quote[IN] - Pointer to SGX or TDX Quote.\n @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).\n @param p_quote_collateral[IN] - This is a pointer to the Quote Certification Collateral provided by the caller.\n @param expiration_check_date[IN] - This is the date that the QvE will use to determine if any of the inputted collateral have expired.\n @param p_collateral_expiration_status[OUT] - Address of the outputted expiration status.  This input must not be NULL.\n @param p_quote_verification_result[OUT] - Address of the outputted quote verification result.\n @param p_qve_report_info[IN/OUT] - This parameter can be used in 2 ways.\n        If p_qve_report_info is NOT NULL, the API will use Intel QvE to perform quote verification, and QvE will generate a report using the target_info in sgx_ql_qe_report_info_t structure.\n        if p_qve_report_info is NULL, the API will use QVL library to perform quote verification, not that the results can not be cryptographically authenticated in this mode.\n @param p_supp_datal_descriptor[IN/OUT] - Pointer to tee_supp_data_descriptor_t structure\n        You can specify the major version of supplemental data by setting p_supp_datal_descriptor->major_version\n        If p_supp_datal_descriptor == NULL, no supplemental data is returned\n        If p_supp_datal_descriptor->major_version == 0, then return the latest version of the sgx_ql_qv_supplemental_t structure\n        If p_supp_datal_descriptor <= latest supported version, return the latest minor version associated with that major version\n        If p_supp_datal_descriptor > latest supported version, return an error SGX_QL_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED\n      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED\n      - SGX_QL_UNABLE_TO_GENERATE_REPORT\n      - SGX_QL_CRL_UNSUPPORTED_FORMAT\n      - SGX_QL_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED\n      - SGX_QL_ERROR_UNEXPECTED"]
+    /** Perform quote verification for SGX and TDX
+ This API works the same as the old one, but takes a new parameter to describe the supplemental data (p_supp_data_descriptor)
+
+ @param p_quote[IN] - Pointer to SGX or TDX Quote.
+ @param quote_size[IN] - Size of the buffer pointed to by p_quote (in bytes).
+ @param p_quote_collateral[IN] - This is a pointer to the Quote Certification Collateral provided by the caller.
+ @param expiration_check_date[IN] - This is the date that the QvE will use to determine if any of the inputted collateral have expired.
+ @param p_collateral_expiration_status[OUT] - Address of the outputted expiration status.  This input must not be NULL.
+ @param p_quote_verification_result[OUT] - Address of the outputted quote verification result.
+ @param p_qve_report_info[IN/OUT] - This parameter can be used in 2 ways.
+        If p_qve_report_info is NOT NULL, the API will use Intel QvE to perform quote verification, and QvE will generate a report using the target_info in sgx_ql_qe_report_info_t structure.
+        if p_qve_report_info is NULL, the API will use QVL library to perform quote verification, not that the results can not be cryptographically authenticated in this mode.
+ @param p_supp_datal_descriptor[IN/OUT] - Pointer to tee_supp_data_descriptor_t structure
+        You can specify the major version of supplemental data by setting p_supp_datal_descriptor->major_version
+        If p_supp_datal_descriptor == NULL, no supplemental data is returned
+        If p_supp_datal_descriptor->major_version == 0, then return the latest version of the sgx_ql_qv_supplemental_t structure
+        If p_supp_datal_descriptor <= latest supported version, return the latest minor version associated with that major version
+        If p_supp_datal_descriptor > latest supported version, return an error SGX_QL_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_QUOTE_FORMAT_UNSUPPORTED
+      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED
+      - SGX_QL_UNABLE_TO_GENERATE_REPORT
+      - SGX_QL_CRL_UNSUPPORTED_FORMAT
+      - SGX_QL_SUPPLEMENTAL_DATA_VERSION_NOT_SUPPORTED
+      - SGX_QL_ERROR_UNEXPECTED*/
     pub fn tee_verify_quote(
         p_quote: *const u8,
         quote_size: u32,
@@ -3055,7 +3683,18 @@ extern "C" {
     ) -> quote3_error_t;
 }
 extern "C" {
-    #[doc = " Extrace FMSPC from a given quote\n @param p_quote[IN] - Pointer to a quote buffer.\n @param quote_size[IN] - Size of input quote buffer.\n @param p_fmspc_from_quote[IN/OUT] - Pointer to a buffer to write fmspc to.\n @param fmspc_from_quote_size[IN] - Size of fmspc buffer.\n\n @return Status code of the operation, one of:\n      - SGX_QL_SUCCESS\n      - SGX_QL_ERROR_INVALID_PARAMETER\n      - SGX_QL_ERROR_UNEXPECTED\n      - SGX_QL_PCK_CERT_CHAIN_ERROR\n      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED"]
+    /** Extrace FMSPC from a given quote
+ @param p_quote[IN] - Pointer to a quote buffer.
+ @param quote_size[IN] - Size of input quote buffer.
+ @param p_fmspc_from_quote[IN/OUT] - Pointer to a buffer to write fmspc to.
+ @param fmspc_from_quote_size[IN] - Size of fmspc buffer.
+
+ @return Status code of the operation, one of:
+      - SGX_QL_SUCCESS
+      - SGX_QL_ERROR_INVALID_PARAMETER
+      - SGX_QL_ERROR_UNEXPECTED
+      - SGX_QL_PCK_CERT_CHAIN_ERROR
+      - SGX_QL_QUOTE_CERTIFICATION_DATA_UNSUPPORTED*/
     pub fn tee_get_fmspc_from_quote(
         p_quote: *const u8,
         quote_size: u32,
