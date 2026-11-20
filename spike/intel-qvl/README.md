@@ -21,6 +21,14 @@ from outside the DCAP tree:
 - `sys/shim/sgxssl_ocalls.cpp`: the one SGX-SSL ocall that bridge references, normally from
   `libsgx_usgxssl.a`.
 
+The only portability fix needed so far is a define on macOS: `se_thread.c` names Linux's
+`__NR_gettid` in a function nothing calls.
+
+`sys/bindings/linux-glibc.rs` is bindgen's output on x86-64 glibc, used where there is no
+libclang (the manylinux images). The native Linux CI jobs check it matches what they generate.
+`ci/container-build.sh` builds in those images the way maturin-action does: `manylinux2014`
+(GCC 10, glibc 2.17) for x86-64 and the `manylinux_2_28-cross` image (GCC 7.5) for aarch64.
+
 ## The check
 
 `testdata/tdx_quote.dat` is a TDX quote from a GCP TDX guest, and `collateral.json` its Intel

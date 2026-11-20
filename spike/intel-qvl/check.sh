@@ -4,6 +4,7 @@
 # (testdata/expected, captured on x86-64 Linux with libsgx-dcap-quote-verify 1.27.101).
 set -euo pipefail
 bin=${1:?usage: check.sh <qvl-spike-verify binary>}
+bin=$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")
 cd "$(dirname "$0")/testdata"
 
 # 2026-11-21T00:00:00Z, inside the collateral's validity window, and 2027-01-15T00:00:00Z,

@@ -14,6 +14,9 @@
 //!
 //! `QVL_USE_SYSTEM_LIB=1` links the installed library instead, as the crates.io crate does,
 //! which is the baseline the source build is compared against.
+//!
+//! `QVL_BINDINGS_FILE` skips bindgen, and so libclang, and uses that file as the bindings.
+//! `bindings/linux-glibc.rs` is the one for glibc targets.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -158,12 +161,14 @@ fn main() {
             (&ver_srcs, &ver_inc, true),
             (&c_srcs.to_vec(), &ver_inc, false),
         ] {
-            objects.extend(
-                base_build(cpp)
-                    .includes(incs)
-                    .files(srcs)
-                    .compile_intermediates(),
-            );
+            let mut build = base_build(cpp);
+            if !cpp && env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "macos") {
+                // se_thread.c's se_get_threadid() calls syscall(__NR_gettid), Linux's
+                // number. Nothing in the library calls that function, but it has to
+                // compile; Darwin's equivalent comes from the <sys/syscall.h> it includes.
+                build.define("__NR_gettid", "SYS_thread_selfid");
+            }
+            objects.extend(build.includes(incs).files(srcs).compile_intermediates());
         }
         // One archive, so the circular references between the QVL pieces need no link-order
         // games. `cpp(true)` makes cc emit the C++ runtime link for the target (libstdc++ or
@@ -178,6 +183,19 @@ fn main() {
             qve.join("Include"),
             sgx_inc,
         ];
+    }
+
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    // Where libclang is not available, as in the manylinux images the wheels are built in,
+    // take bindings generated elsewhere. They carry the C library's own typedefs, so a file
+    // generated against glibc is only good for glibc targets.
+    println!("cargo:rerun-if-env-changed=QVL_BINDINGS_FILE");
+    if let Ok(file) = env::var("QVL_BINDINGS_FILE") {
+        println!("cargo:rerun-if-changed={file}");
+        std::fs::copy(&file, out_path.join("bindings.rs"))
+            .unwrap_or_else(|e| panic!("QVL_BINDINGS_FILE={file}: {e}"));
+        return;
     }
 
     let mut builder = bindgen::Builder::default();
@@ -206,7 +224,6 @@ fn main() {
         .generate()
         .expect("Unable to generate bindings");
 
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
     bindings
         .write_to_file(out_path.join("bindings.rs"))
         .expect("Couldn't write bindings!");
