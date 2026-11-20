@@ -119,7 +119,7 @@ pub async fn create_converter(
 }
 
 /// Instantiate a `TngVerifier` from config. Dispatches on provider, then sub-type.
-pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
+pub async fn create_verifier(config: &VerifierArgs, runtime: &TokioRuntime) -> Result<TngVerifier> {
     match config {
         // Unreachable in a validated configuration: `VerifyContext::from_verify_args` handles this
         // variant before calling here, and passport mode is rejected at config validation. It
@@ -167,6 +167,16 @@ pub async fn create_verifier(config: &VerifierArgs) -> Result<TngVerifier> {
                 ))
             }
         },
-        VerifierArgs::Ita(args) => Ok(TngVerifier::Ita(args.to_verifier()?)),
+        VerifierArgs::Ita(args) => {
+            let verifier = args.to_verifier()?;
+            verifier.load_jwks().await?;
+            #[cfg(not(wasm))]
+            if let Some(task) = verifier.keep_rp_policy_current().await? {
+                runtime.spawn_supervised_task_current_span(task);
+            }
+            #[cfg(wasm)]
+            let _ = runtime;
+            Ok(TngVerifier::Ita(verifier))
+        }
     }
 }
