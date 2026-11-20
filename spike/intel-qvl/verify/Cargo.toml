@@ -1,0 +1,15 @@
+[package]
+edition = "2021"
+name = "qvl-spike-verify"
+version = "0.0.0"
+publish = false
+
+[features]
+vendored-openssl = ["intel-tee-quote-verification-sys/vendored-openssl"]
+
+[dependencies]
+hex = "0.4"
+# The same crate and tag Trustee's TDX verifier uses.
+intel-tee-quote-verification-rs = {git = "https://github.com/intel/confidential-computing.tee.dcap", tag = "DCAP_1.27"}
+intel-tee-quote-verification-sys = "0.3.0"
+serde_json = "1"

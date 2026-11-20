@@ -1,0 +1,10 @@
+# Spike: build Intel's libsgx_dcap_quoteverify from source for every cohere-tng wheel target.
+# Its own workspace, so nothing here touches the TNG build.
+[workspace]
+members = ["sys", "verify"]
+resolver = "2"
+
+# The `-rs` crate from Intel's DCAP_1.27 tag depends on `intel-tee-quote-verification-sys`
+# from crates.io; point it at the source-building fork in `sys/` instead.
+[patch.crates-io]
+intel-tee-quote-verification-sys = {path = "sys"}

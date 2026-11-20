@@ -1,0 +1,27 @@
+[package]
+edition = "2021"
+name = "intel-tee-quote-verification-sys"
+# Same version as the crates.io release this replaces, so the `[patch]` applies.
+version = "0.3.0"
+build = "build.rs"
+links = "sgx_dcap_quoteverify"
+description = "Intel(R) TEE Quote Verification Rust Library, built from Intel's DCAP source"
+license = "BSD-3-Clause"
+publish = false
+
+[lib]
+name = "intel_tee_quote_verification_sys"
+path = "src/lib.rs"
+
+[features]
+# Build OpenSSL from source and link it statically, as the cohere-tng wheel does.
+vendored-openssl = ["openssl-sys/vendored"]
+
+[dependencies]
+# Not called from Rust. Declared so the QVL links against the same OpenSSL as the rest of
+# the process, and so its headers reach the build script as DEP_OPENSSL_INCLUDE.
+openssl-sys = "0.9"
+
+[build-dependencies]
+bindgen = "0.70.1"
+cc = "1.2"
