@@ -24,7 +24,7 @@ from outside the DCAP tree:
 The only portability fix needed so far is a define on macOS: `se_thread.c` names Linux's
 `__NR_gettid` in a function nothing calls.
 
-`sys/bindings/linux-glibc.rs` is bindgen's output on x86-64 glibc, used where there is no
+`sys/bindings/linux-glibc.rs` is bindgen's output on x86-64 glibc, restricted to the QVL's own items so it holds for aarch64 too, used where there is no
 libclang (the manylinux images). The native Linux CI jobs check it matches what they generate.
 `ci/container-build.sh` builds in those images the way maturin-action does: `manylinux2014`
 (GCC 10, glibc 2.17) for x86-64 and the `manylinux_2_28-cross` image (GCC 7.5) for aarch64.

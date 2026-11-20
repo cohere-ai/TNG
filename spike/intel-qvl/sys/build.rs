@@ -209,8 +209,16 @@ fn main() {
     // The crates.io crate's bindgen configuration, plus the formatter: bindgen otherwise
     // formats with whatever rustfmt binary is installed, and leaves the output on one line
     // where there is none, so the committed bindings could not be compared across machines.
+    //
+    // Also limited to the library's own items. Unrestricted, bindgen emits every typedef and
+    // macro the C library headers declare, and glibc's differ by architecture (`wchar_t`,
+    // `__nlink_t`, ...), so one committed file could not serve both Linux targets. The
+    // intel-tee-quote-verification-rs crate uses nothing outside these prefixes.
     let bindings = builder
         .formatter(bindgen::Formatter::Prettyplease)
+        .allowlist_function("(sgx|tdx|tee)_.*")
+        .allowlist_type("_?(sgx|tdx|tee|quote3)_.*")
+        .allowlist_var("(SGX|TDX|TEE)_.*")
         .header("bindings.h")
         .newtype_enum("_quote3_error_t")
         .newtype_enum("_sgx_ql_qv_result_t")
