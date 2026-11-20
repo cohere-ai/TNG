@@ -78,13 +78,25 @@ impl ItaVerifier {
         }
     }
 
-    async fn verify_jwt(&self, token: &str) -> Result<Value> {
+    /// Fetches the JWKS keys, failing if that fails, so a verifier that can't check tokens fails
+    /// when it's built instead of on the first token.
+    pub async fn load_jwks(&self) -> Result<()> {
+        self.check_jwks_url()?;
+        self.refresh_jwks().await
+    }
+
+    fn check_jwks_url(&self) -> Result<()> {
         if !self.jwks_url.starts_with("https://") {
             return Err(Error::ItaError(format!(
                 "JWKS URL must use HTTPS: {}",
                 self.jwks_url
             )));
         }
+        Ok(())
+    }
+
+    async fn verify_jwt(&self, token: &str) -> Result<Value> {
+        self.check_jwks_url()?;
 
         let header = decode_header(token).map_err(Error::ItaVerifyTokenFailed)?;
         let kid = header
@@ -442,6 +454,17 @@ mod tests {
             matches!(&err, Error::ItaError(msg) if msg.contains("HTTPS")),
             "expected HTTPS error, got: {err:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn load_jwks_fails_without_keys() {
+        let http = ItaVerifier::new("http://bad.example.com", &[]).unwrap();
+        assert!(matches!(http.load_jwks().await, Err(Error::ItaError(_))));
+        let unreachable = ItaVerifier::new("https://127.0.0.1:1", &[]).unwrap();
+        assert!(matches!(
+            unreachable.load_jwks().await,
+            Err(Error::ItaHttpRequestFailed { .. })
+        ));
     }
 
     #[tokio::test]

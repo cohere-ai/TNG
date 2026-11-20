@@ -686,7 +686,7 @@ When `as_provider` is set to `"ita"`, the Verify configuration uses the followin
 - **`as_provider`** (string): Set to `"ita"`
 - **`as_addr`** (string, optional, default is `"https://api.trustauthority.intel.com"`): Intel Trust Authority API base URL
 - **`api_key`** (string, optional): Intel Trust Authority API key. Can be set directly in the config or via the **`ITA_API_KEY`** environment variable. If both are set, the config value takes precedence.
-- **`ita_jwks_addr`** (string, optional, default is `"https://portal.trustauthority.intel.com"`): Intel Trust Authority portal URL used to fetch JWKS signing keys for token verification
+- **`ita_jwks_addr`** (string, optional, default is `"https://portal.trustauthority.intel.com"`): Intel Trust Authority portal URL used to fetch JWKS signing keys for token verification. TNG fetches them at startup and fails to start if that fails, and again when a token is signed with a key it hasn't seen.
 - **`policy_ids`** (array [string], optional, default is empty): List of ITA policy IDs that must match for attestation to succeed
 - **`policy_id_source`** (object, optional): Fetch the policy ID from a published release instead of `policy_ids`; the two are mutually exclusive. See [ITA policy ID from a published release](#ita-policy-id-from-a-published-release).
 
@@ -929,7 +929,7 @@ When `as_provider` is set to `"ita"`, the Verify configuration uses the followin
 
 - **`model`** (string): Set to `"passport"`
 - **`as_provider`** (string): Set to `"ita"`
-- **`ita_jwks_addr`** (string, optional, default is `"https://portal.trustauthority.intel.com"`): Intel Trust Authority portal URL used to fetch JWKS signing keys for token verification
+- **`ita_jwks_addr`** (string, optional, default is `"https://portal.trustauthority.intel.com"`): Intel Trust Authority portal URL used to fetch JWKS signing keys for token verification. TNG fetches them at startup and fails to start if that fails, and again when a token is signed with a key it hasn't seen.
 - **`policy_ids`** (array [string], optional, default is empty): List of ITA policy IDs. The verifier checks that all specified policy IDs appear in the token's `policy_ids_matched` claim.
 - **`policy_hashes`** (array [string], optional, default is empty): List of ITA policy hashes, checked against the `hash` of the token's `policy_ids_matched` entries the same way. With both `policy_ids` and `policy_hashes`, only entries whose ID and hash are both listed count.
 - **`rp_policy_source`** (object, optional): A relying-party policy, fetched from a published release, that must allow the token's claims. See [ITA RP policy from a published release](#ita-rp-policy-from-a-published-release).
