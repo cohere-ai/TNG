@@ -1,0 +1,54 @@
+--- a/nv-attestation-sdk-cpp/CMakeLists.txt
++++ b/nv-attestation-sdk-cpp/CMakeLists.txt
+@@ -334,14 +334,26 @@
+   endif()
+   set(_EP_CFLAGS "${CMAKE_C_FLAGS} -fPIC")
+ 
++  # Cross-compiling: the ExternalProjects' own configure scripts never see CMake's target,
++  # so name it for them. Both empty (the default) leaves native builds unchanged.
++  set(NVAT_OPENSSL_TARGET "" CACHE STRING "OpenSSL Configure target, e.g. linux-aarch64")
++  set(NVAT_EP_HOST "" CACHE STRING "autoconf --host triple for the ExternalProjects")
++  set(_EP_CROSS_TOOLS)
++  set(_EP_CROSS_ARGS)
++  if(NVAT_EP_HOST)
++    set(_EP_CROSS_TOOLS "AR=${CMAKE_AR}" "RANLIB=${CMAKE_RANLIB}")
++    set(_EP_CROSS_ARGS "--host=${NVAT_EP_HOST}" ${_EP_CROSS_TOOLS})
++  endif()
++
+   # Build OpenSSL statically — RHEL8 ships 1.1.1 but the code needs 3.x APIs
+   set(OPENSSL_INSTALL_DIR "${CMAKE_BINARY_DIR}/openssl-install")
+ 
+   ExternalProject_Add(openssl_external
+     URL https://github.com/openssl/openssl/releases/download/openssl-3.6.4/openssl-3.6.4.tar.gz
+     URL_HASH SHA256=9bffaa1ad1e07b354c21bd3324ec02fa15579f45a7d0494b3e74bc449b7333ef
+-    CONFIGURE_COMMAND <SOURCE_DIR>/Configure
++    CONFIGURE_COMMAND <SOURCE_DIR>/Configure ${NVAT_OPENSSL_TARGET}
+       "CC=${_EP_CC}"
++      ${_EP_CROSS_TOOLS}
+       "CFLAGS=${_EP_CFLAGS}"
+       --prefix=${OPENSSL_INSTALL_DIR}
+       --openssldir=${OPENSSL_INSTALL_DIR}
+@@ -390,6 +402,7 @@
+       --with-zlib
+       "CC=${_EP_CC}"
+       "CFLAGS=${_EP_CFLAGS}"
++      ${_EP_CROSS_ARGS}
+     BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
+     INSTALL_COMMAND make install
+     BUILD_IN_SOURCE 1
+@@ -428,6 +441,7 @@
+       --disable-apps
+       "CC=${_EP_CC}"
+       "CFLAGS=${_EP_CFLAGS}"
++      ${_EP_CROSS_ARGS}
+       "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig:${LIBXML2_INSTALL_DIR}/lib/pkgconfig"
+     BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
+     INSTALL_COMMAND make install
+@@ -458,6 +472,7 @@
+       --enable-static
+       "CC=${_EP_CC}"
+       "CFLAGS=${_EP_CFLAGS}"
++      ${_EP_CROSS_ARGS}
+       "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
+     BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
+     INSTALL_COMMAND make install

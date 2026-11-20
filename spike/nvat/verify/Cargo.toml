@@ -1,0 +1,14 @@
+[package]
+name = "nvat-spike-verify"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# NVIDIA's crate at the tag Trustee pins, from the checkout fetch-sources.sh makes. Its -sys
+# build script links ../nv-attestation-sdk-cpp/build (what build-libnvat.sh produces), or
+# the installed library with NVAT_USE_SYSTEM_LIB=1.
+nv-attestation-sdk = {path = "../vendor/attestation-sdk/nv-attestation-sdk-rust/nv-attestation-sdk"}
+base64 = "0.22"
+hex = "0.4"
+serde_json = "1"

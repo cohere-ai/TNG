@@ -1,0 +1,6 @@
+# Spike: build NVIDIA's libnvat for every cohere-tng wheel target.
+# Its own workspace, so nothing here touches the TNG build.
+[workspace]
+members = ["verify", "py"]
+exclude = ["vendor"]
+resolver = "2"

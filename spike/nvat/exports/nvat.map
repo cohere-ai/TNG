@@ -1,0 +1,5 @@
+/* Export only libnvat's C API; everything statically linked in stays local. */
+{
+  global: nvat_*;
+  local: *;
+};

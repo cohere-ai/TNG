@@ -1,0 +1,206 @@
+name: Spike NVIDIA libnvat portable build
+
+# Throwaway: can NVIDIA's libnvat (attestation-sdk 2026.10.02, what Trustee's NvRemote and
+# NvLocal verifiers link) be built for every cohere-tng wheel target, and does it verify
+# Trustee's Hopper test evidence the way NVIDIA's own package does? See spike/nvat.
+# Push-triggered so it runs from the branch without being on the default one.
+on:
+  push:
+    branches: ['spike/**']
+    paths:
+      - 'spike/nvat/**'
+      - '.github/workflows/spike-nvat.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: spike/nvat
+
+jobs:
+  # NVIDIA's packaged library, the way upstream Trustee's Dockerfiles install it (x86-64), and
+  # its sbsa build for aarch64. What every source build's results are compared with.
+  baseline-nvidia-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: x86_64, os: ubuntu-24.04, repo: x86_64}
+          - {name: aarch64, os: ubuntu-24.04-arm, repo: sbsa}
+    name: baseline-nvidia-package (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install NVIDIA's libnvat-dev 2.0.0
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/cuda-keyring.deb" \
+            https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${{ matrix.repo }}/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i "$RUNNER_TEMP/cuda-keyring.deb"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends 'libnvat-dev=2.0.0*'
+          dpkg -l libnvat | tail -1
+      - run: ./fetch-sources.sh
+      - run: NVAT_USE_SYSTEM_LIB=1 cargo build --release -p nvat-spike-verify
+      - name: Inspect the package's library
+        run: |
+          lib=$(readlink -f /usr/lib/*-linux-gnu/libnvat.so)
+          mkdir -p out
+          echo "file=$(basename "$lib")" > out/size
+          echo "size=$(wc -c < "$lib")" >> out/size
+          strip -o "$RUNNER_TEMP/s.so" "$lib" && echo "stripped_size=$(wc -c < "$RUNNER_TEMP/s.so")" >> out/size
+          cat out/size
+          readelf -d "$lib" | grep -E 'NEEDED|SONAME'
+          nm -D --defined-only "$lib" | awk '{print $3}' | sort > out/exports-default.txt
+          echo "exports: $(wc -l < out/exports-default.txt) total, $(grep -c '^nvat_' out/exports-default.txt) nvat_*"
+          objdump -T "$lib" | grep -oE '(GLIBC|GLIBCXX|CXXABI)_[0-9.]+' | sort -Vu | tail -8
+      - run: ldd target/release/nvat-spike-verify | grep nvat
+      - run: ./check.sh target/release/nvat-spike-verify
+      - if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: out-baseline-${{ matrix.name }}
+          path: spike/nvat/out
+
+  # Native macOS runners at the deployment targets maturin gives the published wheels
+  # (macosx_11_0_arm64, macosx_10_12_x86_64).
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: macos-arm64, os: macos-15, macos_target: '11.0'}
+          - {name: macos-x86_64, os: macos-15-intel, macos_target: '10.12'}
+    name: source-build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_target }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: brew install autoconf automake libtool
+      - run: ./fetch-sources.sh
+      - run: ./build-libnvat.sh
+      - run: cargo build --release -p nvat-spike-verify
+      - run: otool -L target/release/nvat-spike-verify
+      - run: DYLD_LIBRARY_PATH=$PWD/vendor/attestation-sdk/nv-attestation-sdk-cpp/build ./check.sh target/release/nvat-spike-verify
+      # The wheel the way cohere-tng's would be shipped: maturin, then delocate to copy
+      # libnvat into it. Then installed and run with nothing else on the library path.
+      - name: Build, delocate and run a wheel
+        run: |
+          python3 -m venv "$RUNNER_TEMP/build-venv"
+          "$RUNNER_TEMP/build-venv/bin/pip" install -q 'maturin>=1.9,<2' delocate
+          "$RUNNER_TEMP/build-venv/bin/maturin" build --release -m py/Cargo.toml -o dist
+          DYLD_LIBRARY_PATH=$PWD/vendor/attestation-sdk/nv-attestation-sdk-cpp/build \
+            "$RUNNER_TEMP/build-venv/bin/delocate-wheel" -v dist/*.whl
+          "$RUNNER_TEMP/build-venv/bin/delocate-listdeps" --all dist/*.whl
+          python3 -m zipfile -l dist/*.whl
+          python3 -m venv "$RUNNER_TEMP/run-venv"
+          "$RUNNER_TEMP/run-venv/bin/pip" install -q dist/*.whl
+          "$RUNNER_TEMP/run-venv/bin/python" py/check_wheel.py
+      - if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: out-${{ matrix.name }}
+          path: spike/nvat/out
+
+  # The library built in a wheel build image; the verifier built and run on the runner
+  # itself (newer glibc, so this also shows the manylinux library runs elsewhere).
+  manylinux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # maturin-action's image for the x86-64 wheel (manylinux: auto).
+          - {name: manylinux2014-x86_64, os: ubuntu-24.04, image: 'quay.io/pypa/manylinux2014_x86_64:latest', manylinux: '2014'}
+          # The aarch64 wheel built natively instead of cross-compiled.
+          - {name: manylinux_2_28-aarch64-native, os: ubuntu-24.04-arm, image: 'quay.io/pypa/manylinux_2_28_aarch64:latest', manylinux: '2_28'}
+    name: source-build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./fetch-sources.sh
+      - run: docker run --rm -v "$GITHUB_WORKSPACE:/io" ${{ matrix.image }} bash /io/spike/nvat/ci/container-build.sh
+      - run: sudo chown -R "$(id -u):$(id -g)" .
+      - run: cargo build --release -p nvat-spike-verify
+      - run: LD_LIBRARY_PATH=$PWD/vendor/attestation-sdk/nv-attestation-sdk-cpp/build ./check.sh target/release/nvat-spike-verify
+      # The wheel the way cohere-tng's is built (maturin in the same image, which bundles
+      # libnvat itself), then installed and run on the runner with nothing on the library path.
+      - run: docker run --rm -v "$GITHUB_WORKSPACE:/io" ${{ matrix.image }} bash /io/spike/nvat/ci/container-wheel.sh ${{ matrix.manylinux }}
+      - run: sudo chown -R "$(id -u):$(id -g)" .
+      - name: Install and run the wheel
+        run: |
+          python3 -m venv "$RUNNER_TEMP/run-venv"
+          "$RUNNER_TEMP/run-venv/bin/pip" install -q dist/*.whl
+          "$RUNNER_TEMP/run-venv/bin/python" py/check_wheel.py
+      - if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: out-${{ matrix.name }}
+          path: spike/nvat/out
+
+  # maturin-action's image for the aarch64 wheel, cross-compiling the way it does today.
+  manylinux_2_28-cross-aarch64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./fetch-sources.sh
+      - run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/io" ghcr.io/rust-cross/manylinux_2_28-cross:aarch64 \
+            bash -c 'env | grep -E "^(TARGET_|CARGO_)" | sort; apt-get update -qq && apt-get install -y -qq autoconf automake libtool >/dev/null; bash /io/spike/nvat/ci/container-build.sh aarch64-unknown-linux-gnu'
+      - name: Build the wheel in the same image
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/io" ghcr.io/rust-cross/manylinux_2_28-cross:aarch64 \
+            bash -c 'apt-get update -qq; bash /io/spike/nvat/ci/container-wheel.sh 2_28 aarch64-unknown-linux-gnu'
+      - run: sudo chown -R "$(id -u):$(id -g)" .
+      - run: tar -C vendor/attestation-sdk/nv-attestation-sdk-cpp/build -cf libnvat.tar include/nvat.h $(cd vendor/attestation-sdk/nv-attestation-sdk-cpp/build && ls libnvat.so*)
+      - if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cross-aarch64-libnvat
+          path: |
+            spike/nvat/libnvat.tar
+            spike/nvat/dist
+            spike/nvat/out
+
+  # The cross-compiled library cannot run where it was built.
+  manylinux_2_28-cross-aarch64-run:
+    needs: manylinux_2_28-cross-aarch64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - run: ./fetch-sources.sh
+      - uses: actions/download-artifact@v7
+        with:
+          name: cross-aarch64-libnvat
+          path: spike/nvat
+      - run: |
+          b=vendor/attestation-sdk/nv-attestation-sdk-cpp/build
+          mkdir -p $b && tar -C $b -xf libnvat.tar && ls -l $b
+      - run: cargo build --release -p nvat-spike-verify
+      - run: LD_LIBRARY_PATH=$PWD/vendor/attestation-sdk/nv-attestation-sdk-cpp/build ./check.sh target/release/nvat-spike-verify
+      - name: Install and run the cross-built wheel
+        run: |
+          python3 -m venv "$RUNNER_TEMP/run-venv"
+          "$RUNNER_TEMP/run-venv/bin/pip" install -q dist/*.whl
+          "$RUNNER_TEMP/run-venv/bin/python" py/check_wheel.py
+      - if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: out-manylinux_2_28-cross-aarch64
+          path: spike/nvat/out
+
+  # Every source build's verdicts and claims against NVIDIA's package's, plus the numbers.
+  compare:
+    if: always()
+    needs: [baseline-nvidia-package, macos, manylinux, manylinux_2_28-cross-aarch64-run]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: out-*
+          path: spike/nvat/results
+      - run: ./ci/compare.sh results >> "$GITHUB_STEP_SUMMARY"
+      - run: cat "$GITHUB_STEP_SUMMARY"
