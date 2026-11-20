@@ -13,6 +13,12 @@ use crate::tee::{GenericVerifier, ReportData};
 use super::token::ItaToken;
 
 const ITA_JWKS_PATH: &str = "/certs";
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+const JWKS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Known `iss` (issuer) claim values that ITA tokens may contain.
 const ITA_TOKEN_ISSUERS: &[&str] = &[
@@ -156,10 +162,17 @@ impl ItaVerifier {
         let jwks_url = self.jwks_url.clone();
 
         let fut = async move {
-            let client = Client::new();
-            let resp = client
+            let request = Client::new()
                 .get(&jwks_url)
-                .header("Accept", "application/json")
+                .header("Accept", "application/json");
+            // The wasm client has no request timeout.
+            #[cfg(not(all(
+                target_arch = "wasm32",
+                target_vendor = "unknown",
+                target_os = "unknown"
+            )))]
+            let request = request.timeout(JWKS_TIMEOUT);
+            let resp = request
                 .send()
                 .await
                 .map_err(|e| Error::ItaHttpRequestFailed {
@@ -456,7 +469,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    /// The clock is paused, so the request timeout fires without waiting for it.
+    #[tokio::test(start_paused = true)]
     async fn load_jwks_fails_without_keys() {
         let http = ItaVerifier::new("http://bad.example.com", &[]).unwrap();
         assert!(matches!(http.load_jwks().await, Err(Error::ItaError(_))));
@@ -464,6 +478,15 @@ mod tests {
         assert!(matches!(
             unreachable.load_jwks().await,
             Err(Error::ItaHttpRequestFailed { .. })
+        ));
+
+        // Accepts connections but never answers.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stalled =
+            ItaVerifier::new(&format!("https://{}", listener.local_addr().unwrap()), &[]).unwrap();
+        assert!(matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(60), stalled.load_jwks()).await,
+            Ok(Err(Error::ItaHttpRequestFailed { .. }))
         ));
     }
 
