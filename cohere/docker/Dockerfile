@@ -10,15 +10,15 @@
 #
 #   --build-arg BUILTIN_AS_TDX=0 --build-arg BUILTIN_AS_AZSNP=0 --build-arg BUILTIN_AS_NVIDIA=0
 #
-# builds a plain TNG with none of it: no Intel DCAP, no TPM libraries, and no verifier code. The
+# builds a plain TNG with none of it: no verifier code and none of their build tools. The
 # feature list handed to cargo is assembled below from these, so the packages and the features
 # cannot drift apart, and a name this file does not know about cannot be passed in. The three RUNs
 # that read them each repeat the same parse, there being no way to normalise a build argument once
 # and share it across layers.
 #
 # TNG has verifier features for raw SEV-SNP, SGX and Azure TDX as well. They are deliberately not
-# wired up here; adding one means checking its packages too, since Azure TDX needs the TPM
-# libraries.
+# wired up here; adding one means checking its system dependencies too, since Azure TDX reaches
+# the TPM libraries.
 #
 # Azure SEV-SNP subsumes the raw SEV-SNP verifier upstream, so a peer reporting through
 # /dev/sev-guest rather than a paravisor's vTPM is covered without naming that feature.
@@ -53,13 +53,10 @@ ARG BUILTIN_AS_NVIDIA
 # vendored OpenSSL both arrive through the attestation service's dependency graph, and which crate
 # pulls them shifts with upstream. Nothing links libssl at runtime.
 #
-# libtss2-dev is for the Azure SEV-SNP verifier. Verifying an Azure CVM is entirely offline, since
-# the attester ships the VCEK inside the evidence, but the verifier still reaches tss-esapi through
-# az-cvm-vtpm and so needs the TPM libraries at build time. tss-esapi-sys locates them with
-# pkg-config, which is not part of build-essential.
-#
-# The TDX verifier needs nothing extra: deps/intel-tee-quote-verification-sys fetches Intel's quote
-# verification library source with git and compiles it into the binary, on any architecture.
+# None of the verifiers links a system library, at build or run time: their OpenSSL is vendored and
+# linked statically, and TDX compiles Intel's quote verification library from source into the
+# binary (deps/intel-tee-quote-verification-sys). Azure SEV-SNP is also entirely offline, since the
+# attester ships the VCEK inside the evidence.
 RUN set -eu; \
     bool() { case "$(echo "${2-}" | tr 'A-Z' 'a-z')" in \
         1|true|yes|on) echo 1 ;; \
@@ -72,7 +69,6 @@ RUN set -eu; \
     [ -n "$tdx$azsnp$nvidia" ] || exit 0; \
     apt-get update; \
     apt-get install -y --no-install-recommends clang perl; \
-    [ -z "$azsnp" ] || apt-get install -y --no-install-recommends libtss2-dev pkg-config; \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -111,27 +107,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     python3-minimal \
     && rm -rf /var/lib/apt/lists/*
-
-ARG BUILTIN_AS_AZSNP
-
-# Runtime half of the build dependencies above: the tss2 libraries for Azure SEV-SNP. TDX needs
-# nothing here, its quote verification library being linked in statically, and neither does NVIDIA,
-# being pure Rust that checks the GPU's SPDM report against the certificate chain in the evidence.
-RUN set -eu; \
-    bool() { case "$(echo "${2-}" | tr 'A-Z' 'a-z')" in \
-        1|true|yes|on) echo 1 ;; \
-        ""|0|false|no|off) ;; \
-        *) echo "$1: expected a boolean, got '$2'" >&2; exit 1 ;; \
-    esac; }; \
-    azsnp=$(bool BUILTIN_AS_AZSNP "$BUILTIN_AS_AZSNP"); \
-    if [ -n "$azsnp" ]; then \
-        apt-get update; \
-        apt-get install -y --no-install-recommends \
-            libtss2-esys-3.0.2-0t64 \
-            libtss2-mu-4.0.1-0t64 \
-            libtss2-tctildr0t64; \
-    fi; \
-    rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /out/bin/tng /usr/local/bin/tng
 # Notices for the third-party code the TDX verifier compiles into tng. Copied whether or not TDX
