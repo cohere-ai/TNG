@@ -1,0 +1,270 @@
+//! Builds Intel's `libsgx_dcap_quoteverify` from source and links it statically, instead of
+//! linking the system library Intel packages for x86-64 Linux only.
+//!
+//! The sources are fetched from Intel's repositories at pinned commits into `OUT_DIR` and
+//! compiled unmodified. The file list mirrors `QuoteVerification/dcap_quoteverify/linux/Makefile`
+//! at `DCAP_1.27`, minus the QAL appraisal engine (and the WebAssembly runtime it embeds),
+//! which only backs `tee_appraise_verification_token` and friends. The generated QvE enclave
+//! bridge is replaced by `stubs/`, since off SGX hardware the enclave is never entered.
+//!
+//! The bindgen configuration is the crates.io crate's, unchanged.
+
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// intel/confidential-computing.tee.dcap: the commit Cargo.lock resolves
+/// `intel-tee-quote-verification-rs` 0.4.0 to, which Trustee's TDX verifier pins by tag. Its
+/// `sgx-dcap-quoteverify-sys` directory is this crate, as published to crates.io as 0.3.0.
+const DCAP: Source = Source {
+    url: "https://github.com/intel/confidential-computing.tee.dcap.git",
+    rev: "ecdb68e9854b20d5f6a27cd874f7e89e977e9ca1", // DCAP_1.27
+    // Only the submodules this build compiles from; the rest (WAMR, PCCS, gtest, PoeTools)
+    // belong to parts it leaves out. Their commits are pinned by DCAP itself.
+    submodules: &["QuoteVerification/QVL", "external/jwt-cpp"],
+    sparse: None,
+};
+
+/// intel/confidential-computing.sgx.sdk at the commit intel/linux-sgx tag sgx_2.30, the SGX
+/// release DCAP 1.27 ships with, pins. DCAP's build takes the SGX headers (`sgx_error.h`,
+/// `sgx_quote_3.h`, ...) from the SDK; only those are fetched.
+const SGX_SDK: Source = Source {
+    url: "https://github.com/intel/confidential-computing.sgx.sdk.git",
+    rev: "73ae8ba0140f9295ef62245897c578c76c289341", // SGX SDK 2.30, via linux-sgx sgx_2.30
+    submodules: &[],
+    sparse: Some("/common/inc/"),
+};
+
+struct Source {
+    url: &'static str,
+    rev: &'static str,
+    submodules: &'static [&'static str],
+    sparse: Option<&'static str>,
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .status()
+        .unwrap_or_else(|e| panic!("could not run git, which this build needs: {e}"));
+    assert!(
+        status.success(),
+        "git {} failed in {}",
+        args.join(" "),
+        dir.display()
+    );
+}
+
+/// Shallow-fetches `source` at its pinned commit into `OUT_DIR`, once.
+fn fetch(source: &Source, name: &str) -> PathBuf {
+    let dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join(format!("{name}-{}", source.rev));
+    let done = dir.join(".fetched");
+    if done.exists() {
+        return dir;
+    }
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+    std::fs::create_dir_all(&dir).unwrap();
+
+    git(&dir, &["init", "-q"]);
+    // A named remote: DCAP's submodule URLs are relative to it.
+    git(&dir, &["remote", "add", "origin", source.url]);
+    if let Some(path) = source.sparse {
+        git(&dir, &["sparse-checkout", "set", "--no-cone", path]);
+    }
+    git(
+        &dir,
+        &[
+            "fetch",
+            "-q",
+            "--depth",
+            "1",
+            "--filter=blob:none",
+            "origin",
+            source.rev,
+        ],
+    );
+    git(
+        &dir,
+        &[
+            "-c",
+            "advice.detachedHead=false",
+            "checkout",
+            "-q",
+            "FETCH_HEAD",
+        ],
+    );
+    if !source.submodules.is_empty() {
+        let mut args = vec!["submodule", "update", "-q", "--init", "--depth", "1", "--"];
+        args.extend(source.submodules);
+        git(&dir, &args);
+    }
+    std::fs::write(&done, b"").unwrap();
+    dir
+}
+
+fn sorted_glob(dir: &Path, depth: usize, ext: &str) -> Vec<PathBuf> {
+    fn walk(dir: &Path, depth: usize, ext: &str, out: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if depth > 0 {
+                    walk(&path, depth - 1, ext, out);
+                }
+            } else if path.extension().is_some_and(|e| e == ext) {
+                out.push(path);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, depth, ext, &mut out);
+    out.sort();
+    out
+}
+
+fn base_build(cpp: bool) -> cc::Build {
+    let mut build = cc::Build::new();
+    build
+        .cpp(cpp)
+        .warnings(false)
+        .define("NDEBUG", None)
+        .flag("-USGX_TRUSTED")
+        .flag_if_supported("-Wno-attributes")
+        .flag_if_supported("-ffunction-sections")
+        .flag_if_supported("-fdata-sections");
+    if cpp {
+        build.std("c++17");
+    }
+    build
+}
+
+fn main() {
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=bindings.h");
+    println!("cargo:rerun-if-changed=stubs");
+
+    let dcap = fetch(&DCAP, "dcap");
+    let sgx_inc = fetch(&SGX_SDK, "sgx-sdk").join("common/inc");
+    let openssl_inc = PathBuf::from(
+        env::var("DEP_OPENSSL_INCLUDE").expect("openssl-sys did not report its include dir"),
+    );
+    let stubs = manifest.join("stubs");
+
+    let qv = dcap.join("QuoteVerification");
+    let qg = dcap.join("QuoteGeneration");
+    let qvl = qv.join("QVL/Src");
+    let lib = qvl.join("AttestationLibrary");
+    let par = qvl.join("AttestationParsers");
+    let com = qvl.join("AttestationCommons");
+    let qve = dcap.join("ae/QvE");
+
+    // Include paths, per group, as in the Makefile.
+    let lib_inc = vec![
+        com.join("include"),
+        com.join("include/Utils"),
+        lib.join("include"),
+        lib.join("src"),
+        par.join("include"),
+        qvl.join("ThirdParty/rapidjson/include"),
+        dcap.join("external/jwt-cpp/include"),
+        qve.join("Include"),
+        openssl_inc.clone(),
+    ];
+    let par_inc = vec![
+        com.join("include"),
+        com.join("include/Utils"),
+        qvl.clone(),
+        par.join("include"),
+        par.join("src"),
+        lib.join("include"),
+        qvl.join("ThirdParty/rapidjson/include"),
+        openssl_inc,
+    ];
+    let mut ver_inc = vec![
+        qve.join("Include"),
+        qv.join("dcap_quoteverify/inc"),
+        qg.join("quote_wrapper/common/inc"),
+        sgx_inc.clone(),
+        qg.join("common/inc/internal"),
+        qg.join("common/inc/internal/linux"),
+    ];
+    ver_inc.extend(lib_inc.iter().cloned());
+    ver_inc.extend([
+        qg.join("qpl/inc"),
+        qv.join("appraisal/common"),
+        qv.join("appraisal/qal"),
+        stubs.clone(),
+    ]);
+
+    let mut lib_srcs = sorted_glob(&lib.join("src"), 2, "cpp");
+    lib_srcs.extend(sorted_glob(&com.join("src/Utils"), 0, "cpp"));
+    let par_srcs = sorted_glob(&par.join("src"), 1, "cpp");
+    let mut ver_srcs = sorted_glob(&qv.join("dcap_quoteverify"), 0, "cpp");
+    ver_srcs.extend(sorted_glob(&qv.join("dcap_quoteverify/linux"), 0, "cpp"));
+    ver_srcs.extend([
+        qve.join("qve/qve.cpp"),
+        qve.join("qve/qve_logic.cpp"),
+        qg.join("qpl/sgx_base64.cpp"),
+        qv.join("appraisal/common/ec_key.cpp"),
+        stubs.join("qae_stubs.cpp"),
+    ]);
+    let c_srcs = vec![
+        qg.join("common/src/se_trace.c"),
+        qg.join("common/src/se_thread.c"),
+        stubs.join("qve_stubs.c"),
+    ];
+
+    let mut objects = Vec::new();
+    for (srcs, incs, cpp) in [
+        (&lib_srcs, &lib_inc, true),
+        (&par_srcs, &par_inc, true),
+        (&ver_srcs, &ver_inc, true),
+        (&c_srcs, &ver_inc, false),
+    ] {
+        let mut build = base_build(cpp);
+        if !cpp && env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "macos") {
+            // se_thread.c's se_get_threadid() calls syscall(__NR_gettid), Linux's number.
+            // Nothing calls that function, but it has to compile; Darwin's equivalent comes
+            // from the <sys/syscall.h> it includes.
+            build.define("__NR_gettid", "SYS_thread_selfid");
+        }
+        objects.extend(build.includes(incs).files(srcs).compile_intermediates());
+    }
+    // One archive, so the references between the QVL's parts need no link-order games.
+    // `cpp(true)` makes cc also link the target's C++ runtime (libstdc++ or libc++).
+    base_build(true)
+        .objects(objects)
+        .compile("sgx_dcap_quoteverify");
+
+    let bindings = bindgen::Builder::default()
+        .clang_arg(format!("-I{}", qv.join("dcap_quoteverify/inc").display()))
+        .clang_arg(format!(
+            "-I{}",
+            qg.join("quote_wrapper/common/inc").display()
+        ))
+        .clang_arg(format!("-I{}", qve.join("Include").display()))
+        .clang_arg(format!("-I{}", sgx_inc.display()))
+        .header("bindings.h")
+        // From here on, as in the crates.io crate.
+        .newtype_enum("_quote3_error_t")
+        .newtype_enum("_sgx_ql_qv_result_t")
+        .rustified_enum("_sgx_ql_request_policy")
+        .rustified_enum("sgx_qv_path_type_t")
+        .no_debug("_quote_t")
+        .no_debug("_sgx_ql_auth_data_t")
+        .no_debug("_sgx_ql_certification_data_t")
+        .no_debug("_sgx_ql_ecdsa_sig_data_t")
+        .no_debug("_sgx_quote3_t")
+        .no_debug("_sgx_ql_att_key_id_param_t")
+        .derive_default(true)
+        .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+        .generate()
+        .expect("Unable to generate bindings");
+    bindings
+        .write_to_file(PathBuf::from(env::var("OUT_DIR").unwrap()).join("bindings.rs"))
+        .expect("Couldn't write bindings!");
+}

@@ -1,0 +1,132 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Shariq Khalil Ahmed <shariq.ahmed@cohere.com>
+Date: Fri, 20 Nov 2026 21:48:25 +0000
+Subject: [PATCH] Stub out the SGX enclave calls
+
+Intel's Makefile generates the untrusted bridge into the Quote
+Verification Enclave (qve_u.c/.h) from ae/QvE/qve/qve.edl with the SGX
+SDK's sgx_edger8r, a tool shipped only as a Linux x86-64 binary. The
+library enters that enclave only on SGX hardware, and only when the
+caller asks for an enclave-signed result (a non-NULL p_qve_report_info),
+which Trustee never does.
+
+Declare the same five calls and have each fail the way the generated
+bridge does when the enclave cannot be entered: return an SGX error and
+leave *retval alone. This also drops the bridge's callback table, which
+would otherwise need u_sgxssl_ftime from Intel's SGX-SSL library.
+
+Also stub tee_qae_get_target_info(), which tee_verify_quote_qvt() calls
+to load the Quote Appraisal Enclave. It lives in the QAL appraisal engine,
+which the source build leaves out, so without the stub the library only
+links if the linker drops the unused tee_verify_quote_qvt(). The stub fails
+the way loading the enclave does without SGX.
+
+Nothing uses the stubs until the library is built from source.
+---
+ stubs/linux/qve_u.h | 37 +++++++++++++++++++++++++++++++++++++
+ stubs/qae_stubs.cpp | 12 ++++++++++++
+ stubs/qve_stubs.c   | 32 ++++++++++++++++++++++++++++++++
+ 3 files changed, 81 insertions(+)
+ create mode 100644 stubs/linux/qve_u.h
+ create mode 100644 stubs/qae_stubs.cpp
+ create mode 100644 stubs/qve_stubs.c
+
+diff --git a/stubs/linux/qve_u.h b/stubs/linux/qve_u.h
+new file mode 100644
+index 0000000..3c4ece0
+--- /dev/null
++++ b/stubs/linux/qve_u.h
+@@ -0,0 +1,37 @@
++/*
++ * Stands in for the qve_u.h Intel's Makefile generates from ae/QvE/qve/qve.edl with the SGX
++ * SDK's sgx_edger8r: the calls into the Quote Verification Enclave (QvE). The library only
++ * enters the QvE when a caller asks for an enclave-signed result (a non-NULL
++ * p_qve_report_info) on SGX hardware; Trustee never does, and the client machines this build
++ * is for have no SGX. Each call fails as the generated bridge does when the enclave cannot be
++ * entered: it returns an SGX error and leaves *retval alone, so callers report the error
++ * value they initialised it with.
++ *
++ * The declarations are those of the generated header for DCAP_1.27, so they carry Intel's
++ * notice: Copyright (C) 2011-2021 Intel Corporation. All rights reserved. BSD-3-Clause, see
++ * the DCAP repository's License.txt (licenses/ in this crate).
++ */
++#ifndef QVE_U_H__
++#define QVE_U_H__
++
++#include <stdint.h>
++#include <time.h>
++#include "sgx_edger8r.h"
++#include "sgx_qve_header.h"
++#include "sgx_qve_def.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++sgx_status_t get_fmspc_ca_from_quote(sgx_enclave_id_t eid, quote3_error_t* retval, const uint8_t* quote, uint32_t quote_size, unsigned char* fmsp_from_quote, uint32_t fmsp_from_quote_size, unsigned char* ca_from_quote, uint32_t ca_from_quote_size);
++sgx_status_t sgx_qve_get_quote_supplemental_data_size(sgx_enclave_id_t eid, quote3_error_t* retval, uint32_t* p_data_size);
++sgx_status_t sgx_qve_get_quote_supplemental_data_version(sgx_enclave_id_t eid, quote3_error_t* retval, uint32_t* p_version);
++sgx_status_t sgx_qve_verify_quote(sgx_enclave_id_t eid, quote3_error_t* retval, const uint8_t* p_quote, uint32_t quote_size, const struct _sgx_ql_qve_collateral_t* p_quote_collateral, time_t expiration_check_date, uint32_t* p_collateral_expiration_status, sgx_ql_qv_result_t* p_quote_verification_result, sgx_ql_qe_report_info_t* p_qve_report_info, uint32_t supplemental_data_size, uint8_t* p_supplemental_data);
++sgx_status_t tee_qve_verify_quote_qvt(sgx_enclave_id_t eid, quote3_error_t* retval, const uint8_t* p_quote, uint32_t quote_size, time_t current_time, const struct _sgx_ql_qve_collateral_t* p_quote_collateral, sgx_ql_qe_report_info_t* p_qve_report_info, const uint8_t* p_user_data, uint32_t user_data_size, uint32_t* p_verification_result_token_buffer_size, uint8_t** p_verification_result_token);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/stubs/qae_stubs.cpp b/stubs/qae_stubs.cpp
+new file mode 100644
+index 0000000..580ef4f
+--- /dev/null
++++ b/stubs/qae_stubs.cpp
+@@ -0,0 +1,12 @@
++// Stands in for tee_qae_get_target_info() from QuoteVerification/appraisal/qal/appraisal.cpp,
++// part of the QAL appraisal engine this crate leaves out. The real function loads the Quote
++// Appraisal Enclave (QAE) for tee_verify_quote_qvt(); off SGX hardware that load fails, and this
++// fails the same way. Defined so the library is complete without relying on the linker to drop
++// tee_verify_quote_qvt(), which nothing here calls.
++#include "qal_common.h"
++
++quote3_error_t tee_qae_get_target_info(sgx_target_info_t *p_target_info)
++{
++    (void)p_target_info;
++    return SGX_QL_ERROR_UNEXPECTED;
++}
+diff --git a/stubs/qve_stubs.c b/stubs/qve_stubs.c
+new file mode 100644
+index 0000000..68006f1
+--- /dev/null
++++ b/stubs/qve_stubs.c
+@@ -0,0 +1,32 @@
++/* See linux/qve_u.h. */
++#include "linux/qve_u.h"
++
++sgx_status_t get_fmspc_ca_from_quote(sgx_enclave_id_t eid, quote3_error_t* retval, const uint8_t* quote, uint32_t quote_size, unsigned char* fmsp_from_quote, uint32_t fmsp_from_quote_size, unsigned char* ca_from_quote, uint32_t ca_from_quote_size)
++{
++    (void)eid; (void)retval; (void)quote; (void)quote_size; (void)fmsp_from_quote; (void)fmsp_from_quote_size; (void)ca_from_quote; (void)ca_from_quote_size;
++    return SGX_ERROR_NO_DEVICE;
++}
++
++sgx_status_t sgx_qve_get_quote_supplemental_data_size(sgx_enclave_id_t eid, quote3_error_t* retval, uint32_t* p_data_size)
++{
++    (void)eid; (void)retval; (void)p_data_size;
++    return SGX_ERROR_NO_DEVICE;
++}
++
++sgx_status_t sgx_qve_get_quote_supplemental_data_version(sgx_enclave_id_t eid, quote3_error_t* retval, uint32_t* p_version)
++{
++    (void)eid; (void)retval; (void)p_version;
++    return SGX_ERROR_NO_DEVICE;
++}
++
++sgx_status_t sgx_qve_verify_quote(sgx_enclave_id_t eid, quote3_error_t* retval, const uint8_t* p_quote, uint32_t quote_size, const struct _sgx_ql_qve_collateral_t* p_quote_collateral, time_t expiration_check_date, uint32_t* p_collateral_expiration_status, sgx_ql_qv_result_t* p_quote_verification_result, sgx_ql_qe_report_info_t* p_qve_report_info, uint32_t supplemental_data_size, uint8_t* p_supplemental_data)
++{
++    (void)eid; (void)retval; (void)p_quote; (void)quote_size; (void)p_quote_collateral; (void)expiration_check_date; (void)p_collateral_expiration_status; (void)p_quote_verification_result; (void)p_qve_report_info; (void)supplemental_data_size; (void)p_supplemental_data;
++    return SGX_ERROR_NO_DEVICE;
++}
++
++sgx_status_t tee_qve_verify_quote_qvt(sgx_enclave_id_t eid, quote3_error_t* retval, const uint8_t* p_quote, uint32_t quote_size, time_t current_time, const struct _sgx_ql_qve_collateral_t* p_quote_collateral, sgx_ql_qe_report_info_t* p_qve_report_info, const uint8_t* p_user_data, uint32_t user_data_size, uint32_t* p_verification_result_token_buffer_size, uint8_t** p_verification_result_token)
++{
++    (void)eid; (void)retval; (void)p_quote; (void)quote_size; (void)current_time; (void)p_quote_collateral; (void)p_qve_report_info; (void)p_user_data; (void)user_data_size; (void)p_verification_result_token_buffer_size; (void)p_verification_result_token;
++    return SGX_ERROR_NO_DEVICE;
++}
