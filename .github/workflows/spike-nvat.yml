@@ -71,19 +71,12 @@ jobs:
       matrix:
         include:
           - {name: macos-arm64, os: macos-15, macos_target: '11.0'}
-          # Homebrew's OpenSSL headers sit in /usr/local/include, on the compiler's default
-          # search path on Intel Macs, so curl compiled against them (ENGINE enabled) and then
-          # failed to link the no-engine libcrypto NVIDIA builds. Put the built ones first.
-          - name: macos-x86_64
-            os: macos-15-intel
-            macos_target: '10.12'
-            cmake_args: '-DCMAKE_C_FLAGS=-I${{ github.workspace }}/spike/nvat/vendor/attestation-sdk/nv-attestation-sdk-cpp/build/openssl-install/include'
+          - {name: macos-x86_64, os: macos-15-intel, macos_target: '10.12'}
     name: source-build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     env:
       MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_target }}
-      NVAT_EXTRA_CMAKE_ARGS: ${{ matrix.cmake_args }}
-      # One compile job per core runs out of memory: some libnvat sources take GBs each.
+      # One compile job per core ran the Linux runners out of memory.
       NVAT_JOBS: 2
     steps:
       - uses: actions/checkout@v6

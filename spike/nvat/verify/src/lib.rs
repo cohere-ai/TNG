@@ -3,8 +3,9 @@
 //! verdict and the claims with the per-request fields (timestamps, token ids) removed, so
 //! runs on different builds and machines can be diffed.
 //!
-//! NVAT_SPIKE_TLS_CA_CERT, if set, is passed as the CA bundle for every HTTPS request;
-//! Trustee sets none, so curl's built-in default applies.
+//! NVAT_SPIKE_TLS_CA_CERT, if set, is passed as the CA bundle for every HTTPS request, or
+//! with `auto`, the first of the usual system bundle locations that exists. Trustee sets
+//! none, so the bundle path libcurl's configure found on the build machine applies.
 
 use std::sync::OnceLock;
 
@@ -53,7 +54,7 @@ pub fn run(
         .max_retry_count(MAX_RETRY_COUNT)
         .connection_timeout_ms(CONNECTION_TIMEOUT_MS)
         .request_timeout_ms(REQUEST_TIMEOUT_MS);
-    if let Ok(ca) = std::env::var("NVAT_SPIKE_TLS_CA_CERT") {
+    if let Some(ca) = tls_ca_cert()? {
         http = http.tls_ca_cert(ca);
     }
     let http = http.build()?;
@@ -89,6 +90,31 @@ pub fn run(
         "eat": decode_eat(&eat)?,
     });
     Ok(out)
+}
+
+// Where Linux distributions and macOS keep the system CA bundle (the files openssl-probe and
+// Go's crypto/x509 look for).
+const CA_BUNDLES: &[&str] = &[
+    "/etc/ssl/certs/ca-certificates.crt", // Debian, Ubuntu, Arch, Gentoo
+    "/etc/pki/tls/certs/ca-bundle.crt",   // Fedora, RHEL, CentOS
+    "/etc/ssl/ca-bundle.pem",             // openSUSE
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", // RHEL 7+
+    "/etc/ssl/cert.pem",                  // macOS, Alpine, FreeBSD
+];
+
+fn tls_ca_cert() -> Result<Option<String>, Box<dyn std::error::Error>> {
+    match std::env::var("NVAT_SPIKE_TLS_CA_CERT").ok().as_deref() {
+        None => Ok(None),
+        Some("auto") => {
+            let found = CA_BUNDLES
+                .iter()
+                .find(|p| std::path::Path::new(p).is_file())
+                .ok_or("no system CA bundle found")?;
+            eprintln!("CA bundle: {found}");
+            Ok(Some(found.to_string()))
+        }
+        Some(path) => Ok(Some(path.to_string())),
+    }
 }
 
 /// Once per process and never shut down, as Trustee does.
