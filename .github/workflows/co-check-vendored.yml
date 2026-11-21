@@ -8,7 +8,13 @@ on:
       - cohere
     tags:
       - "v*.*.*"
+    paths:
+      - "deps/intel-tee-quote-verification-sys/**"
+      - ".github/workflows/co-check-vendored.yml"
   pull_request:
+    paths:
+      - "deps/intel-tee-quote-verification-sys/**"
+      - ".github/workflows/co-check-vendored.yml"
 
 jobs:
   intel-tee-quote-verification-sys:
