@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Shariq Khalil Ahmed <shariq.ahmed@cohere.com>
 Date: Fri, 20 Nov 2026 21:48:25 +0000
-Subject: [PATCH] Replace the QvE enclave bridge with stubs
+Subject: [PATCH] Stub out the SGX enclave calls
 
 Intel's Makefile generates the untrusted bridge into the Quote
 Verification Enclave (qve_u.c/.h) from ae/QvE/qve/qve.edl with the SGX
@@ -15,12 +15,20 @@ bridge does when the enclave cannot be entered: return an SGX error and
 leave *retval alone. This also drops the bridge's callback table, which
 would otherwise need u_sgxssl_ftime from Intel's SGX-SSL library.
 
+Also stub tee_qae_get_target_info(), which tee_verify_quote_qvt() calls
+to load the Quote Appraisal Enclave. It lives in the QAL appraisal engine,
+which the source build leaves out, so without the stub the library only
+links if the linker drops the unused tee_verify_quote_qvt(). The stub fails
+the way loading the enclave does without SGX.
+
 Nothing uses the stubs until the library is built from source.
 ---
  stubs/linux/qve_u.h | 37 +++++++++++++++++++++++++++++++++++++
+ stubs/qae_stubs.cpp | 12 ++++++++++++
  stubs/qve_stubs.c   | 32 ++++++++++++++++++++++++++++++++
- 2 files changed, 69 insertions(+)
+ 3 files changed, 81 insertions(+)
  create mode 100644 stubs/linux/qve_u.h
+ create mode 100644 stubs/qae_stubs.cpp
  create mode 100644 stubs/qve_stubs.c
 
 diff --git a/stubs/linux/qve_u.h b/stubs/linux/qve_u.h
@@ -66,6 +74,24 @@ index 0000000..3c4ece0
 +#endif
 +
 +#endif
+diff --git a/stubs/qae_stubs.cpp b/stubs/qae_stubs.cpp
+new file mode 100644
+index 0000000..580ef4f
+--- /dev/null
++++ b/stubs/qae_stubs.cpp
+@@ -0,0 +1,12 @@
++// Stands in for tee_qae_get_target_info() from QuoteVerification/appraisal/qal/appraisal.cpp,
++// part of the QAL appraisal engine this crate leaves out. The real function loads the Quote
++// Appraisal Enclave (QAE) for tee_verify_quote_qvt(); off SGX hardware that load fails, and this
++// fails the same way. Defined so the library is complete without relying on the linker to drop
++// tee_verify_quote_qvt(), which nothing here calls.
++#include "qal_common.h"
++
++quote3_error_t tee_qae_get_target_info(sgx_target_info_t *p_target_info)
++{
++    (void)p_target_info;
++    return SGX_QL_ERROR_UNEXPECTED;
++}
 diff --git a/stubs/qve_stubs.c b/stubs/qve_stubs.c
 new file mode 100644
 index 0000000..68006f1

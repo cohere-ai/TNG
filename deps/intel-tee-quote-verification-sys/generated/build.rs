@@ -210,6 +210,7 @@ fn main() {
         qve.join("qve/qve_logic.cpp"),
         qg.join("qpl/sgx_base64.cpp"),
         qv.join("appraisal/common/ec_key.cpp"),
+        stubs.join("qae_stubs.cpp"),
     ]);
     let c_srcs = vec![
         qg.join("common/src/se_trace.c"),

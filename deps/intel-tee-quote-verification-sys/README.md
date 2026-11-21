@@ -19,8 +19,9 @@ with `[patch.crates-io]`; nothing in Trustee changes.
 
 All of them are in `patches/`, applied in the order `patches/series` lists:
 
-1. `0001` replaces the Quote Verification Enclave bridge, which Intel's build generates with an
-   SGX SDK tool, with stubs. The enclave is only ever entered on SGX hardware, on request.
+1. `0001` stubs out the calls into SGX enclaves: the Quote Verification Enclave bridge, which
+   Intel's build generates with an SGX SDK tool, and the appraisal engine's QAE loader. They are
+   only ever reached on SGX hardware, on request.
 2. `0002` links OpenSSL through `openssl-sys`, so the library shares the process's OpenSSL.
 3. `0003` rewrites `build.rs` to fetch Intel's sources with git at pinned commits and compile
    them, following Intel's Linux Makefile.

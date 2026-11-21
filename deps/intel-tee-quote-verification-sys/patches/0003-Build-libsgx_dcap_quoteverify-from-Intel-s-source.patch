@@ -23,8 +23,8 @@ The bindgen settings are unchanged; the include paths it is given now
 point into the fetched sources instead of an installed SDK.
 ---
  Cargo.toml |   1 +
- build.rs   | 318 ++++++++++++++++++++++++++++++++++++++++-------------
- 2 files changed, 244 insertions(+), 75 deletions(-)
+ build.rs   | 319 ++++++++++++++++++++++++++++++++++++++++-------------
+ 2 files changed, 245 insertions(+), 75 deletions(-)
 
 diff --git a/Cargo.toml b/Cargo.toml
 index b05b66c..5b237ec 100644
@@ -36,10 +36,10 @@ index b05b66c..5b237ec 100644
  bindgen = "0.70.1"
 +cc = "1.2"
 diff --git a/build.rs b/build.rs
-index e445e24..c9749e3 100644
+index e445e24..27a6c05 100644
 --- a/build.rs
 +++ b/build.rs
-@@ -1,101 +1,269 @@
+@@ -1,101 +1,270 @@
 -/*
 - * Copyright (C) 2011-2021 Intel Corporation. All rights reserved.
 - *
@@ -300,6 +300,7 @@ index e445e24..c9749e3 100644
 +        qve.join("qve/qve_logic.cpp"),
 +        qg.join("qpl/sgx_base64.cpp"),
 +        qv.join("appraisal/common/ec_key.cpp"),
++        stubs.join("qae_stubs.cpp"),
 +    ]);
 +    let c_srcs = vec![
 +        qg.join("common/src/se_trace.c"),
