@@ -563,7 +563,7 @@ checksum = "21e4227379beff4205943696e6c3e0cd809bacdf3f0edd6e3dd153e2269571a4"
 [[package]]
 name = "attestation-service"
 version = "0.1.0"
-source = "git+https://github.com/cohere-ai/trustee.git?rev=5654fa699816ba847bb66f18090e4cf460c81a86#5654fa699816ba847bb66f18090e4cf460c81a86"
+source = "git+https://github.com/cohere-ai/trustee.git?rev=b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91#b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2436,7 +2436,7 @@ dependencies = [
 [[package]]
 name = "eventlog"
 version = "0.1.0"
-source = "git+https://github.com/cohere-ai/trustee.git?rev=5654fa699816ba847bb66f18090e4cf460c81a86#5654fa699816ba847bb66f18090e4cf460c81a86"
+source = "git+https://github.com/cohere-ai/trustee.git?rev=b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91#b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -3952,7 +3952,7 @@ dependencies = [
 [[package]]
 name = "key-value-storage"
 version = "0.1.0"
-source = "git+https://github.com/cohere-ai/trustee.git?rev=5654fa699816ba847bb66f18090e4cf460c81a86#5654fa699816ba847bb66f18090e4cf460c81a86"
+source = "git+https://github.com/cohere-ai/trustee.git?rev=b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91#b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5445,7 +5445,7 @@ dependencies = [
 [[package]]
 name = "policy-engine"
 version = "0.1.0"
-source = "git+https://github.com/cohere-ai/trustee.git?rev=5654fa699816ba847bb66f18090e4cf460c81a86#5654fa699816ba847bb66f18090e4cf460c81a86"
+source = "git+https://github.com/cohere-ai/trustee.git?rev=b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91#b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6201,7 +6201,7 @@ dependencies = [
 [[package]]
 name = "reference-value-provider-service"
 version = "0.1.0"
-source = "git+https://github.com/cohere-ai/trustee.git?rev=5654fa699816ba847bb66f18090e4cf460c81a86#5654fa699816ba847bb66f18090e4cf460c81a86"
+source = "git+https://github.com/cohere-ai/trustee.git?rev=b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91#b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -9170,7 +9170,7 @@ checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 [[package]]
 name = "verifier"
 version = "0.1.0"
-source = "git+https://github.com/cohere-ai/trustee.git?rev=5654fa699816ba847bb66f18090e4cf460c81a86#5654fa699816ba847bb66f18090e4cf460c81a86"
+source = "git+https://github.com/cohere-ai/trustee.git?rev=b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91#b5e3101f60bbd4c5aa188c30a39e7e5c2e05fd91"
 dependencies = [
  "anyhow",
  "asn1-rs",
