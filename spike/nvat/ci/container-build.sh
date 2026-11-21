@@ -28,6 +28,7 @@ if [ -n "$target" ]; then
     (cd /tmp/zlib-1.3.1 && CC=$TARGET_CC AR=$TARGET_AR RANLIB=${TARGET_RANLIB:-${TARGET_AR%ar}ranlib} \
       CFLAGS=-fPIC ./configure --prefix=/usr --static && make -j"$(nproc)" && make install DESTDIR="$TARGET_SYSROOT")
   fi
+  export STRIP=${TARGET_AR%ar}strip OBJDUMP=${TARGET_AR%ar}objdump
   arch=${target%%-*}
   export NVAT_PATCH=patches/cross-compile.patch
   export NVAT_EXTRA_CMAKE_ARGS="-DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=$arch \

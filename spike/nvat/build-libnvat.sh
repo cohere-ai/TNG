@@ -10,6 +10,7 @@
 #   NVAT_EXTRA_CMAKE_ARGS  extra configure arguments (per-target fixes), word-split
 #   NVAT_PATCH             patch to apply to the SDK before configuring (cross builds)
 #   NVAT_JOBS              parallel compile jobs (default: one per core)
+#   STRIP, OBJDUMP         the target's binutils, when cross-compiling
 set -euo pipefail
 cd "$(dirname "$0")"
 spike=$PWD
@@ -102,7 +103,7 @@ echo "exports restricted: $(summary "$out/exports-restricted.txt")"
 real=$(basename "$(find "$build" -maxdepth 1 -type f \( -name 'libnvat.so.*.*.*' -o -name 'libnvat.*.*.*.dylib' \) | head -1)")
 ls -l "$build"/libnvat*
 stripped=$out/stripped-$real
-if [ "$os" = Darwin ]; then strip -x -o "$stripped" "$build/$real"; else strip -o "$stripped" "$build/$real"; fi
+if [ "$os" = Darwin ]; then strip -x -o "$stripped" "$build/$real"; else ${STRIP:-strip} -o "$stripped" "$build/$real"; fi
 {
   echo "file=$real"
   echo "size=$(wc -c < "$build/$real" | tr -d ' ')"
@@ -117,6 +118,6 @@ if [ "$os" = Darwin ]; then
 else
   readelf -d "$build/$real" | grep -E 'NEEDED|SONAME|RPATH|RUNPATH'
   echo "glibc/libstdc++ symbol versions needed (newest):"
-  objdump -T "$build/$real" | grep -oE '(GLIBC|GLIBCXX|CXXABI)_[0-9.]+' | sort -Vu \
+  ${OBJDUMP:-objdump} -T "$build/$real" | grep -oE '(GLIBC|GLIBCXX|CXXABI)_[0-9.]+' | sort -Vu \
     | awk -F_ '{v[$1]=$0} END {for (k in v) print "  " v[k]}'
 fi
