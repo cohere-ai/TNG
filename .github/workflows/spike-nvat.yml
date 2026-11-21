@@ -159,11 +159,13 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       NVAT_JOBS: 2
+      # The image's GCC is 7.5, older than manylinux2014's 10, which already needed this.
+      NVAT_EXTRA_CMAKE_ARGS: '-DCMAKE_COMPILE_WARNING_AS_ERROR=OFF'
     steps:
       - uses: actions/checkout@v6
       - run: ./fetch-sources.sh
       - run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/io" -e NVAT_JOBS ghcr.io/rust-cross/manylinux_2_28-cross:aarch64 \
+          docker run --rm -v "$GITHUB_WORKSPACE:/io" -e NVAT_JOBS -e NVAT_EXTRA_CMAKE_ARGS ghcr.io/rust-cross/manylinux_2_28-cross:aarch64 \
             bash -c 'env | grep -E "^(TARGET_|CARGO_)" | sort; apt-get update -qq && apt-get install -y -qq autoconf automake libtool pkg-config >/dev/null; bash /io/spike/nvat/ci/container-build.sh aarch64-unknown-linux-gnu'
       - name: Build the wheel in the same image
         continue-on-error: true

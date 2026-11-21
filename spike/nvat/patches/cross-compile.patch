@@ -1,6 +1,8 @@
+diff --git a/nv-attestation-sdk-cpp/CMakeLists.txt b/nv-attestation-sdk-cpp/CMakeLists.txt
+index 03c55ff..574b644 100644
 --- a/nv-attestation-sdk-cpp/CMakeLists.txt
 +++ b/nv-attestation-sdk-cpp/CMakeLists.txt
-@@ -334,14 +334,26 @@
+@@ -334,14 +334,26 @@ else()
    endif()
    set(_EP_CFLAGS "${CMAKE_C_FLAGS} -fPIC")
  
@@ -28,7 +30,7 @@
        "CFLAGS=${_EP_CFLAGS}"
        --prefix=${OPENSSL_INSTALL_DIR}
        --openssldir=${OPENSSL_INSTALL_DIR}
-@@ -390,6 +402,7 @@
+@@ -390,6 +402,7 @@ else()
        --with-zlib
        "CC=${_EP_CC}"
        "CFLAGS=${_EP_CFLAGS}"
@@ -36,7 +38,7 @@
      BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
      INSTALL_COMMAND make install
      BUILD_IN_SOURCE 1
-@@ -428,6 +441,7 @@
+@@ -428,6 +441,7 @@ else()
        --disable-apps
        "CC=${_EP_CC}"
        "CFLAGS=${_EP_CFLAGS}"
@@ -44,7 +46,7 @@
        "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig:${LIBXML2_INSTALL_DIR}/lib/pkgconfig"
      BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
      INSTALL_COMMAND make install
-@@ -458,6 +472,7 @@
+@@ -458,6 +472,7 @@ else()
        --enable-static
        "CC=${_EP_CC}"
        "CFLAGS=${_EP_CFLAGS}"
@@ -52,3 +54,14 @@
        "PKG_CONFIG_PATH=${OPENSSL_INSTALL_DIR}/lib/pkgconfig"
      BUILD_COMMAND make -j${NVAT_BUILD_JOBS}
      INSTALL_COMMAND make install
+@@ -496,7 +511,9 @@ endif()
+ # macros (__FILE__, __builtin_FILE()) are remapped. Debug info and coverage
+ # mapping paths are left intact — required for llvm-cov / SonarQube.
+ # Ref: https://clang.llvm.org/docs/ClangCommandLineReference.html
+-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
++# GCC only has it from 8 (the manylinux_2_28-cross image's is 7.5).
++if((CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 8)
++    OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+     add_compile_options(-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/src/=)
+ endif()
+ 
