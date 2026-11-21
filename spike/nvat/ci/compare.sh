@@ -30,7 +30,7 @@ for d in "$dir"/out-*; do
   secs=$(cat "$d/build-seconds" 2>/dev/null || true)
   def=$( [ -f "$d/exports-default.txt" ] && echo "$(wc -l < "$d/exports-default.txt") ($(count "$d/exports-default.txt" '^nvat_') nvat_)")
   res=$( [ -f "$d/exports-restricted.txt" ] && echo "$(wc -l < "$d/exports-restricted.txt") ($(count "$d/exports-restricted.txt" '^nvat_') nvat_)")
-  ca=$( [ -f "$d/ca" ] && (grep -q '^default$' "$d/ca" && echo default || echo "needs explicit ($(grep -o 'file: [^ ]*' "$d/ca" | cut -c7-) missing)"))
+  ca=$( [ -f "$d/ca" ] && (grep -q '^default$' "$d/ca" && echo default || echo "needs explicit ($(grep -q 'file: ' "$d/ca" && echo "$(grep -o 'file: [^ ]*' "$d/ca" | cut -c7-) missing" || echo "none compiled in"))"))
   echo "| $name | $(verdict "$d" remote) | $(verdict "$d" local) | ${ca:--} | ${secs:+$((secs / 60))m$((secs % 60))s} | $(mib "$(field "$d/size" size)") MiB | $(mib "$(field "$d/size" stripped_size)") MiB | ${def:--} | ${res:--} |"
 done
 

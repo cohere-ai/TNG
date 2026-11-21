@@ -33,6 +33,9 @@ python=$(command -v python3.12 || command -v python3)
 export LD_LIBRARY_PATH=$PWD/vendor/attestation-sdk/nv-attestation-sdk-cpp/build
 export CARGO_TARGET_DIR=$PWD/target-wheel
 args=(build --release -m py/Cargo.toml -o dist --manylinux "$tag")
-[ -n "$target" ] && args+=(--target "$target")
+if [ -n "$target" ]; then
+  rustup target add "$target"
+  args+=(--target "$target")
+fi
 "$python" -m maturin "${args[@]}"
 "$python" -m zipfile -l dist/*.whl

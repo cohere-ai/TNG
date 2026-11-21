@@ -76,36 +76,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_target }}
-      # One compile job per core ran the Linux runners out of memory.
+      # One compile job per core exhausted memory (native aarch64 was killed; macOS arm64,
+      # 7 GB, took 45 minutes instead of 7).
       NVAT_JOBS: 2
     steps:
       - uses: actions/checkout@v6
       - run: brew install autoconf automake libtool
       - run: ./fetch-sources.sh
-      - name: What Homebrew puts on the default search paths
-        run: |
-          ls -la /usr/local/include/openssl /usr/local/lib/libcrypto* /usr/local/lib/libcurl* 2>&1 | head -20
-          env | grep -E '^(CPATH|C_INCLUDE_PATH|LIBRARY_PATH|SDKROOT|CPPFLAGS|CFLAGS|LDFLAGS)=' || true
-      - id: build
-        continue-on-error: true
-        run: ./build-libnvat.sh
-      # Intel only so far: curl's openssl.c compiled with ENGINE support against the
-      # no-engine libcrypto. Find out which headers it saw, then retry with Homebrew's
-      # OpenSSL off the default search path.
-      - name: Diagnose and retry
-        if: steps.build.outcome == 'failure'
-        run: |
-          b=vendor/attestation-sdk/nv-attestation-sdk-cpp/build
-          grep -n 'NO_ENGINE' $b/openssl-install/include/openssl/configuration.h || echo "built OpenSSL headers: no OPENSSL_NO_ENGINE"
-          c=$b/curl_external-prefix/src/curl_external
-          echo '#include <openssl/opensslconf.h>' | clang -E -H -x c - -isystem $b/openssl-install/include -I$c/include -I$c/lib 2>&1 >/dev/null | grep -i openssl | head
-          nm $c/lib/.libs/libcurl.a 2>/dev/null | grep -c ENGINE_init || true
-          grep -o 'libcurl_la-openssl.lo.*' $c/lib/Makefile | head -2 || true
-          for d in /usr/local/include/openssl /usr/local/opt/openssl@3/include/openssl; do
-            [ -e "$d" ] && sudo mv "$d" "$d.hidden" && echo "hid $d"
-          done
-          rm -rf $b
-          ./build-libnvat.sh
+      # Homebrew's OpenSSL headers are in /usr/local/include on Intel Macs, which Apple clang
+      # searches ahead of curl's -isystem for the built OpenSSL. curl's openssl.c then
+      # compiled with ENGINE support and failed to link the no-engine libcrypto NVIDIA builds.
+      - name: Move Homebrew's OpenSSL headers off the default search path
+        if: matrix.name == 'macos-x86_64'
+        run: sudo mv /usr/local/include/openssl /usr/local/include/openssl.hidden
+      - run: ./build-libnvat.sh
       - run: cargo build --release -p nvat-spike-verify
       - run: otool -L target/release/nvat-spike-verify
       - run: DYLD_LIBRARY_PATH=$PWD/vendor/attestation-sdk/nv-attestation-sdk-cpp/build ./check.sh target/release/nvat-spike-verify

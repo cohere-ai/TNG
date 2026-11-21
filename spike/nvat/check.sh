@@ -28,10 +28,12 @@ status=0
 for mode in remote local; do
   start=$(date +%s)
   "$bin" $mode out/report.txt $CERTS $NONCE > out/$mode.json 2> out/$mode.log || true
-  if [ -z "${NVAT_SPIKE_TLS_CA_CERT:-}" ] && grep -q 'SSL CA cert' out/$mode.log; then
-    # libcurl's compiled-in bundle path is the build machine's; probe this one's instead.
-    echo "note $mode: no usable CA bundle by default: $(grep -m1 -o 'error adding trust anchors.*' out/$mode.log)"
-    grep -m1 -o 'error adding trust anchors.*' out/$mode.log > out/ca
+  if [ -z "${NVAT_SPIKE_TLS_CA_CERT:-}" ] && grep -qE 'SSL CA cert|unable to get local issuer' out/$mode.log; then
+    # libcurl's compiled-in bundle path is the build machine's (or, cross-compiled, there is
+    # none at all); probe this one's instead.
+    why=$(grep -m1 -oE 'error adding trust anchors.*|unable to get local issuer.*' out/$mode.log)
+    echo "note $mode: no usable CA bundle by default: $why"
+    echo "$why" > out/ca
     export NVAT_SPIKE_TLS_CA_CERT=auto
     start=$(date +%s)
     "$bin" $mode out/report.txt $CERTS $NONCE > out/$mode.json 2> out/$mode.log || true

@@ -44,16 +44,10 @@ else
   lib=$build/libnvat.so
 fi
 
-platform=()
 if [ "$os" = Darwin ]; then
   # NVIDIA's CMake hardcodes the static libraries' link dependencies for Linux. On macOS
   # libcurl also needs CoreFoundation and SystemConfiguration, and libxml2 libiconv.
   platform_ldflags="-framework CoreFoundation -framework SystemConfiguration -liconv"
-  # Homebrew's OpenSSL headers are in /usr/local/include on Intel Macs, which the compiler
-  # searches by default, so curl compiled against them (ENGINE on) and then failed to link
-  # the no-engine libcrypto NVIDIA builds. Put the built headers first (a no-op on arm64,
-  # where Homebrew is in /opt/homebrew).
-  platform+=("-DCMAKE_C_FLAGS=-I$build/openssl-install/include")
 else
   platform_ldflags=""
 fi
@@ -61,7 +55,7 @@ fi
 configure() { # <shared linker flags>
   # shellcheck disable=SC2086
   cmake -S "$src" -B "$build" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
-    "-DCMAKE_SHARED_LINKER_FLAGS=$platform_ldflags $1" ${platform[@]+"${platform[@]}"} \
+    "-DCMAKE_SHARED_LINKER_FLAGS=$platform_ldflags $1" \
     ${NVAT_EXTRA_CMAKE_ARGS:-}
 }
 
