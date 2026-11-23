@@ -783,8 +783,8 @@ With `policy_source`, TNG downloads `attestation-bundle.sigstore.json` and the p
 
 | Feature | Appraises |
 |---|---|
-| `coco-builtin-as-tdx` | Intel TDX (requires the Intel DCAP libraries at build and run time) |
-| `coco-builtin-as-azsnp` | AMD SEV-SNP on Azure confidential VMs, including vTOM mode (requires the TPM2 TSS libraries at build and run time) |
+| `coco-builtin-as-tdx` | Intel TDX (compiles Intel's DCAP quote verification library from source; needs `git` and libclang at build time) |
+| `coco-builtin-as-azsnp` | AMD SEV-SNP on Azure confidential VMs, including vTOM mode |
 | `coco-builtin-as-nvidia` | NVIDIA GPUs |
 | `coco-builtin-as-all` | All of the above |
 

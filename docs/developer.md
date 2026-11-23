@@ -42,7 +42,7 @@ The default branch is `cohere`. Release tags are named `vX.Y.Z`.
 sudo apt-get install -y build-essential protobuf-compiler libprotobuf-dev libssl-dev pkg-config clang
 ```
 
-`protoc` is required: `rats-cert` generates gRPC code at build time. The test-runner image, [.github/test-deps/Dockerfile.test-runner](../.github/test-deps/Dockerfile.test-runner), carries the full set of dependencies used in CI, including the Intel DCAP quote verification library needed by the `coco-builtin-as-tdx` feature and the network tools the integration tests use (`iptables`, `iproute2`, `ipset`, `socat` and others).
+`protoc` is required: `rats-cert` generates gRPC code at build time. The test-runner image, [.github/test-deps/Dockerfile.test-runner](../.github/test-deps/Dockerfile.test-runner), carries the full set of dependencies used in CI, including the network tools the integration tests use (`iptables`, `iproute2`, `ipset`, `socat` and others).
 
 4. Build TNG:
 
@@ -184,7 +184,7 @@ docker build -f cohere/docker/Dockerfile --target tng \
   -t tng:minimal .
 ```
 
-The TDX verifier depends on Intel's DCAP library, which is x86_64 only, so an arm64 build must set `BUILTIN_AS_TDX=0`. The comments at the top of the Dockerfile explain each verifier's dependencies.
+The comments at the top of the Dockerfile explain each verifier's dependencies.
 
 CI builds all four images on every push to `cohere` (`co-build-docker.yml`), tags them `cohere` and `sha-<commit>`, and attaches build provenance and SBOM attestations.
 

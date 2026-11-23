@@ -14,6 +14,10 @@ crate-type = ["cdylib"]
 # via `openssl/vendored`, which keeps the wheel self-contained on every target.
 builtin-verifier-azsnp = ["dep:openssl", "tng/coco-builtin-as-azsnp"]
 builtin-verifier-nvidia = ["dep:openssl", "tng/coco-builtin-as-nvidia"]
+# Intel's quote verification library is compiled from source by
+# deps/intel-tee-quote-verification-sys, so this builds wherever a C++17 compiler
+# and libclang (for bindgen) are available.
+builtin-verifier-tdx = ["dep:openssl", "tng/coco-builtin-as-tdx"]
 
 [dependencies]
 anyhow = { workspace = true }
