@@ -1877,14 +1877,13 @@ mod tests {
                 }
             }});
             edit(&mut json["attest"]);
-            serde_json::from_value::<RaArgsUnchecked>(json)
-                .unwrap()
-                .into_checked()
+            anyhow::Ok(serde_json::from_value::<RaArgsUnchecked>(json)?.into_checked()?)
         };
 
         with(|_| {}).unwrap();
         with(|v| v["policy_ids"] = json!(["p"])).unwrap_err();
         with(|v| v["policy_id_source"]["file"] = json!("")).unwrap_err();
+        with(|v| v["policy_id_source"]["fallbak_for"] = json!(60)).unwrap_err();
         with(|v| v["policy_id_source"]["provenance"]["bundle"] = json!("")).unwrap_err();
     }
 

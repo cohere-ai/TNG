@@ -12,6 +12,7 @@ use crate::release::{Release, ReleaseFetcher, ReleaseFetcherArgs};
 const FRESH_FOR: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicyIdSourceArgs {
     #[serde(flatten)]
     pub release_fetcher: ReleaseFetcherArgs,
