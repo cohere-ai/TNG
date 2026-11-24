@@ -1933,13 +1933,12 @@ mod tests {
                 }
             }});
             edit(&mut json["verify"]);
-            serde_json::from_value::<RaArgsUnchecked>(json)
-                .unwrap()
-                .into_checked()
+            anyhow::Ok(serde_json::from_value::<RaArgsUnchecked>(json)?.into_checked()?)
         };
 
         with(|_| {}).unwrap();
         with(|v| v["rp_policy_source"]["policy"] = json!("")).unwrap_err();
+        with(|v| v["rp_policy_source"]["vaild_for"] = json!(86400)).unwrap_err();
         with(|v| v["rp_policy_source"]["data"] = json!(["http://example.com/d.json"])).unwrap();
         with(|v| v["rp_policy_source"]["data"] = json!([""])).unwrap_err();
     }

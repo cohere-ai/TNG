@@ -17,6 +17,7 @@ const FRESH_FOR: Duration = Duration::from_secs(5);
 const ALLOW_RULE: &str = "allow";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RpPolicySourceArgs {
     #[serde(flatten)]
     pub release_fetcher: ReleaseFetcherArgs,
