@@ -319,6 +319,7 @@ impl RaArgsUnchecked {
                         policy_dir,
                         policy_source,
                         policy_ids,
+                        required_tee_classes,
                         ..
                     } => {
                         match (policy_dir, policy_source) {
@@ -327,9 +328,19 @@ impl RaArgsUnchecked {
                                     "'policy_dir' and 'policy_source' are mutually exclusive"
                                 )));
                             }
-                            (_, Some(source)) => source.validate().map_err(|e| {
-                                TngError::InvalidParameter(anyhow!("'policy_source': {e}"))
-                            })?,
+                            (_, Some(source)) => {
+                                source.validate().map_err(|e| {
+                                    TngError::InvalidParameter(anyhow!("'policy_source': {e}"))
+                                })?;
+                                if let Some(class) = required_tee_classes
+                                    .iter()
+                                    .find(|class| !source.files.contains_key(*class))
+                                {
+                                    return Err(TngError::InvalidParameter(anyhow!(
+                                        "'required_tee_classes' includes '{class}', but 'policy_source' has no file for it"
+                                    )));
+                                }
+                            }
                             (policy_dir, None) => {
                                 let policy_dir =
                                     policy_dir.as_deref().unwrap_or(DEFAULT_POLICY_DIR);
@@ -1461,9 +1472,7 @@ mod tests {
                 }
             }});
             edit(&mut json["verify"]);
-            serde_json::from_value::<RaArgsUnchecked>(json)
-                .unwrap()
-                .into_checked()
+            anyhow::Ok(serde_json::from_value::<RaArgsUnchecked>(json)?.into_checked()?)
         };
 
         with(|_| {}).unwrap();
@@ -1482,7 +1491,14 @@ mod tests {
         with(|v| v["policy_source"]["provenance"]["bundle"] = json!("")).unwrap_err();
         with(|v| v["policy_source"]["files"] = json!({"gpu": "gpu.rego"})).unwrap_err();
         with(|v| v["policy_source"]["files"]["tpu"] = json!("tpu.rego")).unwrap_err();
-        with(|v| v["policy_source"]["no_provenance"] = json!(true)).unwrap_err();
+        with(|v| v["required_tee_classes"] = json!(["cpu", "gpu"])).unwrap_err();
+        with(|v| {
+            v["required_tee_classes"] = json!(["cpu", "gpu"]);
+            v["policy_source"]["files"]["gpu"] = json!("gpu.rego");
+        })
+        .unwrap();
+        with(|v| v["policy_source"]["fallbak_for"] = json!(86400)).unwrap_err();
+        with(|v| v["policy_source"]["provenance"]["enviroment"] = json!("release")).unwrap_err();
         with(|v| {
             let source = v["policy_source"].as_object_mut().unwrap();
             let provenance = source.remove("provenance").unwrap();
@@ -1490,9 +1506,10 @@ mod tests {
         })
         .unwrap_err();
         with(|v| {
-            let source = v["policy_source"].as_object_mut().unwrap();
-            source.remove("provenance");
-            source.insert("no_provenance".into(), json!(true));
+            v["policy_source"]
+                .as_object_mut()
+                .unwrap()
+                .remove("provenance");
         })
         .unwrap();
     }

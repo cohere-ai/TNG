@@ -24,30 +24,16 @@ pub struct ReleaseFetcherArgs {
     /// The URL bare file names are resolved against, e.g. `.../releases/latest/download`
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
-    /// Who must have signed the files
+    /// Who must have signed the files. Without it, the files are used as fetched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
-    /// Uses the files as fetched. Required instead of `provenance`, so that leaving out the check
-    /// is a choice rather than a typo.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub no_provenance: bool,
 }
 
 impl ReleaseFetcherArgs {
     /// Rejects what is wrong with `entries`, the files to fetch, without fetching anything.
     pub fn validate<'a>(&self, entries: impl IntoIterator<Item = &'a str>) -> Result<()> {
-        match (&self.provenance, self.no_provenance) {
-            (Some(provenance), false) => {
-                if let Some(problem) = provenance.problem() {
-                    return Err(Error::InvalidRelease(problem));
-                }
-            }
-            (None, true) => {}
-            _ => {
-                return Err(Error::InvalidRelease(
-                    "set either 'provenance' or 'no_provenance: true'",
-                ))
-            }
+        if let Some(problem) = self.provenance.as_ref().and_then(Provenance::problem) {
+            return Err(Error::InvalidRelease(problem));
         }
         let base = self.base();
         let is_http = |entry: &str| {
@@ -143,10 +129,10 @@ impl ReleaseFetcher {
                 attempt.follow()
             }
         });
-        if args.no_provenance {
+        if args.provenance.is_none() {
             tracing::warn!(
                 base_url = args.base_url,
-                "'no_provenance' is set, so fetched files are used without a signature check"
+                "'provenance' is not set, so fetched files are used without a signature check"
             );
         }
         Ok(Self {
@@ -331,7 +317,6 @@ pub(crate) mod tests {
         let fetcher = ReleaseFetcher::new(&ReleaseFetcherArgs {
             base_url: Some(format!("{}/latest", server.uri())),
             provenance: None,
-            no_provenance: true,
         })
         .unwrap();
         let fetch_with_redirect = |target: &'static str| {
@@ -369,7 +354,6 @@ pub(crate) mod tests {
         let args = |base_url: Option<&str>| ReleaseFetcherArgs {
             base_url: base_url.map(str::to_owned),
             provenance: None,
-            no_provenance: true,
         };
         let https = Some("https://example.com/download");
         args(https).validate(["a.json"]).unwrap();
@@ -400,7 +384,6 @@ pub(crate) mod tests {
         let fetcher = ReleaseFetcher::new(&ReleaseFetcherArgs {
             base_url: Some(server.uri()),
             provenance: None,
-            no_provenance: true,
         })
         .unwrap();
 

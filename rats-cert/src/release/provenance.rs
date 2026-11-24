@@ -16,6 +16,7 @@ const GITHUB_ACTIONS_ISSUER: &str = "https://token.actions.githubusercontent.com
 
 /// The Sigstore bundle covering the files, and the GitHub Actions workflow it has to be signed by.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Provenance {
     /// Location of the bundle, resolved like a file entry
     pub bundle: String,

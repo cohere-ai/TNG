@@ -16,6 +16,7 @@ use crate::tee::coco::converter::builtin::CocoBuiltinConverter;
 const DEFAULT_REFRESH_INTERVAL: u64 = 300;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicySourceArgs {
     #[serde(flatten)]
     pub release_fetcher: ReleaseFetcherArgs,
@@ -227,7 +228,6 @@ mod tests {
             release_fetcher: ReleaseFetcherArgs {
                 base_url: Some(base_url),
                 provenance: Some(integritee()),
-                no_provenance: false,
             },
             files: BTreeMap::from([
                 ("cpu".into(), "trustee_policy_cpu.rego".into()),
