@@ -35,6 +35,13 @@ impl ReleaseFetcherArgs {
         if let Some(problem) = self.provenance.as_ref().and_then(Provenance::problem) {
             return Err(Error::InvalidRelease(problem));
         }
+        if let Some(base) = self.base_url.as_deref().and_then(|b| Url::parse(b).ok()) {
+            if base.query().is_some() || base.fragment().is_some() {
+                return Err(Error::InvalidRelease(
+                    "'base_url' must not have a query or fragment",
+                ));
+            }
+        }
         let base = self.base();
         let is_http = |entry: &str| {
             !entry.is_empty()
@@ -366,6 +373,12 @@ pub(crate) mod tests {
             .unwrap();
 
         args(None).validate(["a.json"]).unwrap_err();
+        args(Some("https://example.com/download?x=1"))
+            .validate(["a.json"])
+            .unwrap_err();
+        args(Some("https://example.com/download#x"))
+            .validate(["a.json"])
+            .unwrap_err();
         args(https).validate(["file:///a.json"]).unwrap_err();
         args(https).validate([""]).unwrap_err();
     }

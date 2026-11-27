@@ -87,6 +87,7 @@ fn check(
     files: &[ReleaseFile<'_>],
     provenance: &Provenance,
 ) -> anyhow::Result<i64> {
+    ensure!(!files.is_empty(), "no files to verify");
     let (bundle, statement) = parse(bundle_json)?;
     ensure!(
         statement.predicate_type == provenance.predicate_type,
