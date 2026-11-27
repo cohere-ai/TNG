@@ -11,7 +11,7 @@
     "policy_id_source": {
         "base_url": "https://github.com/cohere-ai/integritee/releases/latest/download",
         "file": "predicate.json",
-        "fallback_for": 86400,
+        "fallback_for": 21600,
         "provenance": {
             "bundle": "attestation-bundle.sigstore.json",
             "repo": "cohere-ai/integritee",
