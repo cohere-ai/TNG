@@ -686,7 +686,7 @@ When `as_provider` is set to `"ita"`, the Verify configuration uses the followin
 - **`as_provider`** (string): Set to `"ita"`
 - **`as_addr`** (string, optional, default is `"https://api.trustauthority.intel.com"`): Intel Trust Authority API base URL
 - **`api_key`** (string, optional): Intel Trust Authority API key. Can be set directly in the config or via the **`ITA_API_KEY`** environment variable. If both are set, the config value takes precedence.
-- **`ita_jwks_addr`** (string, optional, default is `"https://portal.trustauthority.intel.com"`): Intel Trust Authority portal URL used to fetch JWKS signing keys for token verification
+- **`ita_jwks_addr`** (string, optional, default is `"https://portal.trustauthority.intel.com"`): Intel Trust Authority portal URL used to fetch JWKS signing keys for token verification. TNG fetches them at startup and fails to start if that fails, and again when a token is signed with a key it hasn't seen.
 - **`policy_ids`** (array [string], optional, default is empty): List of ITA policy IDs that must match for attestation to succeed
 - **`policy_id_source`** (object, optional): Fetch the policy ID from a published release instead of `policy_ids`; the two are mutually exclusive. See [ITA policy ID from a published release](#ita-policy-id-from-a-published-release).
 
@@ -929,8 +929,12 @@ When `as_provider` is set to `"ita"`, the Verify configuration uses the followin
 
 - **`model`** (string): Set to `"passport"`
 - **`as_provider`** (string): Set to `"ita"`
-- **`ita_jwks_addr`** (string, optional, default is `"https://portal.trustauthority.intel.com"`): Intel Trust Authority portal URL used to fetch JWKS signing keys for token verification
+- **`ita_jwks_addr`** (string, optional, default is `"https://portal.trustauthority.intel.com"`): Intel Trust Authority portal URL used to fetch JWKS signing keys for token verification. TNG fetches them at startup and fails to start if that fails, and again when a token is signed with a key it hasn't seen.
 - **`policy_ids`** (array [string], optional, default is empty): List of ITA policy IDs. The verifier checks that all specified policy IDs appear in the token's `policy_ids_matched` claim.
+- **`policy_hashes`** (array [string], optional, default is empty): List of ITA policy hashes, checked against the `hash` of the token's `policy_ids_matched` entries the same way. With both `policy_ids` and `policy_hashes`, only entries whose ID and hash are both listed count.
+- **`rp_policy_source`** (object, optional): A relying-party policy, fetched from a published release, that must allow the token's claims. See [ITA RP policy from a published release](#ita-rp-policy-from-a-published-release).
+
+Each configured check must pass.
 
 Example:
 
@@ -939,6 +943,37 @@ Example:
     "model": "passport",
     "as_provider": "ita",
     "policy_ids": ["my-policy"]
+}
+```
+
+###### ITA RP policy from a published release
+
+With `rp_policy_source`, TNG accepts a verified ITA token only if the `allow` rule of a published Rego policy is `true` for its claims. With `provenance`, a release signed no later than the newest accepted one is rejected; that signing time is kept in memory only, so after a restart any signed release is accepted. As for [Policies from a published release](#policies-from-a-published-release), TNG trusts the endpoint to serve the current release.
+
+TNG fetches the latest release at startup, and fails to start if that fetch fails, then every `refresh_interval`. Fetched releases stay accepted for `valid_for`, which covers peers still on an older release and outages. A superseded release therefore stays accepted until its `valid_for` runs out, so a release that tightens the policy takes full effect up to `valid_for` later. A denied token also triggers a fetch, unless one finished in the last 5 seconds; tokens denied while a fetch runs wait for it and are evaluated again. Each request times out after 5 seconds, and a failed fetch is not retried. Not available in the wasm build.
+
+- **`base_url`**, **`provenance`**: As for [Policies from a published release](#policies-from-a-published-release).
+- **`policy`** (string, required): The Rego policy, as a name under `base_url` or a full URL.
+- **`data`** (array [string], optional, default is empty): JSON files loaded as data documents that are imported by the policy. A release whose files give the same key different values is rejected.
+- **`refresh_interval`** (integer, optional, default is `300`): Seconds between background fetches. `0` means no background fetches.
+- **`valid_for`** (integer, optional, default is `21600`): Seconds a fetched release stays accepted after it was last fetched. Must be greater than `refresh_interval`.
+
+```json
+"verify": {
+    "model": "passport",
+    "as_provider": "ita",
+    "rp_policy_source": {
+        "base_url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+        "policy": "ita_rp_policy.rego",
+        "data": ["ita_rims.json"],
+        "provenance": {
+            "bundle": "attestation-bundle.sigstore.json",
+            "repo": "cohere-ai/integritee",
+            "signer_workflow": ".github/workflows/release-policy.yaml",
+            "source_ref": "refs/heads/main",
+            "predicate_type": "https://cohere.com/attestation-policy/v1"
+        }
+    }
 }
 ```
 

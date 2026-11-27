@@ -587,7 +587,7 @@ impl VerifyContext {
             VerifyArgs::Passport {
                 verifier: verifier_args,
             } => Ok(Self::Passport {
-                verifier: create_verifier(verifier_args).await?,
+                verifier: create_verifier(verifier_args, runtime).await?,
             }),
             VerifyArgs::BackgroundCheck {
                 converter: converter_args,
@@ -612,7 +612,7 @@ impl VerifyContext {
                     });
                 }
 
-                let verifier = create_verifier(verifier_args).await?;
+                let verifier = create_verifier(verifier_args, runtime).await?;
                 Ok(Self::BackgroundCheck {
                     converter,
                     verifier,
@@ -816,7 +816,6 @@ mod tests {
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
         async fn failed_passport_self_check_exports_startup_gauge_on_drop() {
-            use crate::config::ra::ItaVerifierArgs;
             use crate::observability::metric::{
                 instance::MetricExporterInstance,
                 simple_exporter::{SimpleMetric, SimpleMetricExporter},
@@ -848,18 +847,15 @@ mod tests {
                 &provider.meter("tng"),
                 Arc::new(indexmap::IndexMap::new()),
             );
-            let verify = VerifyContextSet::new(
-                &[VerifyArgs::Passport {
-                    verifier: VerifierArgs::Ita(ItaVerifierArgs {
-                        ita_jwks_addr: endpoint.clone(),
-                        policy_ids: vec![],
-                    }),
+            // Built directly, since building from args fetches the JWKS keys.
+            let verify = VerifyContextSet {
+                entries: vec![VerifyContext::Passport {
+                    verifier: TngVerifier::Ita(
+                        rats_cert::tee::ita::ItaVerifier::new(&endpoint, &[]).unwrap(),
+                    ),
                 }],
-                metrics.clone(),
-                &runtime(),
-            )
-            .await
-            .unwrap();
+                metrics: metrics.clone(),
+            };
             let ctx = RaContext::AttestAndVerify {
                 attest: Arc::new(AttestContext::Passport {
                     attester: TngAttester::ItaAsr(ItaAsrAttester::new(&endpoint).unwrap()),

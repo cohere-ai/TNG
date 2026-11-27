@@ -13,6 +13,12 @@ use crate::tee::{GenericVerifier, ReportData};
 use super::token::ItaToken;
 
 const ITA_JWKS_PATH: &str = "/certs";
+#[cfg(not(all(
+    target_arch = "wasm32",
+    target_vendor = "unknown",
+    target_os = "unknown"
+)))]
+const JWKS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Known `iss` (issuer) claim values that ITA tokens may contain.
 const ITA_TOKEN_ISSUERS: &[&str] = &[
@@ -27,6 +33,9 @@ static JWKS_CACHE: LazyLock<RwLock<HashMap<String, Vec<CachedKey>>>> =
 pub struct ItaVerifier {
     jwks_url: String,
     policy_ids: Vec<String>,
+    policy_hashes: Vec<String>,
+    #[cfg(feature = "verifier-ita-rp-policy")]
+    rp_policy_source: Option<std::sync::Arc<super::rp_policy_source::RpPolicySource>>,
 }
 
 impl ItaVerifier {
@@ -38,16 +47,62 @@ impl ItaVerifier {
                 ITA_JWKS_PATH
             ),
             policy_ids: policy_ids.to_vec(),
+            policy_hashes: vec![],
+            #[cfg(feature = "verifier-ita-rp-policy")]
+            rp_policy_source: None,
         })
     }
 
-    async fn verify_jwt(&self, token: &str) -> Result<Value> {
+    /// Requires each hash in the token's `policy_ids_matched`, as with `policy_ids`, in an entry
+    /// whose ID is also allowed.
+    pub fn with_policy_hashes(mut self, policy_hashes: &[String]) -> Self {
+        self.policy_hashes = policy_hashes.to_vec();
+        self
+    }
+
+    /// Requires the token claims to be allowed by the RP policy fetched from `args`.
+    #[cfg(feature = "verifier-ita-rp-policy")]
+    pub fn with_rp_policy_source(
+        mut self,
+        args: &super::rp_policy_source::RpPolicySourceArgs,
+    ) -> Result<Self> {
+        self.rp_policy_source = Some(std::sync::Arc::new(
+            super::rp_policy_source::RpPolicySource::new(args)?,
+        ));
+        Ok(self)
+    }
+
+    /// Fetches the RP policy, if this verifier has one, failing if that fails, and returns the
+    /// task keeping it current while this verifier lives. The caller decides where to run it.
+    #[cfg(feature = "verifier-ita-rp-policy")]
+    pub async fn keep_rp_policy_current(
+        &self,
+    ) -> Result<Option<impl std::future::Future<Output = ()> + Send + 'static>> {
+        match &self.rp_policy_source {
+            Some(source) => super::rp_policy_source::RpPolicySource::keep_current(source).await,
+            None => Ok(None),
+        }
+    }
+
+    /// Fetches the JWKS keys, failing if that fails, so a verifier that can't check tokens fails
+    /// when it's built instead of on the first token.
+    pub async fn load_jwks(&self) -> Result<()> {
+        self.check_jwks_url()?;
+        self.refresh_jwks().await
+    }
+
+    fn check_jwks_url(&self) -> Result<()> {
         if !self.jwks_url.starts_with("https://") {
             return Err(Error::ItaError(format!(
                 "JWKS URL must use HTTPS: {}",
                 self.jwks_url
             )));
         }
+        Ok(())
+    }
+
+    async fn verify_jwt(&self, token: &str) -> Result<Value> {
+        self.check_jwks_url()?;
 
         let header = decode_header(token).map_err(Error::ItaVerifyTokenFailed)?;
         let kid = header
@@ -107,10 +162,17 @@ impl ItaVerifier {
         let jwks_url = self.jwks_url.clone();
 
         let fut = async move {
-            let client = Client::new();
-            let resp = client
+            let request = Client::new()
                 .get(&jwks_url)
-                .header("Accept", "application/json")
+                .header("Accept", "application/json");
+            // The wasm client has no request timeout.
+            #[cfg(not(all(
+                target_arch = "wasm32",
+                target_vendor = "unknown",
+                target_os = "unknown"
+            )))]
+            let request = request.timeout(JWKS_TIMEOUT);
+            let resp = request
                 .send()
                 .await
                 .map_err(|e| Error::ItaHttpRequestFailed {
@@ -235,33 +297,47 @@ impl ItaVerifier {
             }
         }
 
-        if self.policy_ids.is_empty() {
+        if self.policy_ids.is_empty() && self.policy_hashes.is_empty() {
             return Ok(());
         }
 
-        if let Some(matched) = claims.get("policy_ids_matched") {
-            if let Some(arr) = matched.as_array() {
-                let matched_ids: std::collections::HashSet<&str> = arr
-                    .iter()
-                    .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
-                    .collect();
-
-                for expected_id in &self.policy_ids {
-                    if !matched_ids.contains(expected_id.as_str()) {
-                        return Err(Error::ItaError(format!(
-                            "Expected policy ID '{expected_id}' not found in policy_ids_matched"
-                        )));
-                    }
-                }
-            } else {
-                return Err(Error::ItaError(
-                    "policy_ids_matched is not an array".to_string(),
-                ));
-            }
-        } else {
+        let Some(matched) = claims.get("policy_ids_matched") else {
             return Err(Error::ItaError(
-                "ITA token missing policy_ids_matched, but policy_ids are configured".to_string(),
+                "ITA token missing policy_ids_matched, but policy_ids or policy_hashes are configured"
+                    .to_string(),
             ));
+        };
+        let Some(arr) = matched.as_array() else {
+            return Err(Error::ItaError(
+                "policy_ids_matched is not an array".to_string(),
+            ));
+        };
+        // An entry only counts if both its ID and hash are allowed, so that an allowed ID and an
+        // allowed hash can't come from different policies.
+        let allowed = |entry: &Value, field: &str, expected: &[String]| {
+            expected.is_empty()
+                || entry
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| expected.iter().any(|e| e == value))
+        };
+        let arr: Vec<&Value> = arr
+            .iter()
+            .filter(|entry| {
+                allowed(entry, "id", &self.policy_ids)
+                    && allowed(entry, "hash", &self.policy_hashes)
+            })
+            .collect();
+        for (field, expected) in [("id", &self.policy_ids), ("hash", &self.policy_hashes)] {
+            let matched: std::collections::HashSet<&str> = arr
+                .iter()
+                .filter_map(|v| v.get(field).and_then(|value| value.as_str()))
+                .collect();
+            if let Some(missing) = expected.iter().find(|e| !matched.contains(e.as_str())) {
+                return Err(Error::ItaError(format!(
+                    "Expected policy {field} '{missing}' not found in policy_ids_matched"
+                )));
+            }
         }
 
         Ok(())
@@ -279,6 +355,10 @@ impl GenericVerifier for ItaVerifier {
         let claims = self.verify_jwt(token).await?;
         Self::check_runtime_data_binding(&claims, report_data)?;
         self.check_policy_matching(&claims)?;
+        #[cfg(feature = "verifier-ita-rp-policy")]
+        if let Some(source) = &self.rp_policy_source {
+            source.check(&claims).await?;
+        }
 
         Ok(())
     }
@@ -389,6 +469,27 @@ mod tests {
         );
     }
 
+    /// The clock is paused, so the request timeout fires without waiting for it.
+    #[tokio::test(start_paused = true)]
+    async fn load_jwks_fails_without_keys() {
+        let http = ItaVerifier::new("http://bad.example.com", &[]).unwrap();
+        assert!(matches!(http.load_jwks().await, Err(Error::ItaError(_))));
+        let unreachable = ItaVerifier::new("https://127.0.0.1:1", &[]).unwrap();
+        assert!(matches!(
+            unreachable.load_jwks().await,
+            Err(Error::ItaHttpRequestFailed { .. })
+        ));
+
+        // Accepts connections but never answers.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let stalled =
+            ItaVerifier::new(&format!("https://{}", listener.local_addr().unwrap()), &[]).unwrap();
+        assert!(matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(60), stalled.load_jwks()).await,
+            Ok(Err(Error::ItaHttpRequestFailed { .. }))
+        ));
+    }
+
     #[tokio::test]
     async fn verify_jwt_rejects_missing_kid() {
         let v = verifier(&[]);
@@ -471,6 +572,25 @@ mod tests {
             "policy_ids_matched": [{"id": "p1"}]
         });
         assert!(v.check_policy_matching(&claims).is_err());
+    }
+
+    #[test]
+    fn policy_hashes_checked_like_ids() {
+        let v = verifier(&[]).with_policy_hashes(&["h1".into()]);
+        v.check_policy_matching(&json!({"policy_ids_matched": [{"id": "p1", "hash": "h1"}]}))
+            .unwrap();
+        assert!(v
+            .check_policy_matching(&json!({"policy_ids_matched": [{"id": "p1", "hash": "h2"}]}))
+            .is_err());
+        assert!(v.check_policy_matching(&json!({})).is_err());
+
+        let v = verifier(&["p1"]).with_policy_hashes(&["h1".into()]);
+        assert!(v
+            .check_policy_matching(&json!({"policy_ids_matched": [
+                {"id": "p1", "hash": "h2"},
+                {"id": "p2", "hash": "h1"},
+            ]}))
+            .is_err());
     }
 
     #[test]

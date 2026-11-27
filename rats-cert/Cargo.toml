@@ -139,6 +139,8 @@ provenance = [
   "sigstore-trust-root/tuf",
   "tokio/time",
 ]
+# Evaluating a published relying-party policy against ITA tokens. Not built for wasm.
+verifier-ita-rp-policy = ["verifier-ita", "provenance", "dep:regorus"]
 coco-builtin-as-azsnp = ["__coco-builtin-as", "attestation-service/az-snp-vtpm-verifier"]
 coco-builtin-as-aztdx = ["__coco-builtin-as", "attestation-service/az-tdx-vtpm-verifier"]
 coco-builtin-as-nvidia = ["__coco-builtin-as", "attestation-service/nvidia-verifier"]
@@ -166,7 +168,7 @@ rstest = {workspace = true}
 serial_test = {workspace = true}
 tempfile = {workspace = true}
 test-with = {version = "0.16.4", default-features = false}
-tokio = {workspace = true, features = ["rt", "rt-multi-thread", "macros"]}
+tokio = {workspace = true, features = ["rt", "rt-multi-thread", "macros", "test-util"]}
 tracing-subscriber = {workspace = true}
 wiremock = "0.6"
 

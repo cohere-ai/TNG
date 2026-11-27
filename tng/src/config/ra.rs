@@ -6,6 +6,8 @@ use anyhow::{anyhow, Context as _, Result};
 use rats_cert::policy_source::PolicySourceArgs;
 #[cfg(not(wasm))]
 use rats_cert::tee::ita::policy_id_source::PolicyIdSourceArgs;
+#[cfg(not(wasm))]
+use rats_cert::tee::ita::rp_policy_source::RpPolicySourceArgs;
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -274,9 +276,7 @@ impl RaArgsUnchecked {
                                 }
                             }
                         },
-                        VerifierArgs::Ita(_) => {
-                            // ITA verifier fetches JWKS from the portal URL; no additional checks needed here
-                        }
+                        VerifierArgs::Ita(ita) => ita.validate()?,
                     }
                 }
             };
@@ -687,12 +687,44 @@ pub struct ItaVerifierArgs {
     pub ita_jwks_addr: String,
     #[serde(default)]
     pub policy_ids: Vec<String>,
+    /// Hashes that must appear in the token's `policy_ids_matched`, as with `policy_ids`
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policy_hashes: Vec<String>,
+    /// RP policy, fetched from a published release, that must allow the token's claims
+    #[cfg(not(wasm))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rp_policy_source: Option<Box<RpPolicySourceArgs>>,
+    #[cfg(wasm)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rp_policy_source: Option<serde_json::Value>,
 }
 
 impl ItaVerifierArgs {
+    fn validate(&self) -> Result<(), TngError> {
+        #[cfg(not(wasm))]
+        if let Some(source) = &self.rp_policy_source {
+            source
+                .validate()
+                .map_err(|e| TngError::InvalidParameter(anyhow!("'rp_policy_source': {e}")))?;
+        }
+        #[cfg(wasm)]
+        if self.rp_policy_source.is_some() {
+            return Err(TngError::InvalidParameter(anyhow!(
+                "'rp_policy_source' is not supported on wasm"
+            )));
+        }
+        Ok(())
+    }
+
     pub fn to_verifier(&self) -> anyhow::Result<rats_cert::tee::ita::ItaVerifier> {
-        rats_cert::tee::ita::ItaVerifier::new(&self.ita_jwks_addr, &self.policy_ids)
-            .map_err(Into::into)
+        let verifier =
+            rats_cert::tee::ita::ItaVerifier::new(&self.ita_jwks_addr, &self.policy_ids)?
+                .with_policy_hashes(&self.policy_hashes);
+        #[cfg(not(wasm))]
+        if let Some(source) = &self.rp_policy_source {
+            return Ok(verifier.with_rp_policy_source(source)?);
+        }
+        Ok(verifier)
     }
 }
 
@@ -1885,6 +1917,30 @@ mod tests {
         with(|v| v["policy_id_source"]["file"] = json!("")).unwrap_err();
         with(|v| v["policy_id_source"]["fallbak_for"] = json!(60)).unwrap_err();
         with(|v| v["policy_id_source"]["provenance"]["bundle"] = json!("")).unwrap_err();
+    }
+
+    #[test]
+    fn test_ita_rp_policy_source() {
+        let with = |edit: fn(&mut serde_json::Value)| {
+            let mut json = json!({"verify": {
+                "model": "passport",
+                "as_provider": "ita",
+                "policy_hashes": ["h"],
+                "rp_policy_source": {
+                    "base_url": "https://github.com/cohere-ai/integritee/releases/latest/download",
+                    "policy": "ita_rp_policy.rego",
+                    "data": ["ita_rims.json"]
+                }
+            }});
+            edit(&mut json["verify"]);
+            anyhow::Ok(serde_json::from_value::<RaArgsUnchecked>(json)?.into_checked()?)
+        };
+
+        with(|_| {}).unwrap();
+        with(|v| v["rp_policy_source"]["policy"] = json!("")).unwrap_err();
+        with(|v| v["rp_policy_source"]["vaild_for"] = json!(86400)).unwrap_err();
+        with(|v| v["rp_policy_source"]["data"] = json!(["http://example.com/d.json"])).unwrap();
+        with(|v| v["rp_policy_source"]["data"] = json!([""])).unwrap_err();
     }
 
     #[test]

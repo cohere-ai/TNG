@@ -123,6 +123,14 @@ pub enum Error {
     #[error("No ITA policy ID fetched within 'fallback_for'")]
     ItaPolicyIdUnavailable(#[source] std::sync::Arc<anyhow::Error>),
 
+    #[cfg(feature = "verifier-ita-rp-policy")]
+    #[error("No accepted ITA RP policy release allows the token")]
+    ItaRpPolicyDenied,
+
+    #[cfg(feature = "verifier-ita-rp-policy")]
+    #[error("No ITA RP policy release fetched within 'valid_for'")]
+    ItaRpPolicyUnavailable(#[source] std::sync::Arc<anyhow::Error>),
+
     #[cfg(feature = "__coco-builtin-as")]
     #[error("No policy fetch succeeded within 'fallback_for'")]
     CocoBuiltinAsPoliciesExpired,
