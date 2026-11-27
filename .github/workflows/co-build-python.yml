@@ -117,10 +117,12 @@ jobs:
       - uses: actions/setup-python@v6
         with: { python-version: '3.11' }
       - run: pip install build setuptools-scm
-      # Versioned like cohere-tng (from Cargo.toml) so co-release.yml can publish this build before the tag exists.
+      # Versioned like cohere-tng (from Cargo.toml) so co-release.yml can publish this build before the tag exists,
+      # and pinned to that cohere-tng, whose config schema conseel's defaults are written for.
       - run: |
           SETUPTOOLS_SCM_PRETEND_VERSION=$(awk -F'"' '/^version = "/ { print $2; exit }' ../../../Cargo.toml)
           export SETUPTOOLS_SCM_PRETEND_VERSION
+          sed -i "s/\"cohere-tng\"/\"cohere-tng==$SETUPTOOLS_SCM_PRETEND_VERSION\"/" pyproject.toml
           python -m build
         working-directory: cohere/python/conseel
       # Validate package metadata and README will render correctly on PyPI
