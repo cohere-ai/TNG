@@ -12,7 +12,7 @@ use crate::errors::*;
 use crate::release::{Release, ReleaseFetcher, ReleaseFetcherArgs};
 
 const DEFAULT_REFRESH_INTERVAL: u64 = 300;
-const DEFAULT_VALID_FOR: u64 = 24 * 60 * 60;
+const DEFAULT_VALID_FOR: u64 = 6 * 60 * 60;
 const FRESH_FOR: Duration = Duration::from_secs(5);
 const ALLOW_RULE: &str = "allow";
 

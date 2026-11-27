@@ -35,7 +35,7 @@ _DEFAULT_VERIFY: list = [
             "policy": "ita_rp_policy.rego",
             "data": ["ita_rims.json"],
             "refresh_interval": 300,
-            "valid_for": 86400,
+            "valid_for": 21600,
             "provenance": {
                 "bundle": "attestation-bundle.sigstore.json",
                 "repo": "cohere-ai/integritee",

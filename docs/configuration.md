@@ -950,13 +950,13 @@ Example:
 
 With `rp_policy_source`, TNG accepts a verified ITA token only if the `allow` rule of a published Rego policy is `true` for its claims. With `provenance`, a release signed no later than the newest accepted one is rejected; that signing time is kept in memory only, so after a restart any signed release is accepted. As for [Policies from a published release](#policies-from-a-published-release), TNG trusts the endpoint to serve the current release.
 
-TNG fetches the latest release at startup, and fails to start if that fetch fails, then every `refresh_interval`. Fetched releases stay accepted for `valid_for`, which covers peers still on an older release and outages. A denied token also triggers a fetch, unless one finished in the last 5 seconds; tokens denied while a fetch runs wait for it and are evaluated again. Each request times out after 5 seconds, and a failed fetch is not retried. Not available in the wasm build.
+TNG fetches the latest release at startup, and fails to start if that fetch fails, then every `refresh_interval`. Fetched releases stay accepted for `valid_for`, which covers peers still on an older release and outages. A superseded release therefore stays accepted until its `valid_for` runs out, so a release that tightens the policy takes full effect up to `valid_for` later. A denied token also triggers a fetch, unless one finished in the last 5 seconds; tokens denied while a fetch runs wait for it and are evaluated again. Each request times out after 5 seconds, and a failed fetch is not retried. Not available in the wasm build.
 
 - **`base_url`**, **`provenance`**: As for [Policies from a published release](#policies-from-a-published-release).
 - **`policy`** (string, required): The Rego policy, as a name under `base_url` or a full URL.
 - **`data`** (array [string], optional, default is empty): JSON files loaded as data documents that are imported by the policy. A release whose files give the same key different values is rejected.
 - **`refresh_interval`** (integer, optional, default is `300`): Seconds between background fetches. `0` means no background fetches.
-- **`valid_for`** (integer, optional, default is `86400`): Seconds a fetched release stays accepted after it was last fetched. Must be greater than `refresh_interval`.
+- **`valid_for`** (integer, optional, default is `21600`): Seconds a fetched release stays accepted after it was last fetched. Must be greater than `refresh_interval`.
 
 ```json
 "verify": {
