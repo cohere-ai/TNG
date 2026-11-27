@@ -44,7 +44,7 @@ _DEFAULT_VERIFY: list = [
                 "gpu": "trustee_policy_gpu.rego",
             },
             "refresh_interval": 300,
-            "fallback_for": 86400,
+            "fallback_for": 21600,
             "provenance": {
                 "bundle": "attestation-bundle.sigstore.json",
                 "repo": "cohere-ai/integritee",
