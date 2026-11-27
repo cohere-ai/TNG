@@ -178,7 +178,7 @@ mod tests {
             )
             .await?;
             let (sender, _receiver) = tokio::sync::mpsc::unbounded_channel();
-            let context = TngStreamContext { runtime, sender };
+            let context = TngStreamContext::new(runtime, sender);
 
             let response = api.get_hpke_configuration(None, context.clone()).await?;
             assert_eq!(response.status(), axum::http::StatusCode::OK);
